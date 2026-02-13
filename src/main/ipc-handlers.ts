@@ -25,6 +25,8 @@ import { getScreenSlapService } from './services/screenslap'
 import type { ScreenSlapState } from './services/screenslap'
 import { getLiquidFocusService } from './services/liquidfocus'
 import type { LiquidFocusFullState, LiquidFocusTask, TimerState, SessionStats } from './services/liquidfocus'
+import { getSoundSplitBridge } from './sidecar/soundsplit-bridge'
+import type { AudioSession, MasterAudio } from './sidecar/soundsplit-bridge'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -375,6 +377,43 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.LIQUIDFOCUS_GET_STATS,
     (): SessionStats => {
       return getLiquidFocusService().getStats()
+    }
+  )
+
+  // ─── SoundSplit ──────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.SOUNDSPLIT_GET_SESSIONS,
+    (): AudioSession[] => {
+      return getSoundSplitBridge().getSessions()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SOUNDSPLIT_SET_VOLUME,
+    (_event, pid: number, volume: number): boolean => {
+      return getSoundSplitBridge().setVolume(pid, volume)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SOUNDSPLIT_SET_MUTE,
+    (_event, pid: number, muted: boolean): boolean => {
+      return getSoundSplitBridge().setMute(pid, muted)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SOUNDSPLIT_GET_MASTER,
+    (): MasterAudio => {
+      return getSoundSplitBridge().getMaster()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SOUNDSPLIT_SET_MASTER,
+    (_event, volume: number): boolean => {
+      return getSoundSplitBridge().setMaster(volume)
     }
   )
 

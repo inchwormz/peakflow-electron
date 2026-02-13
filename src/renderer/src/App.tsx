@@ -8,6 +8,7 @@ import { ScreenSlap } from './tools/screenslap/ScreenSlap'
 import { AlertOverlay } from './tools/screenslap/AlertOverlay'
 import { MeetReady } from './tools/meetready/MeetReady'
 import { LiquidFocus } from './tools/liquidfocus/LiquidFocus'
+import { SoundSplit } from './tools/soundsplit/SoundSplit'
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -150,6 +151,8 @@ export default function App(): React.JSX.Element {
         return <MeetReady />
       case ToolId.LiquidFocus:
         return <LiquidFocus />
+      case ToolId.SoundSplit:
+        return <SoundSplit />
       default:
         return <ToolPlaceholder toolId={toolId} />
     }
