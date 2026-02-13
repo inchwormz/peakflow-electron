@@ -1,18 +1,20 @@
 /**
  * IPC handler registration — all renderer -> main invoke channels.
  *
- * Phase 1: stub implementations that return placeholder data.
- * Each handler will be replaced with real logic as individual tools
- * are ported from Python to Electron.
+ * Phase 2: security/licensing handlers wired to real security module.
+ * Config handlers use persistent electron-store.
  */
 
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
-import { DEFAULT_CONFIGS } from '@shared/config-schemas'
 import type { ToolConfig } from '@shared/config-schemas'
 import { ToolId } from '@shared/tool-ids'
+import { checkAccess } from './security/access-check'
+import { activateLicense } from './security/license'
+import { getTrialDaysRemaining, TRIAL_DAYS } from './security/trial'
+import { getConfig, setConfig } from './services/config-store'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -35,24 +37,28 @@ function getToolIdFromSender(event: Electron.IpcMainInvokeEvent): string {
  * Must be called once during app startup, before any windows are created.
  */
 export function registerIpcHandlers(): void {
-  // ─── Security / Licensing (stubs) ───────────────────────────────────────────
+  // ─── Security / Licensing ──────────────────────────────────────────────────
 
-  ipcMain.handle(IPC_INVOKE.SECURITY_CHECK_ACCESS, (): AccessStatus => {
-    return {
-      allowed: true,
-      message: '14 days left in trial',
-      daysRemaining: 14,
-      isLicensed: false
+  ipcMain.handle(
+    IPC_INVOKE.SECURITY_CHECK_ACCESS,
+    async (): Promise<AccessStatus> => {
+      return checkAccess()
     }
-  })
+  )
 
   ipcMain.handle(
     IPC_INVOKE.SECURITY_ACTIVATE_LICENSE,
-    (_event, _key: string): LicenseActivationResult => {
-      console.log('[PeakFlow] License activation attempted (not implemented)')
+    async (_event, key: string): Promise<LicenseActivationResult> => {
+      return activateLicense(key)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SECURITY_GET_TRIAL_STATUS,
+    (): { daysRemaining: number; trialDays: number } => {
       return {
-        success: false,
-        message: 'Not implemented yet'
+        daysRemaining: getTrialDaysRemaining(),
+        trialDays: TRIAL_DAYS
       }
     }
   )
@@ -62,23 +68,37 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CONFIG_GET,
     (_event, payload: ConfigGetPayload): ToolConfig | null => {
-      const toolId = payload.tool as ToolId
-      const defaults = DEFAULT_CONFIGS[toolId]
-      if (!defaults) {
-        console.warn(`[PeakFlow] config:get — unknown tool: ${toolId}`)
+      try {
+        return getConfig(payload.tool as ToolId)
+      } catch (error) {
+        console.warn('[PeakFlow] config:get failed:', error)
         return null
       }
-      // Phase 1: return defaults. Phase 2 will read from electron-store.
-      return { ...defaults }
     }
   )
 
   ipcMain.handle(
     IPC_INVOKE.CONFIG_SET,
     (_event, payload: ConfigSetPayload): boolean => {
-      console.log(`[PeakFlow] config:set — ${payload.tool}.${payload.key} = ${JSON.stringify(payload.value)}`)
-      // Phase 1: log only. Phase 2 will persist via electron-store.
-      return true
+      try {
+        setConfig(payload.tool as ToolId, payload.key, payload.value)
+        return true
+      } catch (error) {
+        console.warn('[PeakFlow] config:set failed:', error)
+        return false
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CONFIG_GET_ALL,
+    (_event, payload: ConfigGetPayload): ToolConfig | null => {
+      try {
+        return getConfig(payload.tool as ToolId)
+      } catch (error) {
+        console.warn('[PeakFlow] config:get-all failed:', error)
+        return null
+      }
     }
   )
 
