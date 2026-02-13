@@ -1,31 +1,34 @@
 @import "tailwindcss";
 
-/* ─── Design System Tokens ───────────────────────────────────────────────── */
+/* ─── PeakFlow Desktop Design System — from *_Redesign.html specs ────────── */
 
 :root {
-  --bg-void: #08080a;
-  --bg-surface: #111114;
-  --bg-card: #17171b;
-  --bg-elevated: #1e1e23;
-  --bg-hover: #25252b;
+  /* Backgrounds */
+  --bg-app: #0a0a0a;
+  --bg-surface: #111111;
+  --bg-elevated: #1a1a1a;
+  --bg-hover: #141414;
+  --bg-active: #222222;
 
-  --border-dim: #2a2a30;
-  --border-mid: #3a3a42;
-  --border-bright: #55555f;
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #f0f0f5;
+  --text-muted: #888888;
+  --text-dim: #666666;
+  --text-ghost: #444444;
+  --text-faint: #333333;
 
-  --accent: #e8a237;
-  --accent-dim: #b37a1f;
-  --accent-glow: rgba(232, 162, 55, 0.15);
-  --accent-bright: #ffc857;
+  /* Accent */
+  --accent-green: #4ae08a;
+  --accent-blue: #5eb8ff;
+  --accent-yellow: #eab308;
+  --accent-red: #f05858;
+  --accent-join: #0a84ff;
 
-  --success: #4ae08a;
-  --danger: #f05858;
-  --info: #5eb8ff;
-
-  --text-primary: #eaeaed;
-  --text-secondary: #8b8b96;
-  --text-tertiary: #55555f;
-  --text-ghost: #3a3a42;
+  /* Borders */
+  --border-subtle: #111111;
+  --border-surface: #1a1a1a;
+  --border-active: #222222;
 }
 
 /* ─── Base Styles ────────────────────────────────────────────────────────── */
@@ -36,18 +39,16 @@
   box-sizing: border-box;
 }
 
-html {
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  font-family: 'Be Vietnam Pro', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-}
-
-body {
-  font-family: 'Outfit', sans-serif;
-  background: var(--bg-void);
-  color: var(--text-primary);
-  margin: 0;
-  padding: 0;
+  user-select: none;
   overflow: hidden;
   line-height: 1.5;
 }
@@ -55,8 +56,7 @@ body {
 /* ─── Custom Scrollbar ───────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 3px;
 }
 
 ::-webkit-scrollbar-track {
@@ -64,23 +64,13 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-dim);
+  background: #1a1a1a;
   border-radius: 2px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-mid);
 }
 
 /* ─── Selection ──────────────────────────────────────────────────────────── */
 
 ::selection {
-  background: var(--accent-glow);
-  color: var(--accent-bright);
-}
-
-/* ─── Utility Classes ────────────────────────────────────────────────────── */
-
-.font-mono {
-  font-family: 'DM Mono', monospace;
+  background: rgba(74, 224, 138, 0.2);
+  color: #fff;
 }
