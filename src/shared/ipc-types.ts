@@ -85,7 +85,16 @@ export const IPC_INVOKE = {
   // Calendar (shared by ScreenSlap + MeetReady)
   CALENDAR_GET_EVENTS: 'calendar:get-events',
   CALENDAR_AUTHENTICATE: 'calendar:authenticate',
-  CALENDAR_GET_STATUS: 'calendar:get-status'
+  CALENDAR_GET_STATUS: 'calendar:get-status',
+  CALENDAR_DISCONNECT: 'calendar:disconnect',
+
+  // ScreenSlap
+  SCREENSLAP_GET_STATE: 'screenslap:get-state',
+  SCREENSLAP_SNOOZE: 'screenslap:snooze',
+  SCREENSLAP_DISMISS: 'screenslap:dismiss',
+  SCREENSLAP_JOIN_MEETING: 'screenslap:join-meeting',
+  SCREENSLAP_START: 'screenslap:start',
+  SCREENSLAP_STOP: 'screenslap:stop'
 } as const
 
 /** Send channels (main → renderer, push notifications) */
@@ -94,5 +103,7 @@ export const IPC_SEND = {
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
+  SCREENSLAP_STATE_CHANGED: 'screenslap:state-changed',
+  SCREENSLAP_ALERT_DATA: 'screenslap:alert-data',
   LICENSE_STATUS_CHANGED: 'license:status-changed'
 } as const

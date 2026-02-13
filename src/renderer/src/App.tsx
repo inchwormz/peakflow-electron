@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import { TitleBar } from './components/layout/TitleBar'
-import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
+import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
 import { FocusDim } from './tools/focusdim/FocusDim'
 import { QuickBoard } from './tools/quickboard/QuickBoard'
+import { ScreenSlap } from './tools/screenslap/ScreenSlap'
+import { AlertOverlay } from './tools/screenslap/AlertOverlay'
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -110,26 +112,46 @@ function DebugLanding(): React.JSX.Element {
 /* ─── App Router ─────────────────────────────────────────────────────────── */
 
 export default function App(): React.JSX.Element {
-  const toolId = useMemo(() => {
+  const { toolId, systemId } = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
     const raw = params.get('toolId')
-    if (raw && Object.values(ToolId).includes(raw as ToolId)) {
-      return raw as ToolId
+
+    // Check for system windows first (e.g. screenslap-alert)
+    if (raw && Object.values(SystemWindowId).includes(raw as SystemWindowId)) {
+      return { toolId: null, systemId: raw as SystemWindowId }
     }
-    return null
+
+    // Then check for tool windows
+    if (raw && Object.values(ToolId).includes(raw as ToolId)) {
+      return { toolId: raw as ToolId, systemId: null }
+    }
+
+    return { toolId: null, systemId: null }
   }, [])
 
   // Route to the correct tool component, falling back to placeholder
   const renderTool = (): React.JSX.Element => {
+    // System windows (no app shell chrome)
+    if (systemId === SystemWindowId.ScreenSlapAlert) {
+      return <AlertOverlay />
+    }
+
     if (!toolId) return <DebugLanding />
     switch (toolId) {
       case ToolId.FocusDim:
         return <FocusDim />
       case ToolId.QuickBoard:
         return <QuickBoard />
+      case ToolId.ScreenSlap:
+        return <ScreenSlap />
       default:
         return <ToolPlaceholder toolId={toolId} />
     }
+  }
+
+  // System windows render without AppShell (no title bar, no chrome)
+  if (systemId === SystemWindowId.ScreenSlapAlert) {
+    return renderTool()
   }
 
   return (

@@ -15,6 +15,8 @@ import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initFocusDim, destroyFocusDim } from './services/focus-dim'
 import { initClipboard, destroyClipboard } from './services/clipboard'
+import { initCalendar, destroyCalendar } from './services/google-calendar'
+import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -52,6 +54,8 @@ if (!gotLock) {
     registerIpcHandlers()
     initFocusDim()
     initClipboard()
+    initCalendar()
+    initScreenSlap()
 
     console.log('[PeakFlow] Core started — running in system tray')
   })
@@ -66,6 +70,8 @@ if (!gotLock) {
   // Cleanup before quitting
   app.on('before-quit', () => {
     console.log('[PeakFlow] Shutting down...')
+    destroyScreenSlap()
+    destroyCalendar()
     destroyClipboard()
     destroyFocusDim()
     unregisterHotkeys()

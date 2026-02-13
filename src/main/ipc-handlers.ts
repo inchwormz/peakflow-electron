@@ -19,6 +19,10 @@ import { getFocusDimService } from './services/focus-dim'
 import type { FocusDimState } from './services/focus-dim'
 import { getClipboardService } from './services/clipboard'
 import type { ClipboardItem } from './services/clipboard'
+import { getCalendarService } from './services/google-calendar'
+import type { CalendarEvent, CalendarStatus } from './services/google-calendar'
+import { getScreenSlapService } from './services/screenslap'
+import type { ScreenSlapState } from './services/screenslap'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -216,6 +220,80 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.CLIPBOARD_CLEAR_HISTORY,
     (): ClipboardItem[] => {
       return getClipboardService().clearHistory()
+    }
+  )
+
+  // ─── Google Calendar (shared by ScreenSlap + MeetReady) ────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_GET_EVENTS,
+    (): CalendarEvent[] => {
+      return getCalendarService().getEvents()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_AUTHENTICATE,
+    async (): Promise<CalendarStatus> => {
+      return getCalendarService().authenticate()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_GET_STATUS,
+    (): CalendarStatus => {
+      return getCalendarService().getStatus()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_DISCONNECT,
+    (): CalendarStatus => {
+      return getCalendarService().disconnect()
+    }
+  )
+
+  // ─── ScreenSlap ───────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_GET_STATE,
+    (): ScreenSlapState => {
+      return getScreenSlapService().getState()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_SNOOZE,
+    (_event, eventId: string, minutes: number): void => {
+      getScreenSlapService().snooze(eventId, minutes)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_DISMISS,
+    (): void => {
+      getScreenSlapService().dismiss()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_JOIN_MEETING,
+    (_event, url: string): void => {
+      getScreenSlapService().joinMeeting(url)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_START,
+    (): void => {
+      getScreenSlapService().start()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_STOP,
+    (): void => {
+      getScreenSlapService().stop()
     }
   )
 
