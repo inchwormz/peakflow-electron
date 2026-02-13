@@ -33,6 +33,7 @@ export interface ScreenSlapConfig {
 
 export interface MeetReadyConfig {
   auto_popup_minutes_before: number
+  auto_popup_enabled: boolean
   default_camera: string
   default_mic: string
 }
@@ -88,6 +89,7 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
   },
   [ToolId.MeetReady]: {
     auto_popup_minutes_before: 2,
+    auto_popup_enabled: true,
     default_camera: '',
     default_mic: ''
   },

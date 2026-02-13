@@ -23,6 +23,8 @@ import { getCalendarService } from './services/google-calendar'
 import type { CalendarEvent, CalendarStatus } from './services/google-calendar'
 import { getScreenSlapService } from './services/screenslap'
 import type { ScreenSlapState } from './services/screenslap'
+import { getLiquidFocusService } from './services/liquidfocus'
+import type { LiquidFocusFullState, LiquidFocusTask, TimerState, SessionStats } from './services/liquidfocus'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -294,6 +296,85 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.SCREENSLAP_STOP,
     (): void => {
       getScreenSlapService().stop()
+    }
+  )
+
+  // ─── LiquidFocus ─────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_GET_STATE,
+    (): LiquidFocusFullState => {
+      return getLiquidFocusService().getState()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_START,
+    (): TimerState => {
+      return getLiquidFocusService().start()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_PAUSE,
+    (): TimerState => {
+      return getLiquidFocusService().pause()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_RESET,
+    (): TimerState => {
+      return getLiquidFocusService().reset()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_SKIP,
+    (): TimerState => {
+      return getLiquidFocusService().skip()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_SET_ACTIVE_TASK,
+    (_event, index: number): void => {
+      getLiquidFocusService().setActiveTask(index)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_GET_TASKS,
+    (): LiquidFocusTask[] => {
+      return getLiquidFocusService().getTasks()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_ADD_TASK,
+    (_event, task: Omit<LiquidFocusTask, 'id' | 'createdAt'>): LiquidFocusTask[] => {
+      return getLiquidFocusService().addTask(task)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_UPDATE_TASK,
+    (_event, taskId: string, updates: Partial<LiquidFocusTask>): LiquidFocusTask[] => {
+      return getLiquidFocusService().updateTask(taskId, updates)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_DELETE_TASK,
+    (_event, taskId: string): LiquidFocusTask[] => {
+      return getLiquidFocusService().deleteTask(taskId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_GET_STATS,
+    (): SessionStats => {
+      return getLiquidFocusService().getStats()
     }
   )
 

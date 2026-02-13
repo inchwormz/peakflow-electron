@@ -94,7 +94,20 @@ export const IPC_INVOKE = {
   SCREENSLAP_DISMISS: 'screenslap:dismiss',
   SCREENSLAP_JOIN_MEETING: 'screenslap:join-meeting',
   SCREENSLAP_START: 'screenslap:start',
-  SCREENSLAP_STOP: 'screenslap:stop'
+  SCREENSLAP_STOP: 'screenslap:stop',
+
+  // LiquidFocus
+  LIQUIDFOCUS_GET_STATE: 'liquidfocus:get-state',
+  LIQUIDFOCUS_START: 'liquidfocus:start',
+  LIQUIDFOCUS_PAUSE: 'liquidfocus:pause',
+  LIQUIDFOCUS_RESET: 'liquidfocus:reset',
+  LIQUIDFOCUS_SKIP: 'liquidfocus:skip',
+  LIQUIDFOCUS_SET_ACTIVE_TASK: 'liquidfocus:set-active-task',
+  LIQUIDFOCUS_GET_TASKS: 'liquidfocus:get-tasks',
+  LIQUIDFOCUS_ADD_TASK: 'liquidfocus:add-task',
+  LIQUIDFOCUS_UPDATE_TASK: 'liquidfocus:update-task',
+  LIQUIDFOCUS_DELETE_TASK: 'liquidfocus:delete-task',
+  LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats'
 } as const
 
 /** Send channels (main → renderer, push notifications) */
@@ -105,5 +118,9 @@ export const IPC_SEND = {
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
   SCREENSLAP_STATE_CHANGED: 'screenslap:state-changed',
   SCREENSLAP_ALERT_DATA: 'screenslap:alert-data',
-  LICENSE_STATUS_CHANGED: 'license:status-changed'
+  LICENSE_STATUS_CHANGED: 'license:status-changed',
+
+  // LiquidFocus
+  LIQUIDFOCUS_STATE_CHANGED: 'liquidfocus:state-changed',
+  LIQUIDFOCUS_PHASE_COMPLETE: 'liquidfocus:phase-complete'
 } as const

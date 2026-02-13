@@ -6,6 +6,8 @@ import { FocusDim } from './tools/focusdim/FocusDim'
 import { QuickBoard } from './tools/quickboard/QuickBoard'
 import { ScreenSlap } from './tools/screenslap/ScreenSlap'
 import { AlertOverlay } from './tools/screenslap/AlertOverlay'
+import { MeetReady } from './tools/meetready/MeetReady'
+import { LiquidFocus } from './tools/liquidfocus/LiquidFocus'
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -144,6 +146,10 @@ export default function App(): React.JSX.Element {
         return <QuickBoard />
       case ToolId.ScreenSlap:
         return <ScreenSlap />
+      case ToolId.MeetReady:
+        return <MeetReady />
+      case ToolId.LiquidFocus:
+        return <LiquidFocus />
       default:
         return <ToolPlaceholder toolId={toolId} />
     }

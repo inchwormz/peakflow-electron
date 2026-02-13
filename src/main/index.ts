@@ -17,6 +17,7 @@ import { initFocusDim, destroyFocusDim } from './services/focus-dim'
 import { initClipboard, destroyClipboard } from './services/clipboard'
 import { initCalendar, destroyCalendar } from './services/google-calendar'
 import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
+import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ if (!gotLock) {
     initClipboard()
     initCalendar()
     initScreenSlap()
+    initLiquidFocus()
 
     console.log('[PeakFlow] Core started — running in system tray')
   })
@@ -70,6 +72,7 @@ if (!gotLock) {
   // Cleanup before quitting
   app.on('before-quit', () => {
     console.log('[PeakFlow] Shutting down...')
+    destroyLiquidFocus()
     destroyScreenSlap()
     destroyCalendar()
     destroyClipboard()
