@@ -12,6 +12,7 @@
 import { globalShortcut } from 'electron'
 import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { createToolWindow, getToolWindow, closeToolWindow } from './windows'
+import { getFocusDimService } from './services/focus-dim'
 
 /**
  * Toggle a tool window: close it if open, create it if not.
@@ -28,13 +29,21 @@ function toggleTool(toolId: ToolId): void {
 /**
  * Register all global hotkeys defined in `DEFAULT_HOTKEYS`.
  * Must be called after `app.whenReady()`.
+ *
+ * FocusDim has special handling: Ctrl+Shift+D toggles the dim overlay
+ * (not the settings window). The settings window is opened from the tray.
  */
 export function registerHotkeys(): void {
   for (const [toolId, accelerator] of Object.entries(DEFAULT_HOTKEYS)) {
     if (!accelerator) continue
 
     const registered = globalShortcut.register(accelerator, () => {
-      toggleTool(toolId as ToolId)
+      if (toolId === ToolId.FocusDim) {
+        // FocusDim hotkey toggles the dim effect, not the settings window
+        getFocusDimService().toggle()
+      } else {
+        toggleTool(toolId as ToolId)
+      }
     })
 
     if (registered) {

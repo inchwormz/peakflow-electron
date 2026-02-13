@@ -13,6 +13,7 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 import { registerIpcHandlers } from './ipc-handlers'
+import { initFocusDim, destroyFocusDim } from './services/focus-dim'
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ if (!gotLock) {
     createTray()
     registerHotkeys()
     registerIpcHandlers()
+    initFocusDim()
 
     console.log('[PeakFlow] Core started — running in system tray')
   })
@@ -62,6 +64,7 @@ if (!gotLock) {
   // Cleanup before quitting
   app.on('before-quit', () => {
     console.log('[PeakFlow] Shutting down...')
+    destroyFocusDim()
     unregisterHotkeys()
     destroyTray()
   })

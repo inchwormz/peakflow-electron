@@ -15,6 +15,8 @@ import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
+import { getFocusDimService } from './services/focus-dim'
+import type { FocusDimState } from './services/focus-dim'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -133,6 +135,43 @@ export function registerIpcHandlers(): void {
     const toolId = getToolIdFromSender(event)
     return { toolId }
   })
+
+  // ─── FocusDim ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_TOGGLE,
+    (): FocusDimState => {
+      return getFocusDimService().toggle()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_OPACITY,
+    (_event, opacity: number): void => {
+      getFocusDimService().setOpacity(opacity)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_COLOR,
+    (_event, colorKey: string): void => {
+      getFocusDimService().setColor(colorKey)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_BORDER,
+    (_event, show: boolean): void => {
+      getFocusDimService().setBorder(show)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_GET_STATE,
+    (): FocusDimState => {
+      return getFocusDimService().getState()
+    }
+  )
 
   console.log('[PeakFlow] IPC handlers registered')
 }

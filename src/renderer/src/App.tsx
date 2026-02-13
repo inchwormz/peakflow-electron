@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import { TitleBar } from './components/layout/TitleBar'
 import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
+import { FocusDim } from './tools/focusdim/FocusDim'
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -117,9 +118,20 @@ export default function App(): React.JSX.Element {
     return null
   }, [])
 
+  // Route to the correct tool component, falling back to placeholder
+  const renderTool = (): React.JSX.Element => {
+    if (!toolId) return <DebugLanding />
+    switch (toolId) {
+      case ToolId.FocusDim:
+        return <FocusDim />
+      default:
+        return <ToolPlaceholder toolId={toolId} />
+    }
+  }
+
   return (
     <AppShell>
-      {toolId ? <ToolPlaceholder toolId={toolId} /> : <DebugLanding />}
+      {renderTool()}
     </AppShell>
   )
 }

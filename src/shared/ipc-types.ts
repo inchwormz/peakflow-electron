@@ -64,6 +64,7 @@ export const IPC_INVOKE = {
   FOCUSDIM_TOGGLE: 'focusdim:toggle',
   FOCUSDIM_SET_OPACITY: 'focusdim:set-opacity',
   FOCUSDIM_SET_COLOR: 'focusdim:set-color',
+  FOCUSDIM_SET_BORDER: 'focusdim:set-border',
   FOCUSDIM_GET_STATE: 'focusdim:get-state',
 
   // QuickBoard

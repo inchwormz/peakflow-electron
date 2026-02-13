@@ -74,3 +74,15 @@ html, body {
   background: rgba(74, 224, 138, 0.2);
   color: #fff;
 }
+
+/* ─── Range Slider Thumb (shared across tools) ──────────────────────────── */
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  border: none;
+}
