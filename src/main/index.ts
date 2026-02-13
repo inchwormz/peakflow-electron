@@ -14,6 +14,7 @@ import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initFocusDim, destroyFocusDim } from './services/focus-dim'
+import { initClipboard, destroyClipboard } from './services/clipboard'
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ if (!gotLock) {
     registerHotkeys()
     registerIpcHandlers()
     initFocusDim()
+    initClipboard()
 
     console.log('[PeakFlow] Core started — running in system tray')
   })
@@ -64,6 +66,7 @@ if (!gotLock) {
   // Cleanup before quitting
   app.on('before-quit', () => {
     console.log('[PeakFlow] Shutting down...')
+    destroyClipboard()
     destroyFocusDim()
     unregisterHotkeys()
     destroyTray()

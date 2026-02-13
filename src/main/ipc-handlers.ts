@@ -17,6 +17,8 @@ import { getTrialDaysRemaining, TRIAL_DAYS } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService } from './services/focus-dim'
 import type { FocusDimState } from './services/focus-dim'
+import { getClipboardService } from './services/clipboard'
+import type { ClipboardItem } from './services/clipboard'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -170,6 +172,50 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.FOCUSDIM_GET_STATE,
     (): FocusDimState => {
       return getFocusDimService().getState()
+    }
+  )
+
+  // ─── QuickBoard / Clipboard ────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_GET_HISTORY,
+    (): ClipboardItem[] => {
+      return getClipboardService().getHistory()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_WRITE_TEXT,
+    (_event, text: string): void => {
+      getClipboardService().writeText(text)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE,
+    (_event, itemId: string): void => {
+      getClipboardService().simulatePaste(itemId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_DELETE_ITEM,
+    (_event, itemId: string): ClipboardItem[] => {
+      return getClipboardService().deleteItem(itemId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_PIN_ITEM,
+    (_event, itemId: string): ClipboardItem[] => {
+      return getClipboardService().pinItem(itemId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_CLEAR_HISTORY,
+    (): ClipboardItem[] => {
+      return getClipboardService().clearHistory()
     }
   )
 

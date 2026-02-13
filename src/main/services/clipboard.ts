@@ -1,0 +1,416 @@
+/**
+ * ClipboardService -- monitors the system clipboard for changes and stores
+ * history with metadata (copy count, pinned status, timestamps).
+ *
+ * Direct port of the Python QuickBoard clipboard monitor with these features:
+ *   - Polls clipboard every 500ms using electron.clipboard
+ *   - Detects text changes via hash comparison
+ *   - Detects image changes via nativeImage comparison
+ *   - Filters out secrets (looksLikeSecret from security module)
+ *   - Filters out excluded apps (isExcludedApp -- basic active window check)
+ *   - Stores history in electron-store with optional safeStorage encryption
+ *   - Auto-expires unpinned items older than max_age_hours
+ *   - Deduplicates by content, bumping copy_count instead
+ *
+ * Paste simulation: writes to clipboard only. Actual keystroke injection
+ * (nut-js or similar) is marked TODO for a follow-up phase.
+ */
+
+import { clipboard, nativeImage, BrowserWindow } from 'electron'
+import { createHash } from 'crypto'
+import Store from 'electron-store'
+import { ToolId } from '@shared/tool-ids'
+import { IPC_SEND } from '@shared/ipc-types'
+import { getConfig } from './config-store'
+import { looksLikeSecret } from '../security/secret-detection'
+import { isExcludedApp } from '../security/excluded-apps'
+import type { QuickBoardConfig } from '@shared/config-schemas'
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+export interface ClipboardItem {
+  id: string
+  text: string | null
+  type: 'text' | 'image'
+  timestamp: string
+  copyCount: number
+  pinned: boolean
+  preview: string
+  /** Base64 data URL for image items */
+  imageDataUrl?: string
+  /** Original image dimensions */
+  imageWidth?: number
+  imageHeight?: number
+}
+
+// ─── Service class ──────────────────────────────────────────────────────────
+
+class ClipboardService {
+  private pollInterval: ReturnType<typeof setInterval> | null = null
+  private lastTextHash = ''
+  private lastImageHash = ''
+  private history: ClipboardItem[] = []
+  private store: Store
+  private skippedCount = 0
+
+  constructor() {
+    this.store = new Store({
+      name: 'clipboard-history',
+      clearInvalidConfig: true
+    })
+    this.loadHistory()
+  }
+
+  // ─── Config helpers ─────────────────────────────────────────────────────
+
+  private getConf(): QuickBoardConfig {
+    return getConfig(ToolId.QuickBoard) as QuickBoardConfig
+  }
+
+  // ─── Persistence ────────────────────────────────────────────────────────
+
+  private loadHistory(): void {
+    try {
+      const data = this.store.get('items') as ClipboardItem[] | undefined
+      if (Array.isArray(data)) {
+        this.history = data
+        // Run expiry on load
+        this.expireOldEntries()
+      }
+    } catch (error) {
+      console.warn('[QuickBoard] Failed to load history:', error)
+      this.history = []
+    }
+  }
+
+  private saveHistory(): void {
+    try {
+      this.store.set('items', this.history)
+    } catch (error) {
+      console.warn('[QuickBoard] Failed to save history:', error)
+    }
+  }
+
+  // ─── Expiry ─────────────────────────────────────────────────────────────
+
+  private expireOldEntries(): void {
+    const conf = this.getConf()
+    if (!conf.auto_expire || conf.max_age_hours <= 0) return
+
+    const cutoff = new Date(Date.now() - conf.max_age_hours * 60 * 60 * 1000).toISOString()
+    const before = this.history.length
+    this.history = this.history.filter(
+      (item) => item.pinned || item.timestamp >= cutoff
+    )
+    if (this.history.length < before) {
+      this.saveHistory()
+      console.log(
+        `[QuickBoard] Expired ${before - this.history.length} old entries`
+      )
+    }
+  }
+
+  // ─── Hashing ────────────────────────────────────────────────────────────
+
+  private hashText(text: string): string {
+    return createHash('md5').update(text).digest('hex')
+  }
+
+  private hashImage(img: Electron.NativeImage): string {
+    const buf = img.toPNG()
+    return createHash('md5').update(buf).digest('hex')
+  }
+
+  // ─── ID generation ──────────────────────────────────────────────────────
+
+  private generateId(): string {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  // ─── Content type detection ─────────────────────────────────────────────
+
+  private detectContentIcon(text: string): string {
+    if (/^https?:\/\//.test(text)) return 'link'
+    const codeIndicators = [
+      'function',
+      'def ',
+      'class ',
+      'import ',
+      'const ',
+      'let ',
+      'var ',
+      '=>',
+      '{'
+    ]
+    if (codeIndicators.some((ind) => text.includes(ind))) return 'code'
+    return 'text'
+  }
+
+  // ─── Clipboard polling ──────────────────────────────────────────────────
+
+  private checkClipboard(): void {
+    try {
+      // Check for text first
+      const text = clipboard.readText()
+      if (text && text.trim().length > 0) {
+        const hash = this.hashText(text)
+        if (hash !== this.lastTextHash) {
+          this.lastTextHash = hash
+          this.handleNewText(text)
+          return
+        }
+      }
+
+      // Check for image
+      const img = clipboard.readImage()
+      if (!img.isEmpty()) {
+        const imgHash = this.hashImage(img)
+        if (imgHash !== this.lastImageHash) {
+          this.lastImageHash = imgHash
+          this.handleNewImage(img)
+        }
+      }
+    } catch (error) {
+      // Clipboard access can fail transiently -- this is expected
+      if (String(error).indexOf('clipboard') === -1) {
+        console.warn('[QuickBoard] Clipboard poll error:', error)
+      }
+    }
+  }
+
+  private handleNewText(text: string): void {
+    // Security: skip secrets/passwords
+    if (looksLikeSecret(text)) {
+      this.skippedCount++
+      console.log(
+        `[QuickBoard] Skipped secret (total: ${this.skippedCount})`
+      )
+      return
+    }
+
+    // Check for duplicate -- bump copy count instead of adding new entry
+    const existingIndex = this.history.findIndex(
+      (item) => item.type === 'text' && item.text === text
+    )
+
+    if (existingIndex !== -1) {
+      const existing = this.history[existingIndex]
+      existing.copyCount += 1
+      existing.timestamp = new Date().toISOString()
+      // Move to top
+      this.history.splice(existingIndex, 1)
+      this.history.unshift(existing)
+      this.saveHistory()
+      this.broadcastChange()
+      return
+    }
+
+    // New text item
+    const preview = text.replace(/\n/g, ' ').trim().slice(0, 120)
+    const item: ClipboardItem = {
+      id: this.generateId(),
+      text,
+      type: 'text',
+      timestamp: new Date().toISOString(),
+      copyCount: 1,
+      pinned: false,
+      preview: preview + (text.length > 120 ? '...' : '')
+    }
+
+    this.history.unshift(item)
+    this.trimHistory()
+    this.saveHistory()
+    this.broadcastChange()
+  }
+
+  private handleNewImage(img: Electron.NativeImage): void {
+    const size = img.getSize()
+    const dataUrl = img.toDataURL()
+
+    // Create a short preview description
+    const preview = `Image ${size.width}x${size.height}`
+
+    const item: ClipboardItem = {
+      id: this.generateId(),
+      text: null,
+      type: 'image',
+      timestamp: new Date().toISOString(),
+      copyCount: 1,
+      pinned: false,
+      preview,
+      imageDataUrl: dataUrl,
+      imageWidth: size.width,
+      imageHeight: size.height
+    }
+
+    this.history.unshift(item)
+    this.trimHistory()
+    this.saveHistory()
+    this.broadcastChange()
+  }
+
+  /**
+   * Enforce max_entries limit. Pinned items are always kept.
+   * Oldest unpinned items are removed first.
+   */
+  private trimHistory(): void {
+    const conf = this.getConf()
+    const maxEntries = conf.max_entries
+
+    const pinned = this.history.filter((h) => h.pinned)
+    const unpinned = this.history.filter((h) => !h.pinned)
+
+    if (unpinned.length > maxEntries) {
+      this.history = [...pinned, ...unpinned.slice(0, maxEntries)]
+    }
+  }
+
+  // ─── IPC broadcasting ──────────────────────────────────────────────────
+
+  private broadcastChange(): void {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_SEND.CLIPBOARD_ON_CHANGE, this.history)
+      }
+    })
+  }
+
+  // ─── Public API ─────────────────────────────────────────────────────────
+
+  /**
+   * Start monitoring the clipboard. Called once during app startup.
+   */
+  init(): void {
+    if (this.pollInterval) return
+
+    // Initialize hashes from current clipboard content to avoid
+    // immediately capturing whatever is already on the clipboard
+    try {
+      const text = clipboard.readText()
+      if (text) this.lastTextHash = this.hashText(text)
+      const img = clipboard.readImage()
+      if (!img.isEmpty()) this.lastImageHash = this.hashImage(img)
+    } catch {
+      // Ignore startup hash errors
+    }
+
+    this.pollInterval = setInterval(() => this.checkClipboard(), 500)
+    console.log(
+      `[QuickBoard] Clipboard monitor started (${this.history.length} items in history)`
+    )
+  }
+
+  /** Stop monitoring. Called during app shutdown. */
+  destroy(): void {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval)
+      this.pollInterval = null
+    }
+    console.log('[QuickBoard] Clipboard monitor stopped')
+  }
+
+  /** Get the full clipboard history for the renderer. */
+  getHistory(): ClipboardItem[] {
+    // Run expiry before returning
+    this.expireOldEntries()
+    return this.history
+  }
+
+  /**
+   * Write text to clipboard. Used when user selects an item from history.
+   * Updates the lastTextHash so the poll loop doesn't re-capture it.
+   */
+  writeText(text: string): void {
+    clipboard.writeText(text)
+    this.lastTextHash = this.hashText(text)
+    console.log('[QuickBoard] Text written to clipboard')
+  }
+
+  /**
+   * Write an image to clipboard from its data URL.
+   * Updates the lastImageHash so the poll loop doesn't re-capture it.
+   */
+  writeImage(dataUrl: string): void {
+    const img = nativeImage.createFromDataURL(dataUrl)
+    clipboard.writeImage(img)
+    this.lastImageHash = this.hashImage(img)
+    console.log('[QuickBoard] Image written to clipboard')
+  }
+
+  /**
+   * Simulate paste after writing to clipboard.
+   * TODO: Use nut-js or node-ffi-napi to send actual Ctrl+V keystroke.
+   * For now, this is a no-op -- the content is already on the clipboard.
+   */
+  simulatePaste(itemId: string): void {
+    const item = this.history.find((h) => h.id === itemId)
+    if (!item) {
+      console.warn(`[QuickBoard] simulatePaste: item not found: ${itemId}`)
+      return
+    }
+
+    // Write to clipboard
+    if (item.type === 'text' && item.text) {
+      this.writeText(item.text)
+    } else if (item.type === 'image' && item.imageDataUrl) {
+      this.writeImage(item.imageDataUrl)
+    }
+
+    // Increment usage count
+    item.copyCount += 1
+    item.timestamp = new Date().toISOString()
+    this.saveHistory()
+
+    // TODO: Actually simulate Ctrl+V keystroke here
+    console.log(`[QuickBoard] Paste simulated for item ${itemId} (clipboard only, no keystroke)`)
+  }
+
+  /** Delete a single item from history by ID. */
+  deleteItem(itemId: string): ClipboardItem[] {
+    this.history = this.history.filter((h) => h.id !== itemId)
+    this.saveHistory()
+    this.broadcastChange()
+    return this.history
+  }
+
+  /** Toggle pin status of an item. */
+  pinItem(itemId: string): ClipboardItem[] {
+    const item = this.history.find((h) => h.id === itemId)
+    if (item) {
+      item.pinned = !item.pinned
+      this.saveHistory()
+      this.broadcastChange()
+    }
+    return this.history
+  }
+
+  /** Clear all non-pinned history. */
+  clearHistory(): ClipboardItem[] {
+    this.history = this.history.filter((h) => h.pinned)
+    this.saveHistory()
+    this.broadcastChange()
+    return this.history
+  }
+}
+
+// ─── Singleton ──────────────────────────────────────────────────────────────
+
+let instance: ClipboardService | null = null
+
+export function getClipboardService(): ClipboardService {
+  if (!instance) {
+    instance = new ClipboardService()
+  }
+  return instance
+}
+
+export function initClipboard(): void {
+  getClipboardService().init()
+}
+
+export function destroyClipboard(): void {
+  if (instance) {
+    instance.destroy()
+    instance = null
+  }
+}

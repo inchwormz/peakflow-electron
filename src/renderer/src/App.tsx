@@ -3,6 +3,7 @@ import { AppShell } from './components/layout/AppShell'
 import { TitleBar } from './components/layout/TitleBar'
 import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
 import { FocusDim } from './tools/focusdim/FocusDim'
+import { QuickBoard } from './tools/quickboard/QuickBoard'
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -124,6 +125,8 @@ export default function App(): React.JSX.Element {
     switch (toolId) {
       case ToolId.FocusDim:
         return <FocusDim />
+      case ToolId.QuickBoard:
+        return <QuickBoard />
       default:
         return <ToolPlaceholder toolId={toolId} />
     }
