@@ -1,0 +1,35 @@
+appId: pro.getpeakflow.core
+productName: PeakFlow
+directories:
+  buildResources: resources
+  output: release
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.*'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!sidecar/*'
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+extraResources:
+  - from: sidecar/dist/soundsplit_sidecar/
+    to: sidecar/
+    filter:
+      - '**/*'
+publish:
+  provider: github
+  owner: inchwormz
+  repo: Peakflow

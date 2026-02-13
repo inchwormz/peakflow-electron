@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+/* ─── Design System Tokens ───────────────────────────────────────────────── */
+
+:root {
+  --bg-void: #08080a;
+  --bg-surface: #111114;
+  --bg-card: #17171b;
+  --bg-elevated: #1e1e23;
+  --bg-hover: #25252b;
+
+  --border-dim: #2a2a30;
+  --border-mid: #3a3a42;
+  --border-bright: #55555f;
+
+  --accent: #e8a237;
+  --accent-dim: #b37a1f;
+  --accent-glow: rgba(232, 162, 55, 0.15);
+  --accent-bright: #ffc857;
+
+  --success: #4ae08a;
+  --danger: #f05858;
+  --info: #5eb8ff;
+
+  --text-primary: #eaeaed;
+  --text-secondary: #8b8b96;
+  --text-tertiary: #55555f;
+  --text-ghost: #3a3a42;
+}
+
+/* ─── Base Styles ────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg-void);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* ─── Custom Scrollbar ───────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-dim);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-mid);
+}
+
+/* ─── Selection ──────────────────────────────────────────────────────────── */
+
+::selection {
+  background: var(--accent-glow);
+  color: var(--accent-bright);
+}
+
+/* ─── Utility Classes ────────────────────────────────────────────────────── */
+
+.font-mono {
+  font-family: 'DM Mono', monospace;
+}

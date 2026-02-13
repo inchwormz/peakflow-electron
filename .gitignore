@@ -1,0 +1,14 @@
+node_modules/
+out/
+release/
+dist/
+.env
+*.local
+.DS_Store
+Thumbs.db
+
+# Sidecar build output
+sidecar/dist/
+sidecar/build/
+sidecar/__pycache__/
+nul
