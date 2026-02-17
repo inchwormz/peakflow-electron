@@ -224,6 +224,16 @@ function DurationTab({
           onChange={(v) => onSave('sessions_before_long', Math.max(1, v))}
         />
       </SettingRow>
+      <div
+        style={{
+          fontSize: 10,
+          color: DS.textLabel,
+          padding: '8px 0 0',
+          lineHeight: 1.4
+        }}
+      >
+        Duration changes apply when the timer is idle. Reset the timer to apply during a session.
+      </div>
     </>
   )
 }

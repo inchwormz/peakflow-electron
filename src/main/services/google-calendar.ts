@@ -371,6 +371,7 @@ class GoogleCalendarService {
         if (!refreshed) {
           this.status.connected = false
           this.status.error = 'Token expired — reconnect Google Calendar'
+          this.broadcastStatusUpdate()
           return []
         }
         // Retry
@@ -399,6 +400,7 @@ class GoogleCalendarService {
       const message = err instanceof Error ? err.message : String(err)
       this.status.error = message
       console.error('[Calendar] Fetch failed:', message)
+      this.broadcastStatusUpdate()
       return []
     }
   }
@@ -453,6 +455,18 @@ class GoogleCalendarService {
     for (const win of windows) {
       if (!win.isDestroyed()) {
         win.webContents.send(IPC_SEND.CALENDAR_EVENTS_UPDATED, this.events)
+      }
+    }
+  }
+
+  /**
+   * Push status changes (connected/error) to all open renderer windows.
+   */
+  private broadcastStatusUpdate(): void {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_SEND.CALENDAR_STATUS_CHANGED, this.status)
       }
     }
   }

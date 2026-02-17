@@ -126,6 +126,7 @@ export const IPC_SEND = {
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
+  CALENDAR_STATUS_CHANGED: 'calendar:status-changed',
   SCREENSLAP_STATE_CHANGED: 'screenslap:state-changed',
   SCREENSLAP_ALERT_DATA: 'screenslap:alert-data',
   LICENSE_STATUS_CHANGED: 'license:status-changed',

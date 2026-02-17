@@ -232,7 +232,7 @@ export function FocusDetector({
     borderRadius: 6,
     overflow: 'hidden',
     border: `1px solid ${status === 'focused' ? DS.green : status === 'away' ? DS.red : DS.border}`,
-    opacity: showPreview ? 0.9 : 0,
+    opacity: showPreview && (status === 'focused' || status === 'away') ? 0.9 : 0,
     transition: 'border-color 0.3s, opacity 0.3s',
     position: 'relative'
   }

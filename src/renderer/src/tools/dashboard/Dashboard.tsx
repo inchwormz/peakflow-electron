@@ -67,11 +67,28 @@ const TOOLS: ToolMeta[] = [
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
+interface TrialStatus {
+  isLicensed: boolean
+  daysRemaining: number
+}
+
 export function Dashboard(): React.JSX.Element {
   const [hoveredTool, setHoveredTool] = useState<string | null>(null)
+  const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null)
 
   const openTool = useCallback((toolId: ToolId) => {
     window.peakflow.invoke(IPC_INVOKE.WINDOW_OPEN, { toolId })
+  }, [])
+
+  useEffect(() => {
+    window.peakflow
+      .invoke(IPC_INVOKE.SECURITY_GET_TRIAL_STATUS)
+      .then((status) => {
+        if (status && typeof status === 'object') {
+          setTrialStatus(status as TrialStatus)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // ── Styles ──────────────────────────────────────────────────────────────
@@ -131,6 +148,7 @@ export function Dashboard(): React.JSX.Element {
               key={tool.id}
               tool={tool}
               isHovered={hoveredTool === tool.id}
+              trialStatus={trialStatus}
               onHover={() => setHoveredTool(tool.id)}
               onLeave={() => setHoveredTool(null)}
               onClick={() => openTool(tool.id)}
@@ -148,12 +166,14 @@ export function Dashboard(): React.JSX.Element {
 function ToolCard({
   tool,
   isHovered,
+  trialStatus,
   onHover,
   onLeave,
   onClick
 }: {
   tool: ToolMeta
   isHovered: boolean
+  trialStatus: TrialStatus | null
   onHover: () => void
   onLeave: () => void
   onClick: () => void
@@ -197,8 +217,41 @@ function ToolCard({
     lineHeight: 1.4
   }
 
+  const badgeStyle: CSSProperties | null =
+    trialStatus && !trialStatus.isLicensed
+      ? {
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          fontSize: 8,
+          fontWeight: 600,
+          letterSpacing: 0.5,
+          padding: '2px 6px',
+          borderRadius: 6,
+          background:
+            trialStatus.daysRemaining > 7
+              ? 'rgba(74,224,138,0.15)'
+              : trialStatus.daysRemaining > 0
+                ? 'rgba(234,179,8,0.15)'
+                : 'rgba(240,88,88,0.15)',
+          color:
+            trialStatus.daysRemaining > 7
+              ? '#4ae08a'
+              : trialStatus.daysRemaining > 0
+                ? '#eab308'
+                : '#f05858'
+        }
+      : null
+
   return (
     <div style={card} onMouseEnter={onHover} onMouseLeave={onLeave} onClick={onClick}>
+      {badgeStyle && (
+        <div style={badgeStyle}>
+          {trialStatus!.daysRemaining > 0
+            ? `${trialStatus!.daysRemaining}d trial`
+            : 'Trial ended'}
+        </div>
+      )}
       <div style={iconWrap}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill={tool.accent}>
           <path d={tool.icon} />

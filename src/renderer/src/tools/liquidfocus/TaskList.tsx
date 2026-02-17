@@ -406,7 +406,9 @@ function TaskRow({
       onMouseLeave={() => setHovered(false)}
       onContextMenu={(e) => {
         e.preventDefault()
-        onDelete()
+        if (window.confirm(`Delete "${task.name}"?`)) {
+          onDelete()
+        }
       }}
     >
       {/* Checkbox */}
@@ -450,6 +452,20 @@ function TaskRow({
           }}
         >
           {task.name}
+          {task.todoistId && (
+            <span
+              style={{
+                fontSize: 8,
+                color: DS.red,
+                fontWeight: 600,
+                marginLeft: 6,
+                opacity: 0.7,
+                letterSpacing: 0.5
+              }}
+            >
+              T
+            </span>
+          )}
         </div>
         {task.due && (
           <div
