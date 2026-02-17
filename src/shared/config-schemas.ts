@@ -44,6 +44,8 @@ export interface LiquidFocusConfig {
   long_break_duration: number
   sessions_before_long: number
   alert_sound: boolean
+  auto_start_breaks: boolean
+  todoist_project_filter: string
   distraction_sites: string[]
 }
 
@@ -99,6 +101,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     long_break_duration: 15,
     sessions_before_long: 4,
     alert_sound: true,
+    auto_start_breaks: false,
+    todoist_project_filter: '',
     distraction_sites: [
       'youtube.com',
       'facebook.com',

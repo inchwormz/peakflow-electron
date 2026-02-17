@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import { TitleBar } from './components/layout/TitleBar'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
+import { Dashboard } from './tools/dashboard/Dashboard'
 import { FocusDim } from './tools/focusdim/FocusDim'
 import { QuickBoard } from './tools/quickboard/QuickBoard'
 import { ScreenSlap } from './tools/screenslap/ScreenSlap'
@@ -139,7 +140,12 @@ export default function App(): React.JSX.Element {
       return <AlertOverlay />
     }
 
-    if (!toolId) return <DebugLanding />
+    // Dashboard hub
+    if (systemId === SystemWindowId.Dashboard) {
+      return <Dashboard />
+    }
+
+    if (!toolId) return <Dashboard />
     switch (toolId) {
       case ToolId.FocusDim:
         return <FocusDim />

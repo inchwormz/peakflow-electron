@@ -68,6 +68,7 @@ export interface LiquidFocusTask {
   due: string | null
   done: boolean
   createdAt: number
+  todoistId?: string
 }
 
 export interface SessionStats {
@@ -209,8 +210,18 @@ export function LiquidFocus(): React.JSX.Element {
         updates
       )) as LiquidFocusTask[]
       setTasks(result)
+
+      // Sync completion to Todoist if task has a todoistId
+      if (updates.done === true) {
+        const task = tasks.find((t) => t.id === taskId)
+        if (task?.todoistId) {
+          window.peakflow
+            .invoke(IPC_INVOKE.TODOIST_COMPLETE_TASK, task.todoistId)
+            .catch((err) => console.warn('[LiquidFocus] Todoist sync failed:', err))
+        }
+      }
     },
-    []
+    [tasks]
   )
 
   const handleDeleteTask = useCallback(async (taskId: string) => {

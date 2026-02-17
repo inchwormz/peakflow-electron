@@ -2,11 +2,11 @@
  * System tray icon and context menu.
  *
  * PeakFlow lives in the system tray — there is no main window.
- * Double-clicking the tray icon opens LiquidFocus (the flagship tool).
+ * Double-clicking the tray icon opens the Dashboard hub.
  */
 
 import { Tray, Menu, app, nativeImage } from 'electron'
-import { ToolId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
+import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { createToolWindow } from './windows'
 
 let tray: Tray | null = null
@@ -146,9 +146,9 @@ export function createTray(): void {
   tray.setToolTip('PeakFlow \u2014 Mac-level productivity for Windows')
   tray.setContextMenu(buildContextMenu())
 
-  // Double-click opens LiquidFocus (the "main" tool)
+  // Double-click opens the Dashboard hub
   tray.on('double-click', () => {
-    createToolWindow(ToolId.LiquidFocus)
+    createToolWindow(SystemWindowId.Dashboard)
   })
 
   console.log('[PeakFlow] System tray created')

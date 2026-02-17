@@ -45,6 +45,7 @@ export interface LiquidFocusTask {
   due: string | null
   done: boolean
   createdAt: number
+  todoistId?: string
 }
 
 export interface SessionStats {
@@ -102,6 +103,7 @@ class LiquidFocusService {
         long_break_duration: 15,
         sessions_before_long: 4,
         alert_sound: true,
+        auto_start_breaks: false,
         distraction_sites: []
       }
     }
@@ -211,6 +213,11 @@ class LiquidFocusService {
 
       // Play sound notification
       this.notifyPhaseComplete('work')
+
+      // Auto-start breaks if enabled
+      if (cfg.auto_start_breaks) {
+        this.start()
+      }
     } else {
       // Break is over, back to work
       const cfg = this.getConfigSafe()
@@ -218,6 +225,11 @@ class LiquidFocusService {
       this.total = cfg.work_duration * 60
       this.remaining = this.total
       this.notifyPhaseComplete('break')
+
+      // Auto-start next work session if auto-start is enabled
+      if (cfg.auto_start_breaks) {
+        this.start()
+      }
     }
 
     this.broadcastState()

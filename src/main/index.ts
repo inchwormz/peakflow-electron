@@ -19,6 +19,7 @@ import { initCalendar, destroyCalendar } from './services/google-calendar'
 import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
 import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
 import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
+import { initTodoist, destroyTodoist } from './services/todoist'
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ if (!gotLock) {
     initScreenSlap()
     initLiquidFocus()
     initSoundSplit()
+    initTodoist()
 
     console.log('[PeakFlow] Core started — running in system tray')
   })
@@ -74,6 +76,7 @@ if (!gotLock) {
   // Cleanup before quitting
   app.on('before-quit', () => {
     console.log('[PeakFlow] Shutting down...')
+    destroyTodoist()
     destroySoundSplit()
     destroyLiquidFocus()
     destroyScreenSlap()

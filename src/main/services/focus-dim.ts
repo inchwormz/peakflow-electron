@@ -71,11 +71,9 @@ class FocusDimService {
    * If the persisted config has `enabled: true`, auto-enables dimming.
    */
   init(): void {
-    const conf = this.getConf()
-    if (conf.enabled) {
-      // Delay slightly so all windows are ready
-      setTimeout(() => this.enable(), 500)
-    }
+    // Always start disabled — user must explicitly toggle on via hotkey or UI.
+    // Previous sessions may have left enabled: true in the config store.
+    this.setConf('enabled', false)
     console.log('[FocusDim] Service initialized')
   }
 
@@ -232,7 +230,7 @@ class FocusDimService {
 
   private destroyOverlayWindow(): void {
     if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-      this.overlayWindow.close()
+      this.overlayWindow.destroy()
     }
     this.overlayWindow = null
   }

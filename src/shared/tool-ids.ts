@@ -13,6 +13,7 @@ export enum ToolId {
 
 /** Window types that aren't tools (licensing, settings, etc.) */
 export enum SystemWindowId {
+  Dashboard = 'dashboard',
   TrialExpired = 'trial-expired',
   Settings = 'settings',
   /** ScreenSlap full-screen alert overlay */

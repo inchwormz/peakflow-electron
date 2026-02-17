@@ -10,7 +10,9 @@ import { IPC_INVOKE } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig } from '@shared/config-schemas'
-import { ToolId } from '@shared/tool-ids'
+import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import type { WindowId } from '@shared/tool-ids'
+import { createToolWindow } from './windows'
 import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS } from './security/trial'
@@ -27,6 +29,8 @@ import { getLiquidFocusService } from './services/liquidfocus'
 import type { LiquidFocusFullState, LiquidFocusTask, TimerState, SessionStats } from './services/liquidfocus'
 import { getSoundSplitBridge } from './sidecar/soundsplit-bridge'
 import type { AudioSession, MasterAudio } from './sidecar/soundsplit-bridge'
+import { getTodoistService } from './services/todoist'
+import type { TodoistStatus, TodoistTask, TodoistProject } from './services/todoist'
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -414,6 +418,59 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.SOUNDSPLIT_SET_MASTER,
     (_event, volume: number): boolean => {
       return getSoundSplitBridge().setMaster(volume)
+    }
+  )
+
+  // ─── Todoist ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.TODOIST_AUTHENTICATE,
+    async (): Promise<TodoistStatus> => {
+      return getTodoistService().authenticate()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.TODOIST_DISCONNECT,
+    (): TodoistStatus => {
+      return getTodoistService().disconnect()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.TODOIST_GET_STATUS,
+    (): TodoistStatus => {
+      return getTodoistService().getStatus()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.TODOIST_GET_TASKS,
+    async (_event, projectId?: string): Promise<TodoistTask[]> => {
+      return getTodoistService().getTasks(projectId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.TODOIST_COMPLETE_TASK,
+    async (_event, taskId: string): Promise<boolean> => {
+      return getTodoistService().completeTask(taskId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.TODOIST_GET_PROJECTS,
+    async (): Promise<TodoistProject[]> => {
+      return getTodoistService().getProjects()
+    }
+  )
+
+  // ─── Window Management (open tool from Dashboard) ─────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.WINDOW_OPEN,
+    (_event, payload: { toolId: string }): void => {
+      createToolWindow(payload.toolId as WindowId)
     }
   )
 
