@@ -148,7 +148,8 @@ export function MeetReady(): React.JSX.Element {
     startCamera,
     stopCamera,
     startMic,
-    stopMic
+    stopMic,
+    error: mediaError
   } = useMediaDevices()
 
   // Brightness / mic analysis state
@@ -223,8 +224,12 @@ export function MeetReady(): React.JSX.Element {
     const unsubEvents = api.on(IPC_SEND.CALENDAR_EVENTS_UPDATED, (evts: unknown) => {
       setEvents(evts as CalendarEvent[])
     })
+    const unsubStatus = api.on(IPC_SEND.CALENDAR_STATUS_CHANGED, (st: unknown) => {
+      setCalStatus(st as CalendarStatus)
+    })
     return () => {
       unsubEvents()
+      unsubStatus()
     }
   }, [])
 
@@ -353,6 +358,23 @@ export function MeetReady(): React.JSX.Element {
           <div style={styles.mainBody}>
             {/* Camera preview */}
             <CameraPreview stream={videoStream} onBrightness={onBrightness} />
+
+            {/* Media error banner */}
+            {mediaError && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: DS.error,
+                  background: 'rgba(240,88,88,0.1)',
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  marginTop: 8,
+                  textAlign: 'center'
+                }}
+              >
+                {mediaError}
+              </div>
+            )}
 
             {/* Status cards row */}
             <div style={styles.statusRow}>
@@ -497,6 +519,13 @@ export function MeetReady(): React.JSX.Element {
                 <span style={styles.settingUnit}>min</span>
               </div>
             </div>
+
+            {/* Calendar error */}
+            {calStatus.error && (
+              <div style={{ fontSize: 11, color: DS.error, padding: '8px 0' }}>
+                {calStatus.error}
+              </div>
+            )}
 
             {/* Calendar status */}
             {calStatus.connected ? (

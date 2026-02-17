@@ -318,6 +318,11 @@ export function LiquidFocus(): React.JSX.Element {
               stats={stats}
               focusDetectionEnabled={focusDetectionEnabled}
               focusAwayThresholdSecs={focusAwayThresholdSecs}
+              activeTaskName={
+                timer.activeTaskIndex >= 0 && timer.activeTaskIndex < tasks.length
+                  ? tasks[timer.activeTaskIndex].name
+                  : null
+              }
               onToggle={handleToggle}
               onReset={handleReset}
               onSkip={handleSkip}

@@ -228,6 +228,24 @@ class ClipboardService {
     const size = img.getSize()
     const dataUrl = img.toDataURL()
 
+    // Check for duplicate image — bump copy count instead of adding new entry
+    const imgHash = this.lastImageHash // already computed in checkClipboard
+    const existingIndex = this.history.findIndex(
+      (item) => item.type === 'image' && item.imageDataUrl === dataUrl
+    )
+
+    if (existingIndex !== -1) {
+      const existing = this.history[existingIndex]
+      existing.copyCount += 1
+      existing.timestamp = new Date().toISOString()
+      // Move to top
+      this.history.splice(existingIndex, 1)
+      this.history.unshift(existing)
+      this.saveHistory()
+      this.broadcastChange()
+      return
+    }
+
     // Create a short preview description
     const preview = `Image ${size.width}x${size.height}`
 
@@ -366,11 +384,11 @@ class ClipboardService {
     item.timestamp = new Date().toISOString()
     this.saveHistory()
 
-    // Wait a brief moment for clipboard to settle, then simulate Ctrl+V
+    // Wait for clipboard to settle and target window to re-focus, then simulate Ctrl+V
     setTimeout(() => {
       const success = simulateCtrlV()
       console.log(`[QuickBoard] Paste ${success ? 'sent' : 'failed'} for item ${itemId}`)
-    }, 50)
+    }, 100)
   }
 
   /** Delete a single item from history by ID. */

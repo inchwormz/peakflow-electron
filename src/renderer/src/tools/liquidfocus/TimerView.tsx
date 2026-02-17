@@ -17,6 +17,7 @@ interface TimerViewProps {
   stats: SessionStats
   focusDetectionEnabled: boolean
   focusAwayThresholdSecs: number
+  activeTaskName?: string | null
   onToggle: () => void
   onReset: () => void
   onSkip: () => void
@@ -38,6 +39,7 @@ export function TimerView({
   stats,
   focusDetectionEnabled,
   focusAwayThresholdSecs,
+  activeTaskName,
   onToggle,
   onReset,
   onSkip,
@@ -205,11 +207,29 @@ export function TimerView({
             letterSpacing: 3,
             textTransform: 'uppercase',
             color: DS.textMuted,
-            marginBottom: focusDetectionEnabled ? 8 : 16
+            marginBottom: activeTaskName ? 4 : focusDetectionEnabled ? 8 : 16
           }}
         >
           {modeLabel}
         </div>
+
+        {/* Active task label */}
+        {activeTaskName && (
+          <div
+            style={{
+              fontSize: 11,
+              color: DS.textDim,
+              marginBottom: focusDetectionEnabled ? 6 : 12,
+              maxWidth: '80%',
+              textAlign: 'center',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {activeTaskName}
+          </div>
+        )}
 
         {/* Focus detection indicator */}
         {focusDetectionEnabled && (
@@ -235,7 +255,7 @@ export function TimerView({
           <IconButton onClick={onReset} title="Reset">
             &#8635;
           </IconButton>
-          <MainButton isRunning={isRunning} onClick={onToggle} />
+          <MainButton status={timer.status} onClick={onToggle} />
           <IconButton onClick={onSkip} title="Skip">
             &#9654;
           </IconButton>
@@ -255,6 +275,7 @@ export function TimerView({
           <StatItem
             value={String(stats.streak)}
             label="STREAK"
+            suffix="days"
             color={DS.white}
             onClick={onShowStats}
           />
@@ -371,20 +392,22 @@ function IconButton({
 }
 
 function MainButton({
-  isRunning,
+  status,
   onClick
 }: {
-  isRunning: boolean
+  status: 'idle' | 'running' | 'paused'
   onClick: () => void
 }): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
+  const isRunning = status === 'running'
+  const isPaused = status === 'paused'
 
   const baseStyle: CSSProperties = {
     padding: '10px 32px',
     borderRadius: 20,
-    border: `1px solid ${isRunning ? DS.white : DS.borderLight}`,
+    border: `1px solid ${isRunning ? DS.white : isPaused ? DS.amber : DS.borderLight}`,
     background: isRunning ? DS.white : DS.surface2,
-    color: isRunning ? DS.bg : DS.white,
+    color: isRunning ? DS.bg : isPaused ? DS.amber : DS.white,
     fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
     fontSize: 11,
     fontWeight: 600,
@@ -400,9 +423,11 @@ function MainButton({
       baseStyle.borderColor = '#ddd'
     } else {
       baseStyle.background = DS.borderLight
-      baseStyle.borderColor = '#444'
+      baseStyle.borderColor = isPaused ? DS.amber : '#444'
     }
   }
+
+  const label = isRunning ? 'PAUSE' : isPaused ? 'RESUME' : 'START'
 
   return (
     <button
@@ -411,7 +436,7 @@ function MainButton({
       onMouseLeave={() => setHovered(false)}
       style={baseStyle}
     >
-      {isRunning ? 'PAUSE' : 'START'}
+      {label}
     </button>
   )
 }
@@ -419,17 +444,26 @@ function MainButton({
 function StatItem({
   value,
   label,
+  suffix,
   color,
   onClick
 }: {
   value: string
   label: string
+  suffix?: string
   color: string
   onClick?: () => void
 }): React.JSX.Element {
   return (
     <div style={{ textAlign: 'center', cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
-      <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color }}>{value}</div>
+      <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color }}>
+        {value}
+        {suffix && (
+          <span style={{ fontSize: 9, fontWeight: 400, color: DS.textLabel, marginLeft: 2 }}>
+            {suffix}
+          </span>
+        )}
+      </div>
       <div
         style={{
           fontSize: 8,

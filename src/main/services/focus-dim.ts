@@ -154,6 +154,7 @@ class FocusDimService {
   /** Set fade duration in ms */
   setFadeDuration(ms: number): void {
     this.setConf('fade_duration', Math.max(0, Math.min(2000, ms)))
+    this.updateOverlay()
     this.broadcastState()
   }
 
