@@ -32,11 +32,12 @@ interface WindowOverrides {
 }
 
 const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
+  [SystemWindowId.Dashboard]: { width: 420, height: 560, resizable: false },
   [ToolId.FocusDim]: { width: 340, height: 680, resizable: false },
   [ToolId.QuickBoard]: { width: 340, height: 540, alwaysOnTop: true, skipTaskbar: true },
   [ToolId.MeetReady]: { width: 340, height: 540 },
   [ToolId.SoundSplit]: { width: 340, height: 540, minWidth: 340, minHeight: 400 },
-  [ToolId.LiquidFocus]: { width: 420, height: 640, minWidth: 340, minHeight: 540 },
+  [ToolId.LiquidFocus]: { width: 420, height: 640, minWidth: 340, minHeight: 540, alwaysOnTop: true },
   [ToolId.ScreenSlap]: { width: 400, height: 600 },
   [SystemWindowId.ScreenSlapAlert]: {
     width: 0,

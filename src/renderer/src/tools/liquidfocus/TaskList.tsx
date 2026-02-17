@@ -11,8 +11,9 @@
  *   - Completed section: collapsible with toggle
  */
 
-import { useState, useCallback, useMemo, useRef, type CSSProperties } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import { DS, type LiquidFocusTask } from './LiquidFocus'
+import { IPC_INVOKE } from '@shared/ipc-types'
 
 interface TaskListProps {
   tasks: LiquidFocusTask[]
@@ -39,6 +40,7 @@ export function TaskList({
   const [estimated, setEstimated] = useState('1')
   const [due, setDue] = useState('')
   const [showCompleted, setShowCompleted] = useState(false)
+  const [importing, setImporting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // ── Add task ──────────────────────────────────────────────────────────
@@ -72,6 +74,60 @@ export function TaskList({
     setDue('')
     inputRef.current?.focus()
   }, [taskName, estimated, due, onAdd])
+
+  // ── Import from Todoist ──────────────────────────────────────────────
+
+  const handleImportTodoist = useCallback(async () => {
+    setImporting(true)
+    try {
+      // Check if Todoist is connected
+      const status = (await window.peakflow.invoke(IPC_INVOKE.TODOIST_GET_STATUS)) as {
+        connected: boolean
+      }
+      if (!status.connected) {
+        setImporting(false)
+        return
+      }
+
+      // Get project filter from config
+      const cfg = (await window.peakflow.invoke(IPC_INVOKE.CONFIG_GET, {
+        tool: 'liquidfocus'
+      })) as { todoist_project_filter?: string } | null
+      const projectFilter = cfg?.todoist_project_filter || undefined
+
+      // Fetch tasks from Todoist
+      const todoistTasks = (await window.peakflow.invoke(
+        IPC_INVOKE.TODOIST_GET_TASKS,
+        projectFilter
+      )) as {
+        id: string
+        content: string
+        due: { date: string; string: string } | null
+        priority: number
+      }[]
+
+      // Get existing todoist IDs to avoid duplicates
+      const existingTodoistIds = new Set(tasks.filter((t) => t.todoistId).map((t) => t.todoistId))
+
+      // Import each task that isn't already imported
+      for (const tt of todoistTasks) {
+        if (existingTodoistIds.has(tt.id)) continue
+
+        await onAdd({
+          name: tt.content,
+          category: 'Todoist',
+          estimated: 1,
+          actual: 0,
+          due: tt.due?.date || null,
+          done: false,
+          todoistId: tt.id
+        })
+      }
+    } catch (err) {
+      console.warn('[TaskList] Todoist import failed:', err)
+    }
+    setImporting(false)
+  }, [tasks, onAdd])
 
   // ── Group tasks by category ───────────────────────────────────────────
 
@@ -160,6 +216,7 @@ export function TaskList({
           Tasks
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
+          <TodoistImportBtn onClick={handleImportTodoist} importing={importing} />
           <NavBtn onClick={onShowSettings}>&#9881;</NavBtn>
         </div>
       </div>
@@ -439,6 +496,60 @@ function TaskRow({
         {task.actual}/{task.estimated}
       </div>
     </div>
+  )
+}
+
+function TodoistImportBtn({
+  onClick,
+  importing
+}: {
+  onClick: () => void
+  importing: boolean
+}): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
+  const [status, setStatus] = useState<{ connected: boolean }>({ connected: false })
+
+  // Check if Todoist is connected
+  useEffect(() => {
+    window.peakflow
+      .invoke(IPC_INVOKE.TODOIST_GET_STATUS)
+      .then((s) => setStatus(s as { connected: boolean }))
+      .catch(() => {})
+  }, [])
+
+  // Don't render if not connected
+  if (!status.connected) return <></>
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={importing}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title="Import from Todoist"
+      style={{
+        height: 32,
+        paddingInline: 10,
+        borderRadius: 16,
+        border: `1px solid ${hovered ? DS.green : 'rgba(255,255,255,0.15)'}`,
+        background: hovered ? 'rgba(74,224,138,0.1)' : 'transparent',
+        color: importing ? DS.textLabel : DS.green,
+        cursor: importing ? 'wait' : 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: 0.5,
+        transition: 'all 0.2s',
+        fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
+        padding: '0 10px',
+        opacity: importing ? 0.5 : 1
+      }}
+    >
+      {importing ? '...' : '↓ Todoist'}
+    </button>
   )
 }
 

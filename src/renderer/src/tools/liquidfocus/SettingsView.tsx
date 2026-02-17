@@ -33,7 +33,7 @@ const DISTRACTION_SITES: Record<string, string> = {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type SettingsTab = 'duration' | 'behavior' | 'sites'
+type SettingsTab = 'duration' | 'behavior' | 'sites' | 'integrations'
 
 interface SettingsViewProps {
   onBack: () => void
@@ -46,6 +46,8 @@ interface LiquidFocusConfig {
   long_break_duration: number
   sessions_before_long: number
   alert_sound: boolean
+  auto_start_breaks: boolean
+  todoist_project_filter: string
   distraction_sites: string[]
 }
 
@@ -65,6 +67,7 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
     long_break_duration: 15,
     sessions_before_long: 4,
     alert_sound: true,
+    auto_start_breaks: false,
     distraction_sites: Object.values(DISTRACTION_SITES)
   })
 
@@ -141,10 +144,10 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
 
       {/* Tab bar */}
       <div style={tabBar}>
-        {(['duration', 'behavior', 'sites'] as SettingsTab[]).map((tab) => (
+        {(['duration', 'behavior', 'sites', 'integrations'] as SettingsTab[]).map((tab) => (
           <TabButton
             key={tab}
-            label={tab.charAt(0).toUpperCase() + tab.slice(1)}
+            label={tab === 'integrations' ? 'Sync' : tab.charAt(0).toUpperCase() + tab.slice(1)}
             isActive={activeTab === tab}
             onClick={() => setActiveTab(tab)}
           />
@@ -169,6 +172,9 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
         )}
         {activeTab === 'sites' && (
           <SitesTab config={config} onSave={saveConfigKey} />
+        )}
+        {activeTab === 'integrations' && (
+          <IntegrationsTab config={config} onSave={saveConfigKey} />
         )}
       </div>
     </div>
@@ -239,10 +245,8 @@ function BehaviorTab({
       </SettingRow>
       <SettingRow label="Auto-start breaks" isLast>
         <Toggle
-          checked={false}
-          onChange={() => {
-            // TODO: Add auto_start to config schema
-          }}
+          checked={config.auto_start_breaks}
+          onChange={(v) => onSave('auto_start_breaks', v)}
         />
       </SettingRow>
     </>
@@ -319,6 +323,242 @@ function SitesTab({
             />
           </div>
         ))}
+      </div>
+    </>
+  )
+}
+
+// ─── Integrations Tab ────────────────────────────────────────────────────────
+
+interface TodoistStatus {
+  connected: boolean
+  error: string | null
+}
+
+interface TodoistProject {
+  id: string
+  name: string
+  color: string
+}
+
+function IntegrationsTab({
+  config,
+  onSave
+}: {
+  config: LiquidFocusConfig
+  onSave: (key: string, value: unknown) => void
+}): React.JSX.Element {
+  const [status, setStatus] = useState<TodoistStatus>({ connected: false, error: null })
+  const [projects, setProjects] = useState<TodoistProject[]>([])
+  const [loading, setLoading] = useState(false)
+
+  // Load Todoist status on mount
+  useEffect(() => {
+    window.peakflow
+      .invoke(IPC_INVOKE.TODOIST_GET_STATUS)
+      .then((s) => {
+        const st = s as TodoistStatus
+        setStatus(st)
+        if (st.connected) {
+          window.peakflow
+            .invoke(IPC_INVOKE.TODOIST_GET_PROJECTS)
+            .then((p) => setProjects(p as TodoistProject[]))
+            .catch(() => {})
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleConnect = useCallback(async () => {
+    setLoading(true)
+    try {
+      const result = (await window.peakflow.invoke(IPC_INVOKE.TODOIST_AUTHENTICATE)) as TodoistStatus
+      setStatus(result)
+      if (result.connected) {
+        const p = (await window.peakflow.invoke(IPC_INVOKE.TODOIST_GET_PROJECTS)) as TodoistProject[]
+        setProjects(p)
+      }
+    } catch {
+      setStatus({ connected: false, error: 'Authentication failed' })
+    }
+    setLoading(false)
+  }, [])
+
+  const handleDisconnect = useCallback(async () => {
+    const result = (await window.peakflow.invoke(IPC_INVOKE.TODOIST_DISCONNECT)) as TodoistStatus
+    setStatus(result)
+    setProjects([])
+    onSave('todoist_project_filter', '')
+  }, [onSave])
+
+  const connBtnStyle: CSSProperties = {
+    padding: '10px 20px',
+    borderRadius: 10,
+    border: 'none',
+    fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: loading ? 'wait' : 'pointer',
+    transition: 'all 0.2s'
+  }
+
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 8,
+          fontWeight: 600,
+          letterSpacing: 2.5,
+          textTransform: 'uppercase',
+          color: DS.textLabel,
+          marginBottom: 12
+        }}
+      >
+        TODOIST
+      </div>
+
+      {/* Connection status + button */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 0',
+          borderBottom: `1px solid ${DS.surface}`
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 13, color: DS.textSecondary, fontWeight: 400 }}>Status</div>
+          <div
+            style={{
+              fontSize: 11,
+              color: status.connected ? DS.green : DS.textLabel,
+              marginTop: 2,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: status.connected ? DS.green : '#333',
+                display: 'inline-block'
+              }}
+            />
+            {status.connected ? 'Connected' : 'Not connected'}
+          </div>
+        </div>
+
+        {status.connected ? (
+          <button
+            onClick={handleDisconnect}
+            style={{
+              ...connBtnStyle,
+              background: 'transparent',
+              border: `1px solid ${DS.red}`,
+              color: DS.red
+            }}
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            onClick={handleConnect}
+            disabled={loading}
+            style={{
+              ...connBtnStyle,
+              background: DS.green,
+              color: DS.bg,
+              opacity: loading ? 0.5 : 1
+            }}
+          >
+            {loading ? 'Connecting...' : 'Connect'}
+          </button>
+        )}
+      </div>
+
+      {/* Error message */}
+      {status.error && (
+        <div
+          style={{
+            fontSize: 11,
+            color: DS.red,
+            padding: '8px 0'
+          }}
+        >
+          {status.error}
+        </div>
+      )}
+
+      {/* Project filter */}
+      {status.connected && (
+        <div
+          style={{
+            padding: '12px 0',
+            borderBottom: `1px solid ${DS.surface}`
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 13, color: DS.textSecondary, fontWeight: 400 }}>
+                Project filter
+              </div>
+              <div style={{ fontSize: 10, color: DS.textLabel, marginTop: 2 }}>
+                Import tasks from a specific project
+              </div>
+            </div>
+          </div>
+          <select
+            value={config.todoist_project_filter || ''}
+            onChange={(e) => onSave('todoist_project_filter', e.target.value)}
+            style={{
+              width: '100%',
+              marginTop: 8,
+              background: DS.borderInputBg,
+              border: `1px solid ${DS.borderInput}`,
+              borderRadius: 10,
+              padding: '9px 12px',
+              fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
+              fontSize: 12,
+              color: DS.white,
+              outline: 'none',
+              cursor: 'pointer',
+              appearance: 'none',
+              WebkitAppearance: 'none'
+            }}
+          >
+            <option value="" style={{ background: DS.bg }}>
+              All projects
+            </option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id} style={{ background: DS.bg }}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Info note */}
+      <div
+        style={{
+          fontSize: 10,
+          color: DS.textLabel,
+          padding: '16px 0 8px',
+          lineHeight: 1.5
+        }}
+      >
+        Connect Todoist to import tasks into LiquidFocus. Completing a task here will also mark it
+        done in Todoist.
       </div>
     </>
   )

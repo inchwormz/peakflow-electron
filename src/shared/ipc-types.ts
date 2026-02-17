@@ -59,6 +59,7 @@ export const IPC_INVOKE = {
   WINDOW_CLOSE: 'window:close',
   WINDOW_TOGGLE_MAXIMIZE: 'window:toggle-maximize',
   WINDOW_GET_INFO: 'window:get-info',
+  WINDOW_OPEN: 'window:open',
 
   // FocusDim
   FOCUSDIM_TOGGLE: 'focusdim:toggle',
@@ -107,7 +108,15 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_ADD_TASK: 'liquidfocus:add-task',
   LIQUIDFOCUS_UPDATE_TASK: 'liquidfocus:update-task',
   LIQUIDFOCUS_DELETE_TASK: 'liquidfocus:delete-task',
-  LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats'
+  LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats',
+
+  // Todoist
+  TODOIST_AUTHENTICATE: 'todoist:authenticate',
+  TODOIST_DISCONNECT: 'todoist:disconnect',
+  TODOIST_GET_STATUS: 'todoist:get-status',
+  TODOIST_GET_TASKS: 'todoist:get-tasks',
+  TODOIST_COMPLETE_TASK: 'todoist:complete-task',
+  TODOIST_GET_PROJECTS: 'todoist:get-projects'
 } as const
 
 /** Send channels (main → renderer, push notifications) */
@@ -122,5 +131,8 @@ export const IPC_SEND = {
 
   // LiquidFocus
   LIQUIDFOCUS_STATE_CHANGED: 'liquidfocus:state-changed',
-  LIQUIDFOCUS_PHASE_COMPLETE: 'liquidfocus:phase-complete'
+  LIQUIDFOCUS_PHASE_COMPLETE: 'liquidfocus:phase-complete',
+
+  // Todoist
+  TODOIST_STATUS_CHANGED: 'todoist:status-changed'
 } as const
