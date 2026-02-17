@@ -87,6 +87,7 @@ export const IPC_INVOKE = {
   CALENDAR_AUTHENTICATE: 'calendar:authenticate',
   CALENDAR_GET_STATUS: 'calendar:get-status',
   CALENDAR_DISCONNECT: 'calendar:disconnect',
+  CALENDAR_FETCH_NOW: 'calendar:fetch-now',
 
   // ScreenSlap
   SCREENSLAP_GET_STATE: 'screenslap:get-state',

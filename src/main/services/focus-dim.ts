@@ -1,9 +1,13 @@
 /**
  * FocusDim Service — dims everything except the active window.
  *
- * Creates a single fullscreen transparent overlay BrowserWindow and uses
- * CSS clip-path to carve out a rectangular "hole" where the active window
- * sits. This avoids the complexity of managing 4 separate overlay windows.
+ * Creates one transparent overlay BrowserWindow per monitor and uses
+ * CSS clip-path to carve out a rectangular "hole" on the monitor that
+ * contains the active window. All other monitors get a full dim.
+ *
+ * Per-monitor overlays solve the Electron/Windows limitation where a
+ * single transparent window cannot reliably span multiple displays
+ * (transparency breaks, DPI mismatches, rendering artifacts).
  *
  * Uses native Win32 API (GetForegroundWindow + DwmGetWindowAttribute)
  * via koffi FFI for real foreground window tracking.
@@ -37,12 +41,22 @@ export interface FocusDimState {
   fadeDuration: number
 }
 
+interface OverlayEntry {
+  window: BrowserWindow
+  displayId: number
+  bounds: Electron.Rectangle
+  scaleFactor: number
+  /** Physical pixel bounds (bounds * scaleFactor) for matching against Win32 coords */
+  physicalBounds: { x: number; y: number; width: number; height: number }
+}
+
 // ─── Service class ───────────────────────────────────────────────────────────
 
 class FocusDimService {
-  private overlayWindow: BrowserWindow | null = null
+  private overlays: OverlayEntry[] = []
   private trackingInterval: ReturnType<typeof setInterval> | null = null
   private _enabled = false
+  private displayChangeHandler: (() => void) | null = null
 
   /** Read current config from the persistent store */
   private getConf(): FocusDimConfig {
@@ -57,8 +71,9 @@ class FocusDimService {
   /** Broadcast state change to all renderer windows */
   private broadcastState(): void {
     const state = this.getState()
+    const overlayIds = new Set(this.overlays.map((o) => o.window.id))
     BrowserWindow.getAllWindows().forEach((win) => {
-      if (!win.isDestroyed()) {
+      if (!win.isDestroyed() && !overlayIds.has(win.id)) {
         win.webContents.send(IPC_SEND.FOCUSDIM_STATE_CHANGED, state)
       }
     })
@@ -68,11 +83,9 @@ class FocusDimService {
 
   /**
    * Initialize the service. Called once during app startup.
-   * If the persisted config has `enabled: true`, auto-enables dimming.
    */
   init(): void {
     // Always start disabled — user must explicitly toggle on via hotkey or UI.
-    // Previous sessions may have left enabled: true in the config store.
     this.setConf('enabled', false)
     console.log('[FocusDim] Service initialized')
   }
@@ -101,15 +114,16 @@ class FocusDimService {
 
   /** Enable the dim overlay */
   enable(): void {
-    if (this._enabled && this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-      // Already enabled — just update
-      this.updateOverlay()
+    if (this._enabled && this.overlays.length > 0) {
+      // Already enabled — just update styles
+      this.updateAllOverlays()
       return
     }
 
     this._enabled = true
     this.setConf('enabled', true)
-    this.createOverlayWindow()
+    this.createOverlayWindows()
+    this.listenForDisplayChanges()
     this.startTracking()
     this.broadcastState()
     console.log('[FocusDim] Enabled')
@@ -120,7 +134,8 @@ class FocusDimService {
     this._enabled = false
     this.setConf('enabled', false)
     this.stopTracking()
-    this.destroyOverlayWindow()
+    this.stopListeningForDisplayChanges()
+    this.destroyAllOverlays()
     this.broadcastState()
     console.log('[FocusDim] Disabled')
   }
@@ -129,7 +144,7 @@ class FocusDimService {
   setOpacity(opacity: number): void {
     const clamped = Math.max(0, Math.min(1, opacity))
     this.setConf('opacity', clamped)
-    this.updateOverlay()
+    this.updateAllOverlays()
     this.broadcastState()
   }
 
@@ -140,104 +155,137 @@ class FocusDimService {
       return
     }
     this.setConf('dim_color', colorKey)
-    this.updateOverlay()
+    this.updateAllOverlays()
     this.broadcastState()
   }
 
   /** Toggle or set the border highlight */
   setBorder(show: boolean): void {
     this.setConf('show_border', show)
-    this.updateOverlay()
+    this.updateAllOverlays()
     this.broadcastState()
   }
 
   /** Set fade duration in ms */
   setFadeDuration(ms: number): void {
     this.setConf('fade_duration', Math.max(0, Math.min(2000, ms)))
-    this.updateOverlay()
+    this.updateAllOverlays()
     this.broadcastState()
   }
 
   /** Clean up when app is quitting */
   destroy(): void {
     this.stopTracking()
-    this.destroyOverlayWindow()
+    this.stopListeningForDisplayChanges()
+    this.destroyAllOverlays()
     console.log('[FocusDim] Service destroyed')
+  }
+
+  // ─── Display Change Handling ────────────────────────────────────────────
+
+  private listenForDisplayChanges(): void {
+    if (this.displayChangeHandler) return
+    this.displayChangeHandler = (): void => {
+      if (!this._enabled) return
+      console.log('[FocusDim] Display configuration changed — rebuilding overlays')
+      this.destroyAllOverlays()
+      this.createOverlayWindows()
+    }
+    screen.on('display-added', this.displayChangeHandler)
+    screen.on('display-removed', this.displayChangeHandler)
+    screen.on('display-metrics-changed', this.displayChangeHandler)
+  }
+
+  private stopListeningForDisplayChanges(): void {
+    if (!this.displayChangeHandler) return
+    screen.removeListener('display-added', this.displayChangeHandler)
+    screen.removeListener('display-removed', this.displayChangeHandler)
+    screen.removeListener('display-metrics-changed', this.displayChangeHandler)
+    this.displayChangeHandler = null
   }
 
   // ─── Overlay Window Management ───────────────────────────────────────────
 
-  private createOverlayWindow(): void {
-    if (this.overlayWindow && !this.overlayWindow.isDestroyed()) return
+  private createOverlayWindows(): void {
+    this.destroyAllOverlays()
 
-    // Span all monitors
     const displays = screen.getAllDisplays()
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity
-    for (const d of displays) {
-      minX = Math.min(minX, d.bounds.x)
-      minY = Math.min(minY, d.bounds.y)
-      maxX = Math.max(maxX, d.bounds.x + d.bounds.width)
-      maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
-    }
-
-    const totalW = maxX - minX
-    const totalH = maxY - minY
-
-    this.overlayWindow = new BrowserWindow({
-      x: minX,
-      y: minY,
-      width: totalW,
-      height: totalH,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      focusable: false,
-      hasShadow: false,
-      resizable: false,
-      movable: false,
-      minimizable: false,
-      maximizable: false,
-      closable: false,
-      show: false,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false
-      }
-    })
-
-    // Make click-through
-    this.overlayWindow.setIgnoreMouseEvents(true)
-
-    // Load the overlay HTML with current state
     const conf = this.getConf()
     const hex = DIM_COLORS[conf.dim_color] || '#000000'
-    const overlayHtml = this.buildOverlayHtml(hex, conf.opacity, conf.show_border, conf.fade_duration)
-    this.overlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml)}`)
 
-    this.overlayWindow.once('ready-to-show', () => {
-      if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-        this.overlayWindow.showInactive()
+    for (const display of displays) {
+      const { x, y, width, height } = display.bounds
+      const overlayHtml = this.buildOverlayHtml(hex, conf.opacity, conf.show_border, conf.fade_duration)
+
+      const win = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        focusable: false,
+        hasShadow: false,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        closable: false,
+        show: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false
+        }
+      })
+
+      win.setIgnoreMouseEvents(true)
+      // Use 'screen-saver' level to ensure overlay renders above ALL other windows
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml)}`)
+
+      const sf = display.scaleFactor || 1
+      const entry: OverlayEntry = {
+        window: win,
+        displayId: display.id,
+        bounds: { x, y, width, height },
+        scaleFactor: sf,
+        physicalBounds: {
+          x: x * sf,
+          y: y * sf,
+          width: width * sf,
+          height: height * sf
+        }
       }
-    })
 
-    this.overlayWindow.on('closed', () => {
-      this.overlayWindow = null
-    })
+      win.once('ready-to-show', () => {
+        if (!win.isDestroyed()) {
+          win.showInactive()
+        }
+      })
+
+      win.on('closed', () => {
+        this.overlays = this.overlays.filter((o) => o.window !== win)
+      })
+
+      this.overlays.push(entry)
+    }
+
+    console.log(`[FocusDim] Created ${displays.length} overlay(s) for ${displays.length} display(s)`)
   }
 
-  private destroyOverlayWindow(): void {
-    if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-      this.overlayWindow.destroy()
+  private destroyAllOverlays(): void {
+    for (const entry of this.overlays) {
+      if (!entry.window.isDestroyed()) {
+        entry.window.destroy()
+      }
     }
-    this.overlayWindow = null
+    this.overlays = []
   }
 
   /**
-   * Build the overlay HTML string. The overlay is a single fullscreen div
+   * Build the overlay HTML string. The overlay is a fullscreen div
    * with a CSS clip-path that creates a rectangular hole for the active window.
    */
   private buildOverlayHtml(
@@ -279,76 +327,141 @@ class FocusDimService {
   }
 
   /**
-   * Send updated clip-path and styling to the overlay renderer.
-   * `rect` is {x, y, w, h} in screen coordinates relative to overlay origin.
+   * Determine which display contains the center of the given rect.
+   * `rect` is in physical pixel coords (from Win32 API).
+   * Falls back to the display with the most overlap.
    */
-  private sendOverlayUpdate(rect: { x: number; y: number; w: number; h: number }): void {
-    if (!this.overlayWindow || this.overlayWindow.isDestroyed()) return
+  private findOverlayForRect(rect: { x: number; y: number; w: number; h: number }): OverlayEntry | null {
+    const cx = rect.x + rect.w / 2
+    const cy = rect.y + rect.h / 2
 
-    const conf = this.getConf()
-    const hex = DIM_COLORS[conf.dim_color] || '#000000'
-    const overlayBounds = this.overlayWindow.getBounds()
-    const ow = overlayBounds.width
-    const oh = overlayBounds.height
+    // Use physical bounds for matching since Win32 returns physical pixels
+    for (const entry of this.overlays) {
+      const b = entry.physicalBounds
+      if (cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height) {
+        return entry
+      }
+    }
 
-    // Convert absolute screen coords to percentages relative to overlay
-    const relX = rect.x - overlayBounds.x
-    const relY = rect.y - overlayBounds.y
-
-    // Build clip-path: full rect with a rectangular cutout
-    const l = (relX / ow) * 100
-    const t = (relY / oh) * 100
-    const r = ((relX + rect.w) / ow) * 100
-    const b = ((relY + rect.h) / oh) * 100
-
-    // Clip-path polygon: outer rect going clockwise, inner cutout going counterclockwise
-    const clipPath = `polygon(
-      0% 0%, 0% 100%, ${l}% 100%, ${l}% ${t}%,
-      ${r}% ${t}%, ${r}% ${b}%, ${l}% ${b}%,
-      ${l}% 100%, 100% 100%, 100% 0%
-    )`
-
-    this.overlayWindow.webContents.executeJavaScript(`
-      (function() {
-        var overlay = document.getElementById('dim-overlay');
-        var border = document.getElementById('border-frame');
-        if (overlay) {
-          overlay.style.clipPath = ${JSON.stringify(clipPath)};
-          overlay.style.background = ${JSON.stringify(hex)};
-          overlay.style.opacity = ${conf.opacity};
-        }
-        if (border) {
-          border.style.left = '${relX}px';
-          border.style.top = '${relY}px';
-          border.style.width = '${rect.w}px';
-          border.style.height = '${rect.h}px';
-          border.style.display = ${conf.show_border ? "'block'" : "'none'"};
-        }
-      })();
-    `).catch(() => { /* overlay may be closing */ })
+    // Fallback: find overlay with most overlap area (physical coords)
+    let bestEntry: OverlayEntry | null = null
+    let bestOverlap = 0
+    for (const entry of this.overlays) {
+      const b = entry.physicalBounds
+      const overlapX = Math.max(0, Math.min(rect.x + rect.w, b.x + b.width) - Math.max(rect.x, b.x))
+      const overlapY = Math.max(0, Math.min(rect.y + rect.h, b.y + b.height) - Math.max(rect.y, b.y))
+      const overlap = overlapX * overlapY
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap
+        bestEntry = entry
+      }
+    }
+    return bestEntry
   }
 
-  /** Push style-only updates to the overlay (no position change) */
-  private updateOverlay(): void {
-    if (!this.overlayWindow || this.overlayWindow.isDestroyed()) return
+  /**
+   * Send updated clip-path to the overlay that contains the active window.
+   * All other overlays get a full dim (no cutout).
+   */
+  private sendOverlayUpdate(rect: { x: number; y: number; w: number; h: number }): void {
+    if (this.overlays.length === 0) return
 
     const conf = this.getConf()
     const hex = DIM_COLORS[conf.dim_color] || '#000000'
+    const activeOverlay = this.findOverlayForRect(rect)
 
-    this.overlayWindow.webContents.executeJavaScript(`
-      (function() {
-        var overlay = document.getElementById('dim-overlay');
-        var border = document.getElementById('border-frame');
-        if (overlay) {
-          overlay.style.background = ${JSON.stringify(hex)};
-          overlay.style.opacity = ${conf.opacity};
-          overlay.style.transition = 'opacity ${conf.fade_duration}ms ease, clip-path 0.05s linear';
-        }
-        if (border) {
-          border.style.display = ${conf.show_border ? "'block'" : "'none'"};
-        }
-      })();
-    `).catch(() => { /* overlay may be closing */ })
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+
+      if (entry === activeOverlay) {
+        // This monitor has the active window — carve a cutout
+        // Convert physical pixel coords (Win32) → logical coords (Electron/CSS)
+        const sf = entry.scaleFactor
+        const pb = entry.physicalBounds
+        const lb = entry.bounds
+
+        // Physical-pixel relative position on this display
+        const physRelX = rect.x - pb.x
+        const physRelY = rect.y - pb.y
+
+        // Convert to logical pixels for CSS
+        const logRelX = physRelX / sf
+        const logRelY = physRelY / sf
+        const logW = rect.w / sf
+        const logH = rect.h / sf
+
+        const l = (logRelX / lb.width) * 100
+        const t = (logRelY / lb.height) * 100
+        const r = ((logRelX + logW) / lb.width) * 100
+        const bPct = ((logRelY + logH) / lb.height) * 100
+
+        const clipPath = `polygon(
+          0% 0%, 0% 100%, ${l}% 100%, ${l}% ${t}%,
+          ${r}% ${t}%, ${r}% ${bPct}%, ${l}% ${bPct}%,
+          ${l}% 100%, 100% 100%, 100% 0%
+        )`
+
+        entry.window.webContents.executeJavaScript(`
+          (function() {
+            var overlay = document.getElementById('dim-overlay');
+            var border = document.getElementById('border-frame');
+            if (overlay) {
+              overlay.style.clipPath = ${JSON.stringify(clipPath)};
+              overlay.style.background = ${JSON.stringify(hex)};
+              overlay.style.opacity = ${conf.opacity};
+            }
+            if (border) {
+              border.style.left = '${logRelX}px';
+              border.style.top = '${logRelY}px';
+              border.style.width = '${logW}px';
+              border.style.height = '${logH}px';
+              border.style.display = ${conf.show_border ? "'block'" : "'none'"};
+            }
+          })();
+        `).catch(() => { /* overlay may be closing */ })
+      } else {
+        // This monitor does NOT have the active window — full dim, no cutout
+        const fullDim = `polygon(0% 0%, 0% 100%, 100% 100%, 100% 0%)`
+        entry.window.webContents.executeJavaScript(`
+          (function() {
+            var overlay = document.getElementById('dim-overlay');
+            var border = document.getElementById('border-frame');
+            if (overlay) {
+              overlay.style.clipPath = ${JSON.stringify(fullDim)};
+              overlay.style.background = ${JSON.stringify(hex)};
+              overlay.style.opacity = ${conf.opacity};
+            }
+            if (border) {
+              border.style.display = 'none';
+            }
+          })();
+        `).catch(() => { /* overlay may be closing */ })
+      }
+    }
+  }
+
+  /** Push style-only updates to all overlays (no position change) */
+  private updateAllOverlays(): void {
+    const conf = this.getConf()
+    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var overlay = document.getElementById('dim-overlay');
+          var border = document.getElementById('border-frame');
+          if (overlay) {
+            overlay.style.background = ${JSON.stringify(hex)};
+            overlay.style.opacity = ${conf.opacity};
+            overlay.style.transition = 'opacity ${conf.fade_duration}ms ease, clip-path 0.05s linear';
+          }
+          if (border) {
+            border.style.display = ${conf.show_border ? "'block'" : "'none'"};
+          }
+        })();
+      `).catch(() => { /* overlay may be closing */ })
+    }
   }
 
   // ─── Active Window Tracking ──────────────────────────────────────────────
@@ -377,7 +490,7 @@ class FocusDimService {
    * Calls GetForegroundWindow() + DwmGetWindowAttribute() for accurate bounds.
    */
   private trackActiveWindow(): void {
-    if (!this._enabled || !this.overlayWindow || this.overlayWindow.isDestroyed()) return
+    if (!this._enabled || this.overlays.length === 0) return
 
     const activeWin = getActiveWindow()
 
@@ -392,7 +505,7 @@ class FocusDimService {
     }
 
     // No valid foreground window (e.g., desktop is focused) — dim everything
-    this.sendOverlayUpdate({ x: -100, y: -100, w: 1, h: 1 })
+    this.sendOverlayUpdate({ x: -10000, y: -10000, w: 1, h: 1 })
   }
 }
 

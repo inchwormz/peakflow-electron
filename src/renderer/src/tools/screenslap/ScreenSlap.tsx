@@ -134,6 +134,17 @@ function formatRelative(ms: number): string {
   return `In ${hrs}h ${rem}m`
 }
 
+function formatTimeAgo(isoStr: string): string {
+  const diff = Date.now() - new Date(isoStr).getTime()
+  const sec = Math.floor(diff / 1000)
+  if (sec < 10) return 'just now'
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hrs = Math.floor(min / 60)
+  return `${hrs}h ago`
+}
+
 function getMeetingBadgeStyle(service: string | null): CSSProperties {
   if (!service) return {}
   const lower = service.toLowerCase()
@@ -171,6 +182,7 @@ export function ScreenSlap(): React.JSX.Element {
     alert_sound: true,
     monitor_index: 0
   })
+  const [syncing, setSyncing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -208,9 +220,13 @@ export function ScreenSlap(): React.JSX.Element {
     const unsubState = api.on(IPC_SEND.SCREENSLAP_STATE_CHANGED, (s: unknown) => {
       setState(s as ScreenSlapState)
     })
+    const unsubCalStatus = api.on(IPC_SEND.CALENDAR_STATUS_CHANGED, (s: unknown) => {
+      setCalStatus(s as CalendarStatus)
+    })
     return () => {
       unsubEvents()
       unsubState()
+      unsubCalStatus()
     }
   }, [])
 
@@ -229,12 +245,37 @@ export function ScreenSlap(): React.JSX.Element {
     try {
       const result = (await api.invoke(IPC_INVOKE.CALENDAR_AUTHENTICATE)) as CalendarStatus
       setCalStatus(result)
-      showToast('Connected to Google Calendar')
-      // Refresh events
-      const evts = (await api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)) as CalendarEvent[]
-      setEvents(evts ?? [])
+      if (result.connected) {
+        showToast('Connected to Google Calendar')
+        // Start monitoring now that calendar is connected
+        await api.invoke(IPC_INVOKE.SCREENSLAP_START)
+        // Refresh events
+        const evts = (await api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)) as CalendarEvent[]
+        setEvents(evts ?? [])
+        // Update state
+        const stateRes = (await api.invoke(IPC_INVOKE.SCREENSLAP_GET_STATE)) as ScreenSlapState
+        setState(stateRes)
+      }
     } catch (err) {
       console.error('[ScreenSlap] Auth failed:', err)
+    }
+  }
+
+  const syncNow = async (): Promise<void> => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      const evts = (await api.invoke(IPC_INVOKE.CALENDAR_FETCH_NOW)) as CalendarEvent[]
+      setEvents(evts ?? [])
+      // Refresh status to get updated lastFetched
+      const statusRes = (await api.invoke(IPC_INVOKE.CALENDAR_GET_STATUS)) as CalendarStatus
+      setCalStatus(statusRes)
+      showToast(`Synced ${evts?.length ?? 0} events`)
+    } catch (err) {
+      console.error('[ScreenSlap] Sync failed:', err)
+      showToast('Sync failed')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -394,6 +435,29 @@ export function ScreenSlap(): React.JSX.Element {
                   </div>
                 </div>
               )}
+
+              {/* Sync controls */}
+              <div style={styles.syncRow}>
+                <button
+                  style={{
+                    ...styles.syncBtn,
+                    opacity: syncing ? 0.5 : 1,
+                    cursor: syncing ? 'default' : 'pointer'
+                  }}
+                  onClick={syncNow}
+                  disabled={syncing}
+                >
+                  {syncing ? '⟳ Syncing...' : '⟳ Sync Now'}
+                </button>
+                <div style={styles.syncMeta}>
+                  {calStatus.lastFetched
+                    ? `Last synced ${formatTimeAgo(calStatus.lastFetched)}`
+                    : 'Not synced yet'}
+                  <span style={styles.syncInterval}>
+                    &nbsp;· every {config.fetch_interval_minutes}m
+                  </span>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -463,17 +527,25 @@ export function ScreenSlap(): React.JSX.Element {
                 />
               </SettingRow>
 
-              <SettingRow label="Display monitor">
-                <select
-                  style={styles.selectWrap}
-                  value={config.monitor_index}
-                  onChange={(e) =>
-                    updateConfig('monitor_index', parseInt(e.target.value))
-                  }
-                >
-                  <option value={0}>Primary</option>
-                  <option value={1}>Secondary</option>
-                </select>
+              {/* Sync section */}
+              <div style={styles.secLabel}>SYNC</div>
+
+              <SettingRow label="Sync interval">
+                <div style={styles.settingVal}>
+                  <select
+                    style={styles.selectWrap}
+                    value={config.fetch_interval_minutes}
+                    onChange={(e) =>
+                      updateConfig('fetch_interval_minutes', parseInt(e.target.value))
+                    }
+                  >
+                    <option value={5}>5 min</option>
+                    <option value={10}>10 min</option>
+                    <option value={15}>15 min</option>
+                    <option value={30}>30 min</option>
+                    <option value={60}>1 hour</option>
+                  </select>
+                </div>
               </SettingRow>
 
               {/* Calendar section */}
@@ -806,6 +878,37 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: 2
   },
 
+  syncRow: {
+    marginTop: 24,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8
+  },
+
+  syncBtn: {
+    padding: '8px 20px',
+    background: 'rgba(94,184,255,0.12)',
+    border: `1px solid rgba(94,184,255,0.25)`,
+    borderRadius: 10,
+    color: DS.blue,
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  },
+
+  syncMeta: {
+    fontSize: 10,
+    color: DS.textDim,
+    textAlign: 'center' as const
+  },
+
+  syncInterval: {
+    color: DS.textGhost
+  },
+
   connectBtn: {
     marginTop: 20,
     padding: '12px 24px',
@@ -1071,12 +1174,12 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: 'inherit'
   },
 
-  // Drag region
+  // Drag region — right: 200 leaves space for all 4 floating buttons
   dragRegion: {
     position: 'absolute' as const,
     top: 0,
     left: 0,
-    right: 100,
+    right: 200,
     height: 60,
     WebkitAppRegion: 'drag' as unknown as string,
     zIndex: 1

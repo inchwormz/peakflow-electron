@@ -98,9 +98,12 @@ export function registerIpcHandlers(): void {
     (_event, payload: ConfigSetPayload): boolean => {
       try {
         setConfig(payload.tool as ToolId, payload.key, payload.value)
-        // Propagate duration changes to the LiquidFocus timer service
+        // Propagate config changes to running services
         if (payload.tool === ToolId.LiquidFocus) {
           getLiquidFocusService().refreshConfig()
+        }
+        if (payload.tool === ToolId.ScreenSlap) {
+          getScreenSlapService().refreshConfig()
         }
         return true
       } catch (error) {
@@ -250,6 +253,13 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.CALENDAR_DISCONNECT,
     (): CalendarStatus => {
       return getCalendarService().disconnect()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_FETCH_NOW,
+    async (): Promise<CalendarEvent[]> => {
+      return getCalendarService().fetchEvents()
     }
   )
 
