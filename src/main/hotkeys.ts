@@ -11,7 +11,7 @@
 
 import { globalShortcut } from 'electron'
 import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
-import { createToolWindow, getToolWindow, closeToolWindow } from './windows'
+import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
 
 /**
@@ -22,7 +22,7 @@ function toggleTool(toolId: ToolId): void {
   if (existing) {
     closeToolWindow(toolId)
   } else {
-    createToolWindow(toolId)
+    openToolWithAccessCheck(toolId)
   }
 }
 

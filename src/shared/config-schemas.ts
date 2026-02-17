@@ -47,6 +47,10 @@ export interface LiquidFocusConfig {
   auto_start_breaks: boolean
   todoist_project_filter: string
   distraction_sites: string[]
+  /** Enable webcam-based focus detection during work sessions */
+  focus_detection_enabled: boolean
+  /** Seconds of looking away before counting as a distraction (default: 5) */
+  focus_away_threshold_secs: number
 }
 
 export interface SoundSplitConfig {
@@ -103,6 +107,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     alert_sound: true,
     auto_start_breaks: false,
     todoist_project_filter: '',
+    focus_detection_enabled: false,
+    focus_away_threshold_secs: 5,
     distraction_sites: [
       'youtube.com',
       'facebook.com',

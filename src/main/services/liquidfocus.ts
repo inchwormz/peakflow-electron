@@ -368,6 +368,17 @@ class LiquidFocusService {
     }
   }
 
+  /**
+   * Record a focus interruption detected by the webcam FocusDetector.
+   * Increments the persistent interruption counter and broadcasts updated stats.
+   */
+  recordInterruption(): void {
+    const current: number = this.store.get('interruptions', 0) as number
+    this.store.set('interruptions', current + 1)
+    console.log(`[LiquidFocus] Interruption recorded (total: ${current + 1})`)
+    this.broadcastState()
+  }
+
   // ─── Broadcasting ───────────────────────────────────────────────────────
 
   private broadcastState(): void {

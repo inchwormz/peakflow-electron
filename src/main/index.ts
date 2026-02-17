@@ -20,6 +20,7 @@ import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
 import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
 import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
+import { initAutoUpdater } from './services/auto-updater'
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ if (!gotLock) {
     initLiquidFocus()
     initSoundSplit()
     initTodoist()
+    initAutoUpdater()
 
     console.log('[PeakFlow] Core started — running in system tray')
   })

@@ -47,6 +47,8 @@ interface LiquidFocusConfig {
   sessions_before_long: number
   alert_sound: boolean
   auto_start_breaks: boolean
+  focus_detection_enabled: boolean
+  focus_away_threshold_secs: number
   todoist_project_filter: string
   distraction_sites: string[]
 }
@@ -68,6 +70,8 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
     sessions_before_long: 4,
     alert_sound: true,
     auto_start_breaks: false,
+    focus_detection_enabled: false,
+    focus_away_threshold_secs: 5,
     distraction_sites: Object.values(DISTRACTION_SITES)
   })
 
@@ -243,12 +247,40 @@ function BehaviorTab({
           onChange={(v) => onSave('alert_sound', v)}
         />
       </SettingRow>
-      <SettingRow label="Auto-start breaks" isLast>
+      <SettingRow label="Auto-start breaks">
         <Toggle
           checked={config.auto_start_breaks}
           onChange={(v) => onSave('auto_start_breaks', v)}
         />
       </SettingRow>
+      <SettingRow label="Webcam focus detection">
+        <Toggle
+          checked={config.focus_detection_enabled}
+          onChange={(v) => onSave('focus_detection_enabled', v)}
+        />
+      </SettingRow>
+      {config.focus_detection_enabled && (
+        <SettingRow label="Away threshold" isLast>
+          <NumberInput
+            value={config.focus_away_threshold_secs}
+            unit="sec"
+            onChange={(v) => onSave('focus_away_threshold_secs', Math.max(1, v))}
+          />
+        </SettingRow>
+      )}
+      {!config.focus_detection_enabled && (
+        <div
+          style={{
+            fontSize: 10,
+            color: DS.textLabel,
+            padding: '8px 0 4px',
+            lineHeight: 1.5
+          }}
+        >
+          Uses your webcam to detect when you look away. All processing is on-device — no video
+          is stored or transmitted.
+        </div>
+      )}
     </>
   )
 }
