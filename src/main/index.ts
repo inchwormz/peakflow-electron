@@ -22,6 +22,16 @@ import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initAutoUpdater } from './services/auto-updater'
 
+// ─── Crash Prevention ───────────────────────────────────────────────────────
+
+// Prevent EPIPE errors on console.log from crashing the app
+// (happens when the parent shell/pipe that launched electron is closed)
+process.on('uncaughtException', (err) => {
+  if ((err as NodeJS.ErrnoException).code === 'EPIPE') return // harmless
+  // For real errors, log to stderr (less likely to EPIPE) and continue
+  process.stderr.write(`[PeakFlow] Uncaught exception: ${err.message}\n${err.stack}\n`)
+})
+
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
 const gotLock = app.requestSingleInstanceLock()

@@ -12,14 +12,15 @@
  * ?toolId=screenslap-alert, rendered by AlertOverlay.tsx.
  */
 
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, screen, shell } from 'electron'
+import { join } from 'path'
+import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig } from './config-store'
 import { getCalendarService } from './google-calendar'
 import type { CalendarEvent } from './google-calendar'
 import type { ScreenSlapConfig } from '@shared/config-schemas'
-import { createToolWindow, getToolWindow, closeToolWindow } from '../windows'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ class ScreenSlapService {
   private alertedEvents = new Set<string>()
   private snoozedEvents = new Map<string, number>() // eventId -> snooze-until timestamp
   private checkInterval: ReturnType<typeof setInterval> | null = null
+  private alertWindows: BrowserWindow[] = []
   private monitoring = false
   private activeAlert: AlertInfo | null = null
   private lastFetch: string | null = null
@@ -150,6 +152,31 @@ class ScreenSlapService {
   }
 
   /**
+   * Re-read config and restart polling with updated interval.
+   * Called when settings are changed from the renderer.
+   */
+  refreshConfig(): void {
+    if (!this.monitoring) return
+    const config = this.getScreenSlapConfig()
+    const calendar = getCalendarService()
+
+    // Restart polling with new interval
+    calendar.startPolling(config.fetch_interval_minutes)
+
+    // Restart alert check loop with new check interval
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval)
+    }
+    this.checkInterval = setInterval(() => {
+      this.checkForAlerts()
+    }, config.alert_check_seconds * 1000)
+
+    console.log(
+      `[ScreenSlap] Config refreshed — alert ${config.alert_minutes_before} min before, check every ${config.alert_check_seconds}s, fetch every ${config.fetch_interval_minutes}m`
+    )
+  }
+
+  /**
    * Cleanup on app shutdown.
    */
   destroy(): void {
@@ -246,44 +273,90 @@ class ScreenSlapService {
   }
 
   /**
-   * Create and show the fullscreen alert BrowserWindow.
+   * Create fullscreen alert windows on ALL displays.
+   * Each display gets its own BrowserWindow so the alert covers every monitor.
    */
   private showAlertWindow(): void {
     // Send alert data to any existing screenslap settings windows
     this.broadcastAlertState()
 
-    // Create the fullscreen alert window
-    const alertWin = createToolWindow(SystemWindowId.ScreenSlapAlert)
+    // Close any lingering alert windows from a previous alert
+    this.closeAllAlertWindows()
 
-    // Send the alert data once the window is ready
-    alertWin.once('ready-to-show', () => {
-      if (!alertWin.isDestroyed() && this.activeAlert) {
-        alertWin.webContents.send(IPC_SEND.SCREENSLAP_ALERT_DATA, this.activeAlert)
+    const displays = screen.getAllDisplays()
+    const preloadPath = join(__dirname, '../preload/index.js')
+    const toolId = SystemWindowId.ScreenSlapAlert
+
+    for (const display of displays) {
+      const { x, y, width, height } = display.bounds
+
+      const win = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        fullscreen: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        frame: false,
+        show: false,
+        backgroundColor: '#08080a',
+        webPreferences: {
+          preload: preloadPath,
+          sandbox: false,
+          contextIsolation: true,
+          nodeIntegration: false
+        }
+      })
+
+      // Load renderer
+      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?toolId=${toolId}`)
+      } else {
+        win.loadFile(join(__dirname, '../renderer/index.html'), { query: { toolId } })
       }
-    })
 
-    // Also send after a small delay in case ready-to-show already fired
-    setTimeout(() => {
-      if (!alertWin.isDestroyed() && this.activeAlert) {
-        alertWin.webContents.send(IPC_SEND.SCREENSLAP_ALERT_DATA, this.activeAlert)
-      }
-    }, 500)
+      win.once('ready-to-show', () => {
+        win.show()
+        if (!win.isDestroyed() && this.activeAlert) {
+          win.webContents.send(IPC_SEND.SCREENSLAP_ALERT_DATA, this.activeAlert)
+        }
+      })
 
-    // Play alert sound if enabled
-    const config = this.getScreenSlapConfig()
-    if (config.alert_sound) {
-      // On Electron, we can trigger sound from the renderer via the alert window
-      // The AlertOverlay component handles playing the notification sound
+      // Fallback send in case ready-to-show already fired
+      setTimeout(() => {
+        if (!win.isDestroyed() && this.activeAlert) {
+          win.webContents.send(IPC_SEND.SCREENSLAP_ALERT_DATA, this.activeAlert)
+        }
+      }, 500)
+
+      win.on('closed', () => {
+        this.alertWindows = this.alertWindows.filter((w) => w !== win)
+      })
+
+      this.alertWindows.push(win)
     }
+
+    console.log(`[ScreenSlap] Alert windows opened on ${displays.length} display(s)`)
   }
 
   /**
-   * Close the alert window and clear active alert state.
+   * Close all alert windows and clear active alert state.
    */
   private dismissAlertWindow(): void {
     this.activeAlert = null
-    closeToolWindow(SystemWindowId.ScreenSlapAlert)
+    this.closeAllAlertWindows()
     this.broadcastAlertState()
+  }
+
+  /**
+   * Close every open alert BrowserWindow.
+   */
+  private closeAllAlertWindows(): void {
+    for (const win of this.alertWindows) {
+      if (!win.isDestroyed()) win.close()
+    }
+    this.alertWindows = []
   }
 
   /**

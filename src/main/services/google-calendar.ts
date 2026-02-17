@@ -132,6 +132,18 @@ class GoogleCalendarService {
         this.tokens = JSON.parse(stored)
         this.status.connected = true
         console.log('[Calendar] Restored saved Google OAuth tokens')
+
+        // Fetch email in background so UI can display it
+        this.fetchUserEmail()
+          .then((email) => {
+            if (email) {
+              this.status.email = email
+              this.broadcastStatusUpdate()
+            }
+          })
+          .catch(() => {
+            // Non-critical — email will show after next successful fetch
+          })
       } catch {
         console.warn('[Calendar] Invalid stored tokens, ignoring')
       }
@@ -394,6 +406,7 @@ class GoogleCalendarService {
 
       // Push update to all renderer windows
       this.broadcastEventsUpdate()
+      this.broadcastStatusUpdate()
 
       return [...this.events]
     } catch (err) {
