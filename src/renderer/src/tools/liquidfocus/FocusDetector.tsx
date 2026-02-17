@@ -48,10 +48,16 @@ export function FocusDetector({
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
   const awayStartRef = useRef<number | null>(null)
-  const interruptionPendingRef = useRef(false)
+  const interruptionRecordedRef = useRef(false)
+  const thresholdRef = useRef(thresholdSecs)
 
   const [status, setStatus] = useState<FocusStatus>('loading')
   const [totalInterruptions, setTotalInterruptions] = useState(0)
+
+  // Keep threshold ref in sync without triggering effect re-runs
+  useEffect(() => {
+    thresholdRef.current = thresholdSecs
+  }, [thresholdSecs])
 
   // ── Update parent when status changes ──────────────────────────────────
 
@@ -66,9 +72,6 @@ export function FocusDetector({
   // ── Record an interruption via IPC ─────────────────────────────────────
 
   const recordInterruption = useCallback(() => {
-    if (interruptionPendingRef.current) return
-    interruptionPendingRef.current = true
-
     window.peakflow
       .invoke(IPC_INVOKE.LIQUIDFOCUS_RECORD_INTERRUPTION)
       .then(() => {
@@ -76,9 +79,6 @@ export function FocusDetector({
       })
       .catch((err: unknown) => {
         console.warn('[FocusDetector] Failed to record interruption:', err)
-      })
-      .finally(() => {
-        interruptionPendingRef.current = false
       })
   }, [])
 
@@ -104,13 +104,15 @@ export function FocusDetector({
 
     async function init(): Promise<void> {
       try {
-        // 1. Load BlazeFace model
-        await tf.ready()
-        if (cancelled) return
+        // 1. Load BlazeFace model (reuse cached model if available)
+        if (!modelRef.current) {
+          await tf.ready()
+          if (cancelled) return
 
-        const model = await blazeface.load({ maxFaces: 1 })
-        if (cancelled) return
-        modelRef.current = model
+          const model = await blazeface.load({ maxFaces: 1 })
+          if (cancelled) return
+          modelRef.current = model
+        }
 
         // 2. Start camera (small resolution for performance)
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -131,8 +133,8 @@ export function FocusDetector({
         startDetection()
       } catch (err) {
         if (cancelled) return
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg.includes('NotAllowed') || msg.includes('Permission denied')) {
+        const errName = err instanceof Error ? err.name : ''
+        if (errName === 'NotAllowedError' || errName === 'NotFoundError') {
           updateStatus('no-camera')
         } else {
           console.error('[FocusDetector] Init error:', err)
@@ -164,8 +166,9 @@ export function FocusDetector({
           const faceDetected = predictions.length > 0
 
           if (faceDetected) {
-            // User is looking at screen
+            // User is looking at screen — reset away tracking
             awayStartRef.current = null
+            interruptionRecordedRef.current = false
             updateStatus('focused')
           } else {
             // No face detected
@@ -175,11 +178,13 @@ export function FocusDetector({
             }
 
             const awayDuration = (currentTime - awayStartRef.current) / 1000
+            const threshold = thresholdRef.current
 
-            if (awayDuration >= thresholdSecs) {
+            if (awayDuration >= threshold) {
               updateStatus('away')
-              // Record interruption once per away event
-              if (awayDuration >= thresholdSecs && awayDuration < thresholdSecs + 0.5) {
+              // Record interruption once per away episode
+              if (!interruptionRecordedRef.current) {
+                interruptionRecordedRef.current = true
                 recordInterruption()
               }
             }
@@ -206,7 +211,7 @@ export function FocusDetector({
       }
       awayStartRef.current = null
     }
-  }, [active, thresholdSecs, updateStatus, recordInterruption])
+  }, [active, updateStatus, recordInterruption])
 
   // ── Don't render anything when not active ──────────────────────────────
 

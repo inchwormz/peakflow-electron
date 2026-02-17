@@ -400,21 +400,10 @@ class FocusDimService {
    * Get the active window rect using native Win32 API.
    * Calls GetForegroundWindow() + DwmGetWindowAttribute() for accurate bounds.
    */
-  private _debugLogCount = 0
   private trackActiveWindow(): void {
     if (!this._enabled || !this.overlayWindow || this.overlayWindow.isDestroyed()) return
 
     const activeWin = getActiveWindow()
-
-    // Debug: log first 5 results to diagnose
-    if (this._debugLogCount < 5) {
-      this._debugLogCount++
-      if (activeWin) {
-        console.log(`[FocusDim] DEBUG: active window = "${activeWin.title}" class="${activeWin.className}" rect=${activeWin.x},${activeWin.y} ${activeWin.w}x${activeWin.h}`)
-      } else {
-        console.log('[FocusDim] DEBUG: getActiveWindow() returned null')
-      }
-    }
 
     if (activeWin) {
       this.sendOverlayUpdate({

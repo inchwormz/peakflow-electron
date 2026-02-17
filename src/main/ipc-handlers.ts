@@ -98,6 +98,10 @@ export function registerIpcHandlers(): void {
     (_event, payload: ConfigSetPayload): boolean => {
       try {
         setConfig(payload.tool as ToolId, payload.key, payload.value)
+        // Propagate duration changes to the LiquidFocus timer service
+        if (payload.tool === ToolId.LiquidFocus) {
+          getLiquidFocusService().refreshConfig()
+        }
         return true
       } catch (error) {
         console.warn('[PeakFlow] config:set failed:', error)
@@ -205,8 +209,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE,
-    (_event, itemId: string): void => {
-      getClipboardService().simulatePaste(itemId)
+    (_event, itemId: string, plainText?: boolean): void => {
+      getClipboardService().simulatePaste(itemId, plainText ?? false)
     }
   )
 

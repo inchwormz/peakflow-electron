@@ -221,7 +221,7 @@ function DurationTab({
         <NumberInput
           value={config.sessions_before_long}
           unit="sessions"
-          onChange={(v) => onSave('sessions_before_long', v)}
+          onChange={(v) => onSave('sessions_before_long', Math.max(1, v))}
         />
       </SettingRow>
     </>
@@ -247,7 +247,7 @@ function BehaviorTab({
           onChange={(v) => onSave('alert_sound', v)}
         />
       </SettingRow>
-      <SettingRow label="Auto-start breaks">
+      <SettingRow label="Auto-continue">
         <Toggle
           checked={config.auto_start_breaks}
           onChange={(v) => onSave('auto_start_breaks', v)}

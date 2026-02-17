@@ -86,11 +86,15 @@ class LiquidFocusService {
     this.initFromConfig()
   }
 
-  /** Load config and set initial timer duration */
+  /** Load config and set initial timer duration + restore persisted cycle state */
   private initFromConfig(): void {
     const cfg = this.getConfigSafe()
     this.total = cfg.work_duration * 60
     this.remaining = this.total
+
+    // Restore cycle state from persistent store
+    this.pomodorosCompleted = (this.store.get('pomodorosCompleted', 0) as number) || 0
+    this.activeTaskIndex = (this.store.get('activeTaskIndex', -1) as number) ?? -1
   }
 
   private getConfigSafe(): LiquidFocusConfig {
@@ -104,6 +108,9 @@ class LiquidFocusService {
         sessions_before_long: 4,
         alert_sound: true,
         auto_start_breaks: false,
+        focus_detection_enabled: false,
+        focus_away_threshold_secs: 5,
+        todoist_project_filter: '',
         distraction_sites: []
       }
     }
@@ -157,6 +164,8 @@ class LiquidFocusService {
     this.stopTicking()
     this.status = 'idle'
     this.mode = 'work'
+    this.pomodorosCompleted = 0
+    this.store.set('pomodorosCompleted', 0)
     const cfg = this.getConfigSafe()
     this.total = cfg.work_duration * 60
     this.remaining = this.total
@@ -170,8 +179,28 @@ class LiquidFocusService {
     return this.getTimerState()
   }
 
+  /** Reload durations from config. Called when settings change. */
+  refreshConfig(): void {
+    const cfg = this.getConfigSafe()
+    // Only update durations if the timer is idle (not mid-session)
+    if (this.status === 'idle') {
+      if (this.mode === 'work') {
+        this.total = cfg.work_duration * 60
+        this.remaining = this.total
+      } else if (this.mode === 'short_break') {
+        this.total = cfg.break_duration * 60
+        this.remaining = this.total
+      } else if (this.mode === 'long_break') {
+        this.total = cfg.long_break_duration * 60
+        this.remaining = this.total
+      }
+      this.broadcastState()
+    }
+  }
+
   setActiveTask(index: number): void {
     this.activeTaskIndex = index
+    this.store.set('activeTaskIndex', index)
     this.broadcastState()
   }
 
@@ -191,6 +220,7 @@ class LiquidFocusService {
     if (this.mode === 'work') {
       // Completed a focus session
       this.pomodorosCompleted++
+      this.store.set('pomodorosCompleted', this.pomodorosCompleted)
       this.recordSession()
 
       // Update active task
@@ -202,7 +232,8 @@ class LiquidFocusService {
 
       // Determine break type
       const cfg = this.getConfigSafe()
-      if (this.pomodorosCompleted % cfg.sessions_before_long === 0) {
+      const interval = Math.max(1, cfg.sessions_before_long)
+      if (this.pomodorosCompleted % interval === 0) {
         this.mode = 'long_break'
         this.total = cfg.long_break_duration * 60
       } else {

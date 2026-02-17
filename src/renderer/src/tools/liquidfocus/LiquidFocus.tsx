@@ -375,6 +375,8 @@ function playPhaseSound(phase: string): void {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5)
     osc.start(ctx.currentTime)
     osc.stop(ctx.currentTime + 0.5)
+    // Close the AudioContext after the sound finishes to avoid hitting Chromium's limit
+    osc.onended = () => ctx.close()
   } catch {
     // Audio API may not be available
   }

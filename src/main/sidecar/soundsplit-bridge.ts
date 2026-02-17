@@ -358,6 +358,8 @@ class SoundSplitBridge {
   private lastPollResult = ''
   /** Track which process names have already had prefs restored this session */
   private restoredApps = new Set<string>()
+  /** Guard against overlapping poll commands */
+  private pollInFlight = false
 
   // ─── Sidecar lifecycle ──────────────────────────────────────────────────
 
@@ -436,6 +438,7 @@ class SoundSplitBridge {
       }
 
       if (trimmed.startsWith('RESULT:')) {
+        this.pollInFlight = false
         this.lastPollResult = trimmed.slice(7)
         this.parsePollResult(this.lastPollResult)
         this.broadcastSessions()
@@ -528,15 +531,26 @@ class SoundSplitBridge {
       sessions.push(session)
     }
 
+    // Clear restoredApps entries for apps that are no longer present,
+    // so prefs get re-applied if the app relaunches with a new PID
+    const currentNames = new Set(sessions.map((s) => s.name.toLowerCase()))
+    for (const name of this.restoredApps) {
+      if (!currentNames.has(name)) {
+        this.restoredApps.delete(name)
+      }
+    }
+
     this.sessions = sessions
   }
 
   private poll(): void {
     if (!this.ready || !this.ps || this.ps.killed) return
+    if (this.pollInFlight) return // skip if previous poll hasn't returned yet
+    this.pollInFlight = true
     try {
       this.ps.stdin?.write('poll\n')
     } catch {
-      // stdin may be closed
+      this.pollInFlight = false // reset on write failure
     }
   }
 
@@ -555,17 +569,21 @@ class SoundSplitBridge {
       this.pollInterval = null
     }
     if (this.ps && !this.ps.killed) {
+      // Capture reference to avoid killing a respawned process in the timeout
+      const proc = this.ps
+      this.ps = null
       try {
-        this.ps.stdin?.write('exit\n')
+        proc.stdin?.write('exit\n')
       } catch {
         // Force kill if stdin is broken
       }
       setTimeout(() => {
-        if (this.ps && !this.ps.killed) {
-          this.ps.kill()
+        if (!proc.killed) {
+          proc.kill()
         }
-        this.ps = null
       }, 1000)
+    } else {
+      this.ps = null
     }
     this.ready = false
     console.log('[SoundSplit] Bridge destroyed')

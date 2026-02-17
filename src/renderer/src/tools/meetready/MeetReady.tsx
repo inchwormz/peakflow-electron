@@ -184,20 +184,38 @@ export function MeetReady(): React.JSX.Element {
     loadData()
   }, [loadData])
 
-  // ─── Auto-start camera and mic on mount ─────────────────────────────────
+  // ─── Auto-start camera and mic once config has loaded ─────────────────
+
+  const mediaStartedRef = useRef(false)
+  const prevCamRef = useRef(config.default_camera)
+  const prevMicRef = useRef(config.default_mic)
 
   useEffect(() => {
-    startCamera(config.default_camera || undefined)
-    startMic(config.default_mic || undefined)
+    if (!mediaStartedRef.current) {
+      // First start — use whatever config we have (may still be defaults)
+      mediaStartedRef.current = true
+      startCamera(config.default_camera || undefined)
+      startMic(config.default_mic || undefined)
+    } else {
+      // Config loaded from IPC — restart only if device preference changed
+      if (config.default_camera !== prevCamRef.current) {
+        stopCamera()
+        startCamera(config.default_camera || undefined)
+      }
+      if (config.default_mic !== prevMicRef.current) {
+        stopMic()
+        startMic(config.default_mic || undefined)
+      }
+    }
+    prevCamRef.current = config.default_camera
+    prevMicRef.current = config.default_mic
 
     return () => {
       stopCamera()
       stopMic()
     }
-    // Only run on mount — config.default_* may change but we don't want
-    // to restart streams mid-session unless user explicitly changes devices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [config.default_camera, config.default_mic])
 
   // ─── IPC listeners ──────────────────────────────────────────────────────
 

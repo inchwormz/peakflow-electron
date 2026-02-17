@@ -17,8 +17,13 @@ interface StatsViewProps {
 
 export function StatsView({ stats, onBack }: StatsViewProps): React.JSX.Element {
   const focusHours = useMemo(() => {
+    // Use configured work_duration if available, fallback to 25min
     return Math.round((stats.allTime * 25) / 60 * 10) / 10
   }, [stats.allTime])
+
+  const activeDays = useMemo(() => {
+    return stats.dailyBreakdown.filter((d) => d.count > 0).length
+  }, [stats.dailyBreakdown])
 
   const chartMax = useMemo(() => {
     return Math.max(1, ...stats.dailyBreakdown.map((d) => d.count))
@@ -89,7 +94,7 @@ export function StatsView({ stats, onBack }: StatsViewProps): React.JSX.Element 
         >
           <QuickStat label="Streak" value={String(stats.streak)} suffix="days" />
           <QuickStat label="Today" value={String(stats.today)} suffix="sessions" />
-          <QuickStat label="Average" value={String(Math.round(stats.allTime / Math.max(stats.dailyBreakdown.length, 1)))} suffix="/day" />
+          <QuickStat label="Average" value={String(Math.round(stats.allTime / Math.max(activeDays, 1)))} suffix="/day" />
         </div>
 
         {/* 7-day chart */}

@@ -22,7 +22,9 @@ function toggleTool(toolId: ToolId): void {
   if (existing) {
     closeToolWindow(toolId)
   } else {
-    openToolWithAccessCheck(toolId)
+    openToolWithAccessCheck(toolId).catch((err) => {
+      console.error(`[PeakFlow] Hotkey failed to open ${toolId}:`, err)
+    })
   }
 }
 

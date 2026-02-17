@@ -11,6 +11,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { checkAccess } from './security/access-check'
+import { getConfig } from './services/config-store'
 
 type WindowId = ToolId | SystemWindowId
 
@@ -80,16 +81,41 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
 
   const overrides = WINDOW_CONFIGS[toolId] ?? { width: 500, height: 600 }
 
-  // Use primary display dimensions for fullscreen / overlay windows
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenW, height: screenH } = primaryDisplay.workAreaSize
+  // Use display dimensions for fullscreen / overlay windows
+  let targetDisplay = screen.getPrimaryDisplay()
+
+  // For ScreenSlap alerts, check the configured monitor index
+  if (toolId === SystemWindowId.ScreenSlapAlert) {
+    try {
+      const ssConfig = getConfig(ToolId.ScreenSlap) as { monitor_index?: number } | null
+      if (ssConfig?.monitor_index !== undefined) {
+        const displays = screen.getAllDisplays()
+        if (ssConfig.monitor_index < displays.length) {
+          targetDisplay = displays[ssConfig.monitor_index]
+        }
+      }
+    } catch {
+      // Use primary display as fallback
+    }
+  }
+
+  // Use full bounds (not workAreaSize) so fullscreen windows cover the taskbar
+  const { width: screenW, height: screenH } = overrides.fullscreen
+    ? targetDisplay.bounds
+    : targetDisplay.workAreaSize
 
   const winWidth = overrides.fullscreen ? screenW : overrides.width
   const winHeight = overrides.fullscreen ? screenH : overrides.height
 
+  // Position fullscreen windows at the target display origin
+  const winX = overrides.fullscreen ? targetDisplay.bounds.x : undefined
+  const winY = overrides.fullscreen ? targetDisplay.bounds.y : undefined
+
   const win = new BrowserWindow({
     width: winWidth,
     height: winHeight,
+    x: winX,
+    y: winY,
     minWidth: overrides.minWidth,
     minHeight: overrides.minHeight,
     resizable: overrides.resizable !== false,
@@ -101,7 +127,7 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
     frame: false,
     show: false,
     backgroundColor: '#08080a',
-    center: true,
+    center: winX === undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
