@@ -12,8 +12,8 @@
  *   - Auto-expires unpinned items older than max_age_hours
  *   - Deduplicates by content, bumping copy_count instead
  *
- * Paste simulation: writes to clipboard only. Actual keystroke injection
- * (nut-js or similar) is marked TODO for a follow-up phase.
+ * Paste simulation: writes to clipboard then sends Ctrl+V via
+ * native Win32 SendInput API (koffi FFI).
  */
 
 import { clipboard, nativeImage, BrowserWindow } from 'electron'
@@ -25,6 +25,7 @@ import { getConfig } from './config-store'
 import { looksLikeSecret } from '../security/secret-detection'
 import { isExcludedApp } from '../security/excluded-apps'
 import type { QuickBoardConfig } from '@shared/config-schemas'
+import { simulateCtrlV } from '../native/keyboard'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -338,11 +339,10 @@ class ClipboardService {
   }
 
   /**
-   * Simulate paste after writing to clipboard.
-   * TODO: Use nut-js or node-ffi-napi to send actual Ctrl+V keystroke.
-   * For now, this is a no-op -- the content is already on the clipboard.
+   * Write to clipboard and simulate Ctrl+V paste via Win32 SendInput.
+   * If plainText is true, strips all formatting and writes as plain text.
    */
-  simulatePaste(itemId: string): void {
+  simulatePaste(itemId: string, plainText = false): void {
     const item = this.history.find((h) => h.id === itemId)
     if (!item) {
       console.warn(`[QuickBoard] simulatePaste: item not found: ${itemId}`)
@@ -351,7 +351,12 @@ class ClipboardService {
 
     // Write to clipboard
     if (item.type === 'text' && item.text) {
-      this.writeText(item.text)
+      if (plainText) {
+        // Strip formatting: write as plain text only (no RTF/HTML)
+        this.writeText(item.text.replace(/[\r]/g, ''))
+      } else {
+        this.writeText(item.text)
+      }
     } else if (item.type === 'image' && item.imageDataUrl) {
       this.writeImage(item.imageDataUrl)
     }
@@ -361,8 +366,11 @@ class ClipboardService {
     item.timestamp = new Date().toISOString()
     this.saveHistory()
 
-    // TODO: Actually simulate Ctrl+V keystroke here
-    console.log(`[QuickBoard] Paste simulated for item ${itemId} (clipboard only, no keystroke)`)
+    // Wait a brief moment for clipboard to settle, then simulate Ctrl+V
+    setTimeout(() => {
+      const success = simulateCtrlV()
+      console.log(`[QuickBoard] Paste ${success ? 'sent' : 'failed'} for item ${itemId}`)
+    }, 50)
   }
 
   /** Delete a single item from history by ID. */

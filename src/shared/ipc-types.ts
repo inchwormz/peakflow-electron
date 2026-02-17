@@ -109,6 +109,7 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_UPDATE_TASK: 'liquidfocus:update-task',
   LIQUIDFOCUS_DELETE_TASK: 'liquidfocus:delete-task',
   LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats',
+  LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
 
   // Todoist
   TODOIST_AUTHENTICATE: 'todoist:authenticate',

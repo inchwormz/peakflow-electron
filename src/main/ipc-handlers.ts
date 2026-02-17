@@ -12,7 +12,7 @@ import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig } from '@shared/config-schemas'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
-import { createToolWindow } from './windows'
+import { createToolWindow, openToolWithAccessCheck } from './windows'
 import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS } from './security/trial'
@@ -384,6 +384,13 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_RECORD_INTERRUPTION,
+    (): void => {
+      getLiquidFocusService().recordInterruption()
+    }
+  )
+
   // ─── SoundSplit ──────────────────────────────────────────────────────────
 
   ipcMain.handle(
@@ -469,8 +476,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.WINDOW_OPEN,
-    (_event, payload: { toolId: string }): void => {
-      createToolWindow(payload.toolId as WindowId)
+    async (_event, payload: { toolId: string }): Promise<void> => {
+      await openToolWithAccessCheck(payload.toolId as WindowId)
     }
   )
 

@@ -7,7 +7,8 @@
 
 import { Tray, Menu, app, nativeImage } from 'electron'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
-import { createToolWindow } from './windows'
+import { createToolWindow, openToolWithAccessCheck } from './windows'
+import { checkForUpdates } from './services/auto-updater'
 
 let tray: Tray | null = null
 
@@ -77,47 +78,46 @@ function buildContextMenu(): Electron.Menu {
     {
       label: TOOL_DISPLAY_NAMES[ToolId.ScreenSlap],
       click: (): void => {
-        createToolWindow(ToolId.ScreenSlap)
+        openToolWithAccessCheck(ToolId.ScreenSlap)
       }
     },
     {
       label: TOOL_DISPLAY_NAMES[ToolId.FocusDim],
       accelerator: hotkeyFocusDim ? formatHotkeyLabel(hotkeyFocusDim) : undefined,
       click: (): void => {
-        createToolWindow(ToolId.FocusDim)
+        openToolWithAccessCheck(ToolId.FocusDim)
       }
     },
     {
       label: TOOL_DISPLAY_NAMES[ToolId.QuickBoard],
       accelerator: hotkeyQuickBoard ? formatHotkeyLabel(hotkeyQuickBoard) : undefined,
       click: (): void => {
-        createToolWindow(ToolId.QuickBoard)
+        openToolWithAccessCheck(ToolId.QuickBoard)
       }
     },
     {
       label: TOOL_DISPLAY_NAMES[ToolId.LiquidFocus],
       click: (): void => {
-        createToolWindow(ToolId.LiquidFocus)
+        openToolWithAccessCheck(ToolId.LiquidFocus)
       }
     },
     {
       label: TOOL_DISPLAY_NAMES[ToolId.MeetReady],
       click: (): void => {
-        createToolWindow(ToolId.MeetReady)
+        openToolWithAccessCheck(ToolId.MeetReady)
       }
     },
     {
       label: TOOL_DISPLAY_NAMES[ToolId.SoundSplit],
       click: (): void => {
-        createToolWindow(ToolId.SoundSplit)
+        openToolWithAccessCheck(ToolId.SoundSplit)
       }
     },
     { type: 'separator' },
     {
       label: 'Check for Updates',
       click: (): void => {
-        // TODO: Implement auto-updater integration
-        console.log('[PeakFlow] Update check not yet implemented')
+        checkForUpdates()
       }
     },
     { type: 'separator' },

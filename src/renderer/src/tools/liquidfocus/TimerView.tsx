@@ -10,10 +10,13 @@
 
 import { useState, useMemo, type CSSProperties } from 'react'
 import { DS, type TimerState, type SessionStats } from './LiquidFocus'
+import { FocusDetector } from './FocusDetector'
 
 interface TimerViewProps {
   timer: TimerState
   stats: SessionStats
+  focusDetectionEnabled: boolean
+  focusAwayThresholdSecs: number
   onToggle: () => void
   onReset: () => void
   onSkip: () => void
@@ -33,6 +36,8 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 export function TimerView({
   timer,
   stats,
+  focusDetectionEnabled,
+  focusAwayThresholdSecs,
   onToggle,
   onReset,
   onSkip,
@@ -200,11 +205,22 @@ export function TimerView({
             letterSpacing: 3,
             textTransform: 'uppercase',
             color: DS.textMuted,
-            marginBottom: 16
+            marginBottom: focusDetectionEnabled ? 8 : 16
           }}
         >
           {modeLabel}
         </div>
+
+        {/* Focus detection indicator */}
+        {focusDetectionEnabled && (
+          <div style={{ marginBottom: 10 }}>
+            <FocusDetector
+              active={timer.mode === 'work' && timer.status === 'running'}
+              thresholdSecs={focusAwayThresholdSecs}
+              showPreview
+            />
+          </div>
+        )}
 
         {/* Timer controls */}
         <div

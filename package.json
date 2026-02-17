@@ -18,8 +18,11 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@tensorflow-models/blazeface": "^0.1.0",
+    "@tensorflow/tfjs": "^4.22.0",
     "electron-store": "^10.0.0",
-    "electron-updater": "^6.3.0"
+    "electron-updater": "^6.3.0",
+    "koffi": "^2.15.1"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-ts": "^3.0.0",

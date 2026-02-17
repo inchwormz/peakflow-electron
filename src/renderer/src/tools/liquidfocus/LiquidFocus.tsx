@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react'
 import { TitleBar } from '../../components/layout/TitleBar'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
+import { ToolId } from '@shared/tool-ids'
 import { TimerView } from './TimerView'
 import { TaskList } from './TaskList'
 import { StatsView } from './StatsView'
@@ -102,6 +103,8 @@ export function LiquidFocus(): React.JSX.Element {
     today: 0,
     allTime: 0
   })
+  const [focusDetectionEnabled, setFocusDetectionEnabled] = useState(false)
+  const [focusAwayThresholdSecs, setFocusAwayThresholdSecs] = useState(5)
 
   // ── Load initial state from main ──────────────────────────────────────
 
@@ -125,6 +128,36 @@ export function LiquidFocus(): React.JSX.Element {
   useEffect(() => {
     loadState()
   }, [loadState])
+
+  // ── Load focus detection config ─────────────────────────────────────
+
+  const loadFocusConfig = useCallback(() => {
+    window.peakflow
+      .invoke(IPC_INVOKE.CONFIG_GET, { tool: ToolId.LiquidFocus })
+      .then((cfg) => {
+        if (cfg && typeof cfg === 'object') {
+          const c = cfg as Record<string, unknown>
+          if (typeof c.focus_detection_enabled === 'boolean') {
+            setFocusDetectionEnabled(c.focus_detection_enabled)
+          }
+          if (typeof c.focus_away_threshold_secs === 'number') {
+            setFocusAwayThresholdSecs(c.focus_away_threshold_secs)
+          }
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadFocusConfig()
+  }, [loadFocusConfig])
+
+  // Reload config when returning from settings
+  useEffect(() => {
+    if (view === 'timer') {
+      loadFocusConfig()
+    }
+  }, [view, loadFocusConfig])
 
   // ── Subscribe to state changes from main process ──────────────────────
 
@@ -283,6 +316,8 @@ export function LiquidFocus(): React.JSX.Element {
             <TimerView
               timer={timer}
               stats={stats}
+              focusDetectionEnabled={focusDetectionEnabled}
+              focusAwayThresholdSecs={focusAwayThresholdSecs}
               onToggle={handleToggle}
               onReset={handleReset}
               onSkip={handleSkip}

@@ -5,9 +5,8 @@
  * CSS clip-path to carve out a rectangular "hole" where the active window
  * sits. This avoids the complexity of managing 4 separate overlay windows.
  *
- * For the initial implementation, active window tracking uses a demo
- * position. A native module for real foreground-window detection will be
- * added in a follow-up phase.
+ * Uses native Win32 API (GetForegroundWindow + DwmGetWindowAttribute)
+ * via koffi FFI for real foreground window tracking.
  *
  * State is persisted via config-store so settings survive app restarts.
  */
@@ -17,6 +16,7 @@ import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
+import { getActiveWindow } from '../native/active-window'
 
 // ─── Dim color presets (must match Python + renderer) ────────────────────────
 
@@ -379,11 +379,7 @@ class FocusDimService {
 
   /**
    * Start polling for the active window position.
-   *
-   * INITIAL IMPLEMENTATION: Uses a centered demo rectangle since pure
-   * Electron cannot detect external foreground window positions.
-   * A native Node addon (node-ffi-napi or a C++ addon using
-   * GetForegroundWindow + GetWindowRect) will replace this in Phase 4b.
+   * Uses native Win32 GetForegroundWindow via koffi FFI.
    */
   private startTracking(): void {
     if (this.trackingInterval) return
@@ -401,40 +397,37 @@ class FocusDimService {
   }
 
   /**
-   * Get the active window rect.
-   *
-   * TODO (Phase 4b): Replace with native module call to
-   * GetForegroundWindow() + GetWindowRect() via node-ffi-napi.
-   * For now, uses a centered demo rect on the primary display.
+   * Get the active window rect using native Win32 API.
+   * Calls GetForegroundWindow() + DwmGetWindowAttribute() for accurate bounds.
    */
+  private _debugLogCount = 0
   private trackActiveWindow(): void {
     if (!this._enabled || !this.overlayWindow || this.overlayWindow.isDestroyed()) return
 
-    // Try to find the focused BrowserWindow (our own windows)
-    const focused = BrowserWindow.getFocusedWindow()
-    if (focused && !focused.isDestroyed() && focused !== this.overlayWindow) {
-      const bounds = focused.getBounds()
+    const activeWin = getActiveWindow()
+
+    // Debug: log first 5 results to diagnose
+    if (this._debugLogCount < 5) {
+      this._debugLogCount++
+      if (activeWin) {
+        console.log(`[FocusDim] DEBUG: active window = "${activeWin.title}" class="${activeWin.className}" rect=${activeWin.x},${activeWin.y} ${activeWin.w}x${activeWin.h}`)
+      } else {
+        console.log('[FocusDim] DEBUG: getActiveWindow() returned null')
+      }
+    }
+
+    if (activeWin) {
       this.sendOverlayUpdate({
-        x: bounds.x,
-        y: bounds.y,
-        w: bounds.width,
-        h: bounds.height
+        x: activeWin.x,
+        y: activeWin.y,
+        w: activeWin.w,
+        h: activeWin.h
       })
       return
     }
 
-    // Fallback: demo rect centered on primary display
-    const primary = screen.getPrimaryDisplay()
-    const pw = primary.workAreaSize.width
-    const ph = primary.workAreaSize.height
-    const ox = primary.workArea.x
-    const oy = primary.workArea.y
-    const demoW = Math.round(pw * 0.5)
-    const demoH = Math.round(ph * 0.6)
-    const demoX = ox + Math.round((pw - demoW) / 2)
-    const demoY = oy + Math.round((ph - demoH) / 2)
-
-    this.sendOverlayUpdate({ x: demoX, y: demoY, w: demoW, h: demoH })
+    // No valid foreground window (e.g., desktop is focused) — dim everything
+    this.sendOverlayUpdate({ x: -100, y: -100, w: 1, h: 1 })
   }
 }
 

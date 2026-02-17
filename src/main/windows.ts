@@ -10,6 +10,7 @@ import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { checkAccess } from './security/access-check'
 
 type WindowId = ToolId | SystemWindowId
 
@@ -148,6 +149,32 @@ export function getToolWindow(toolId: string): BrowserWindow | undefined {
   // Stale entry — clean it up
   if (win) windowMap.delete(toolId)
   return undefined
+}
+
+/**
+ * Open a tool window with trial/license enforcement.
+ *
+ * If the user's trial has expired and they have no license, the tool window
+ * is NOT created. Instead the TrialExpired window is shown.
+ *
+ * System windows (Dashboard, Settings, overlays, alerts) bypass this check.
+ */
+export async function openToolWithAccessCheck(toolId: WindowId): Promise<BrowserWindow | null> {
+  // System windows are never gated
+  const isSystemWindow = Object.values(SystemWindowId).includes(toolId as SystemWindowId)
+  if (isSystemWindow) {
+    return createToolWindow(toolId)
+  }
+
+  // Check trial/license status
+  const access = await checkAccess()
+  if (!access.allowed) {
+    console.log(`[PeakFlow] Access denied for ${toolId}: ${access.message}`)
+    createToolWindow(SystemWindowId.TrialExpired)
+    return null
+  }
+
+  return createToolWindow(toolId)
 }
 
 /**
