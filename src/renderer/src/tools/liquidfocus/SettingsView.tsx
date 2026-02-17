@@ -53,12 +53,6 @@ interface LiquidFocusConfig {
   distraction_sites: string[]
 }
 
-interface BehaviorSettings {
-  auto_start: boolean
-  ticking_sound: boolean
-  strict_mode: boolean
-}
-
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.JSX.Element {

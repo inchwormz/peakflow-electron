@@ -110,18 +110,6 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_INVOKE.CONFIG_GET_ALL,
-    (_event, payload: ConfigGetPayload): ToolConfig | null => {
-      try {
-        return getConfig(payload.tool as ToolId)
-      } catch (error) {
-        console.warn('[PeakFlow] config:get-all failed:', error)
-        return null
-      }
-    }
-  )
-
   // ─── Window Management ──────────────────────────────────────────────────────
 
   ipcMain.handle(IPC_INVOKE.WINDOW_MINIMIZE, (event): void => {

@@ -52,7 +52,6 @@ export const IPC_INVOKE = {
   // Config
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',
-  CONFIG_GET_ALL: 'config:get-all',
 
   // Window
   WINDOW_MINIMIZE: 'window:minimize',

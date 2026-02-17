@@ -275,31 +275,6 @@ class FocusDimService {
 </style></head><body>
 <div id="dim-overlay"></div>
 <div id="border-frame"></div>
-<script>
-  // Listen for update messages from the main process
-  window.addEventListener('message', (e) => {
-    if (!e.data || e.data.type !== 'focusdim-update') return;
-    const d = e.data;
-    const overlay = document.getElementById('dim-overlay');
-    const border = document.getElementById('border-frame');
-    if (!overlay || !border) return;
-
-    if (d.color !== undefined) overlay.style.background = d.color;
-    if (d.opacity !== undefined) overlay.style.opacity = d.opacity;
-    if (d.showBorder !== undefined) border.style.display = d.showBorder ? 'block' : 'none';
-    if (d.fadeDuration !== undefined) {
-      overlay.style.transition = 'opacity ' + d.fadeDuration + 'ms ease, clip-path 0.05s linear';
-    }
-
-    if (d.clipPath) overlay.style.clipPath = d.clipPath;
-    if (d.borderRect) {
-      border.style.left = d.borderRect.x + 'px';
-      border.style.top = d.borderRect.y + 'px';
-      border.style.width = d.borderRect.w + 'px';
-      border.style.height = d.borderRect.h + 'px';
-    }
-  });
-</script>
 </body></html>`
   }
 
