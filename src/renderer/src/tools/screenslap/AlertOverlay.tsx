@@ -112,16 +112,23 @@ export function AlertOverlay(): React.JSX.Element {
       }
       step()
 
-      // Play notification sound
+      // Play notification sound via synthesized tone (reliable across platforms)
       try {
-        const audio = new Audio('data:audio/wav;base64,UklGRl9vT19teleVjawATQA=')
-        // Fallback: use system notification sound
-        if (window.Notification?.permission === 'granted') {
-          new Notification('ScreenSlap', {
-            body: alert.summary,
-            silent: false
-          })
-        }
+        const audioCtx = new AudioContext()
+        const osc = audioCtx.createOscillator()
+        const gain = audioCtx.createGain()
+        osc.connect(gain)
+        gain.connect(audioCtx.destination)
+        osc.type = 'sine'
+        // Two-tone alert: ascending beep
+        osc.frequency.setValueAtTime(523, audioCtx.currentTime) // C5
+        osc.frequency.setValueAtTime(659, audioCtx.currentTime + 0.15) // E5
+        osc.frequency.setValueAtTime(784, audioCtx.currentTime + 0.3) // G5
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5)
+        osc.start(audioCtx.currentTime)
+        osc.stop(audioCtx.currentTime + 0.5)
+        osc.onended = () => audioCtx.close()
       } catch {
         // Sound not critical
       }
@@ -143,7 +150,7 @@ export function AlertOverlay(): React.JSX.Element {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' || !dismissed) {
+      if (!dismissed) {
         handleDismiss()
       }
     }

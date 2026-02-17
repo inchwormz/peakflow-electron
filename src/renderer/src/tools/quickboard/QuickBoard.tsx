@@ -111,6 +111,7 @@ export function QuickBoard(): React.JSX.Element {
           const c = conf as Record<string, unknown>
           if (typeof c.max_entries === 'number') setSettingsMaxItems(c.max_entries)
           if (typeof c.encrypt_history === 'boolean') setSettingsEncrypt(c.encrypt_history)
+          if (typeof c.plain_text_mode === 'boolean') setSettingsPlainText(c.plain_text_mode)
         }
       })
   }, [])
@@ -146,7 +147,7 @@ export function QuickBoard(): React.JSX.Element {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  })
+  }, [view, selectedIndex, filteredHistory, handleSelectItem])
 
   // ── Filtering & sorting ────────────────────────────────────────────────
 
@@ -181,13 +182,13 @@ export function QuickBoard(): React.JSX.Element {
   // ── Actions ─────────────────────────────────────────────────────────────
 
   const handleSelectItem = useCallback((item: ClipboardItem) => {
-    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, item.id)
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, item.id, settingsPlainText)
     showToast()
     // Close after brief delay so the user sees the toast
     setTimeout(() => {
       window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
     }, 400)
-  }, [])
+  }, [settingsPlainText, showToast])
 
   const handleDeleteItem = useCallback(
     (e: React.MouseEvent, itemId: string) => {
@@ -246,15 +247,20 @@ export function QuickBoard(): React.JSX.Element {
       key: 'encrypt_history',
       value: settingsEncrypt
     })
+    window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
+      tool: 'quickboard',
+      key: 'plain_text_mode',
+      value: settingsPlainText
+    })
     setView('main')
-  }, [settingsMaxItems, settingsEncrypt])
+  }, [settingsMaxItems, settingsEncrypt, settingsPlainText])
 
   const handleClose = useCallback(() => {
     window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
   }, [])
 
   const handleMinimize = useCallback(() => {
-    window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+    window.peakflow.invoke(IPC_INVOKE.WINDOW_MINIMIZE)
   }, [])
 
   // ── Icon helper ─────────────────────────────────────────────────────────

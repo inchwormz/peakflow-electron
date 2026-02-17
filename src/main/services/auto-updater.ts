@@ -28,6 +28,8 @@ autoUpdater.autoRunAppAfterInstall = true
 let updateAvailable = false
 let updateDownloaded = false
 let checking = false
+/** Whether the current check was initiated silently (startup) vs user-triggered */
+let silentCheck = false
 
 // ─── Event handlers ─────────────────────────────────────────────────────────
 
@@ -61,17 +63,27 @@ autoUpdater.on('update-available', (info) => {
 
 autoUpdater.on('update-not-available', () => {
   console.log('[AutoUpdater] No updates available')
+  const wasSilent = silentCheck
   checking = false
+  // Show dialog only for user-initiated (non-silent) checks
+  if (!wasSilent) {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'No Updates',
+      message: 'You are running the latest version of PeakFlow.'
+    })
+  }
 })
 
 autoUpdater.on('download-progress', (progress) => {
   const pct = Math.round(progress.percent)
   console.log(`[AutoUpdater] Download: ${pct}%`)
 
-  // Update any open window's title bar as progress indicator
-  const wins = BrowserWindow.getAllWindows()
-  if (wins.length > 0) {
-    wins[0].setProgressBar(progress.percent / 100)
+  // Update a visible window's taskbar progress indicator
+  const focusedWin = BrowserWindow.getFocusedWindow()
+  const targetWin = focusedWin || BrowserWindow.getAllWindows().find((w) => w.isVisible())
+  if (targetWin) {
+    targetWin.setProgressBar(progress.percent / 100)
   }
 })
 
@@ -79,10 +91,11 @@ autoUpdater.on('update-downloaded', () => {
   console.log('[AutoUpdater] Update downloaded — ready to install')
   updateDownloaded = true
 
-  // Clear progress bar
-  const wins = BrowserWindow.getAllWindows()
-  if (wins.length > 0) {
-    wins[0].setProgressBar(-1)
+  // Clear progress bar on all windows
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.setProgressBar(-1)
+    }
   }
 
   // Prompt user to restart
@@ -147,17 +160,9 @@ export function checkForUpdates(silent = false): void {
     return
   }
 
+  silentCheck = silent
   autoUpdater
     .checkForUpdates()
-    .then((result) => {
-      if (!result?.updateInfo?.version && !silent) {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'No Updates',
-          message: 'You are running the latest version of PeakFlow.'
-        })
-      }
-    })
     .catch((err) => {
       console.error('[AutoUpdater] Check failed:', err.message)
       if (!silent) {

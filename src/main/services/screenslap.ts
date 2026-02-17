@@ -65,6 +65,12 @@ class ScreenSlapService {
     const config = this.getScreenSlapConfig()
     const calendar = getCalendarService()
 
+    // Don't start polling if calendar isn't connected — nothing to fetch
+    if (!calendar.getStatus().connected) {
+      console.log('[ScreenSlap] Calendar not connected — skipping start')
+      return
+    }
+
     // Start calendar polling (fetches events periodically)
     calendar.startPolling(config.fetch_interval_minutes)
 
