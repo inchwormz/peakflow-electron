@@ -314,13 +314,11 @@ export function TimerView({
 function NavButton({
   children,
   onClick,
-  title,
-  isClose
+  title
 }: {
   children: React.ReactNode
   onClick: () => void
   title?: string
-  isClose?: boolean
 }): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
 
@@ -335,8 +333,8 @@ function NavButton({
         height: 32,
         borderRadius: '50%',
         border: `1px solid ${hovered ? '#444' : 'rgba(255,255,255,0.15)'}`,
-        background: hovered ? (isClose ? DS.red : DS.elevated) : 'transparent',
-        color: hovered && isClose ? DS.red : DS.white,
+        background: hovered ? DS.elevated : 'transparent',
+        color: DS.white,
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',

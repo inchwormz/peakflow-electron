@@ -17,7 +17,7 @@ import { dialog, BrowserWindow } from 'electron'
 /** Don't download automatically — let us control when */
 autoUpdater.autoDownload = false
 
-/** Don't auto-install on quit — prompt the user first */
+/** Auto-install on quit so the update applies next launch */
 autoUpdater.autoInstallOnAppQuit = true
 
 /** Suppress built-in Electron download progress dialog */

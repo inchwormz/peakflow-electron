@@ -43,7 +43,6 @@ export function FocusDetector({
   showPreview = true
 }: FocusDetectorProps): React.JSX.Element | null {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const modelRef = useRef<blazeface.BlazeFaceModel | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -281,8 +280,6 @@ export function FocusDetector({
           playsInline
           autoPlay
         />
-        {/* Hidden canvas for potential future use */}
-        <canvas ref={canvasRef} width={320} height={240} style={{ display: 'none' }} />
       </div>
       <div style={dotStyle} />
       <span style={labelStyle}>
