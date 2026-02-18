@@ -294,35 +294,19 @@ class FocusDimService {
     showBorder: boolean,
     fadeDuration: number
   ): string {
+    // Use 4 separate divs (top/left/right/bottom) instead of clip-path polygon.
+    // This avoids sub-pixel rounding, evenodd quirks, and percentage math errors.
+    const dimStyle = `position:fixed; background:${color}; opacity:${opacity}; pointer-events:none; z-index:1; transition:all 0.05s linear, opacity ${fadeDuration}ms ease;`
     return `<!DOCTYPE html>
 <html><head><style>
   * { margin: 0; padding: 0; }
   html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
-  #dim-overlay {
-    position: fixed; inset: 0;
-    background: ${color};
-    opacity: ${opacity};
-    transition: opacity ${fadeDuration}ms ease, clip-path 0.05s linear;
-    clip-path: polygon(
-      0% 0%, 0% 100%, 100% 100%, 100% 0%,
-      0% 0%
-    );
-    pointer-events: none;
-    z-index: 1;
-  }
-  #border-frame {
-    position: fixed;
-    border: 3px solid rgba(168, 85, 247, 0.9);
-    border-radius: 4px;
-    pointer-events: none;
-    z-index: 2;
-    transition: all 0.05s linear;
-    display: ${showBorder ? 'block' : 'none'};
-    box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
-  }
 </style></head><body>
-<div id="dim-overlay"></div>
-<div id="border-frame"></div>
+<div id="dim-top" style="${dimStyle} left:0; top:0; right:0; height:100%;"></div>
+<div id="dim-left" style="${dimStyle} left:0; top:0; width:0; height:100%;"></div>
+<div id="dim-right" style="${dimStyle} right:0; top:0; width:0; height:100%;"></div>
+<div id="dim-bottom" style="${dimStyle} left:0; bottom:0; right:0; height:0;"></div>
+<div id="border-frame" style="position:fixed; border:3px solid rgba(168,85,247,0.9); border-radius:4px; pointer-events:none; z-index:2; transition:all 0.05s linear; display:${showBorder ? 'block' : 'none'}; box-shadow:0 0 12px rgba(168,85,247,0.3);"></div>
 </body></html>`
   }
 
@@ -384,32 +368,37 @@ class FocusDimService {
         const physRelX = rect.x - pb.x
         const physRelY = rect.y - pb.y
 
-        // Convert to logical pixels for CSS
+        // Convert to logical pixels for CSS positioning
         const logRelX = physRelX / sf
         const logRelY = physRelY / sf
         const logW = rect.w / sf
         const logH = rect.h / sf
 
-        const l = (logRelX / lb.width) * 100
-        const t = (logRelY / lb.height) * 100
-        const r = ((logRelX + logW) / lb.width) * 100
-        const bPct = ((logRelY + logH) / lb.height) * 100
-
-        const clipPath = `polygon(
-          0% 0%, 0% 100%, ${l}% 100%, ${l}% ${t}%,
-          ${r}% ${t}%, ${r}% ${bPct}%, ${l}% ${bPct}%,
-          ${l}% 100%, 100% 100%, 100% 0%
-        )`
+        // 4-div approach: top covers above window, left/right cover sides,
+        // bottom covers below window. Pixel-perfect, no percentage rounding.
+        const screenW = lb.width
+        const screenH = lb.height
+        const topH = Math.max(0, logRelY)
+        const botTop = Math.min(screenH, logRelY + logH)
+        const botH = Math.max(0, screenH - botTop)
+        const leftW = Math.max(0, logRelX)
+        const rightLeft = Math.min(screenW, logRelX + logW)
+        const rightW = Math.max(0, screenW - rightLeft)
+        const midH = botTop - topH
 
         entry.window.webContents.executeJavaScript(`
           (function() {
-            var overlay = document.getElementById('dim-overlay');
+            var t = document.getElementById('dim-top');
+            var l = document.getElementById('dim-left');
+            var r = document.getElementById('dim-right');
+            var b = document.getElementById('dim-bottom');
             var border = document.getElementById('border-frame');
-            if (overlay) {
-              overlay.style.clipPath = ${JSON.stringify(clipPath)};
-              overlay.style.background = ${JSON.stringify(hex)};
-              overlay.style.opacity = ${conf.opacity};
-            }
+            var bg = ${JSON.stringify(hex)};
+            var op = ${conf.opacity};
+            if (t) { t.style.left='0'; t.style.top='0'; t.style.right='0'; t.style.height='${topH}px'; t.style.width=''; t.style.background=bg; t.style.opacity=op; }
+            if (l) { l.style.left='0'; l.style.top='${topH}px'; l.style.width='${leftW}px'; l.style.height='${midH}px'; l.style.right=''; l.style.bottom=''; l.style.background=bg; l.style.opacity=op; }
+            if (r) { r.style.left='${rightLeft}px'; r.style.top='${topH}px'; r.style.width='${rightW}px'; r.style.height='${midH}px'; r.style.right=''; r.style.bottom=''; r.style.background=bg; r.style.opacity=op; }
+            if (b) { b.style.left='0'; b.style.top='${botTop}px'; b.style.right='0'; b.style.height='${botH}px'; b.style.width=''; b.style.background=bg; b.style.opacity=op; }
             if (border) {
               border.style.left = '${logRelX}px';
               border.style.top = '${logRelY}px';
@@ -421,19 +410,20 @@ class FocusDimService {
         `).catch(() => { /* overlay may be closing */ })
       } else {
         // This monitor does NOT have the active window — full dim, no cutout
-        const fullDim = `polygon(0% 0%, 0% 100%, 100% 100%, 100% 0%)`
         entry.window.webContents.executeJavaScript(`
           (function() {
-            var overlay = document.getElementById('dim-overlay');
+            var t = document.getElementById('dim-top');
+            var l = document.getElementById('dim-left');
+            var r = document.getElementById('dim-right');
+            var b = document.getElementById('dim-bottom');
             var border = document.getElementById('border-frame');
-            if (overlay) {
-              overlay.style.clipPath = ${JSON.stringify(fullDim)};
-              overlay.style.background = ${JSON.stringify(hex)};
-              overlay.style.opacity = ${conf.opacity};
-            }
-            if (border) {
-              border.style.display = 'none';
-            }
+            var bg = ${JSON.stringify(hex)};
+            var op = ${conf.opacity};
+            if (t) { t.style.height='100%'; t.style.background=bg; t.style.opacity=op; }
+            if (l) { l.style.width='0'; }
+            if (r) { r.style.width='0'; }
+            if (b) { b.style.height='0'; }
+            if (border) { border.style.display = 'none'; }
           })();
         `).catch(() => { /* overlay may be closing */ })
       }
@@ -449,13 +439,15 @@ class FocusDimService {
       if (entry.window.isDestroyed()) continue
       entry.window.webContents.executeJavaScript(`
         (function() {
-          var overlay = document.getElementById('dim-overlay');
-          var border = document.getElementById('border-frame');
-          if (overlay) {
-            overlay.style.background = ${JSON.stringify(hex)};
-            overlay.style.opacity = ${conf.opacity};
-            overlay.style.transition = 'opacity ${conf.fade_duration}ms ease, clip-path 0.05s linear';
+          var ids = ['dim-top','dim-left','dim-right','dim-bottom'];
+          for (var i = 0; i < ids.length; i++) {
+            var el = document.getElementById(ids[i]);
+            if (el) {
+              el.style.background = ${JSON.stringify(hex)};
+              el.style.opacity = ${conf.opacity};
+            }
           }
+          var border = document.getElementById('border-frame');
           if (border) {
             border.style.display = ${conf.show_border ? "'block'" : "'none'"};
           }

@@ -6,12 +6,18 @@
  * `-webkit-app-region: drag` CSS property.
  */
 
-import { BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { checkAccess } from './security/access-check'
 import { getConfig } from './services/config-store'
+
+/** When true, the app is quitting and all windows should close for real */
+let appQuitting = false
+export function setAppQuitting(v: boolean): void {
+  appQuitting = v
+}
 
 type WindowId = ToolId | SystemWindowId
 
@@ -75,7 +81,25 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
   const existing = windowMap.get(toolId)
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
-    existing.focus()
+    const cfg = WINDOW_CONFIGS[toolId]
+    if (!existing.isVisible()) {
+      // Defer alwaysOnTop until after the OS finishes restoring the window
+      if (cfg?.alwaysOnTop) {
+        const level = toolId === ToolId.LiquidFocus ? 'screen-saver' as const : 'normal' as const
+        existing.once('show', () => {
+          existing.setAlwaysOnTop(true, level)
+          existing.focus()
+        })
+      }
+      existing.show()
+      if (!cfg?.alwaysOnTop) existing.focus()
+    } else {
+      if (cfg?.alwaysOnTop) {
+        const level = toolId === ToolId.LiquidFocus ? 'screen-saver' as const : 'normal' as const
+        existing.setAlwaysOnTop(true, level)
+      }
+      existing.focus()
+    }
     return existing
   }
 
@@ -139,7 +163,38 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
   // Show when the renderer has painted its first frame
   win.once('ready-to-show', () => {
     win.show()
+    // LiquidFocus: 'screen-saver' level keeps it above fullscreen apps.
+    // Re-assert on blur/show/restore because Windows can silently drop it.
+    if (toolId === ToolId.LiquidFocus) {
+      const pinLF = (): void => {
+        if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver')
+      }
+      pinLF()
+      win.on('blur', pinLF)
+      win.on('show', pinLF)
+      win.on('restore', pinLF)
+    }
   })
+
+  // LiquidFocus: hide instead of close when timer is running so the
+  // renderer (FocusDetector webcam + phase sounds) stays alive
+  if (toolId === ToolId.LiquidFocus) {
+    win.on('close', (e) => {
+      if (appQuitting) return // let it close during app quit
+      try {
+        // Lazy import to avoid circular dependency at module load time
+        const { getLiquidFocusService } = require('./services/liquidfocus')
+        const state = getLiquidFocusService().getTimerState()
+        if (state.status === 'running' || state.status === 'paused') {
+          e.preventDefault()
+          win.hide()
+          return
+        }
+      } catch {
+        // If service isn't available, allow normal close
+      }
+    })
+  }
 
   // Clean up on close
   win.on('closed', () => {
