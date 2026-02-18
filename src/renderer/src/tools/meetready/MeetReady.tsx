@@ -432,8 +432,8 @@ export function MeetReady(): React.JSX.Element {
             </div>
           </div>
 
-          {/* Drag region for frameless window */}
-          <div style={styles.dragRegion} />
+          {/* Drag region: exclude right buttons (settings, minimize, close) */}
+          <div style={{ ...styles.dragRegion, left: 0, right: 140 } as DragStyle} />
         </div>
       )}
 
@@ -553,8 +553,8 @@ export function MeetReady(): React.JSX.Element {
             )}
           </div>
 
-          {/* Drag region for frameless window */}
-          <div style={styles.dragRegion} />
+          {/* Drag region: exclude left back button AND right side */}
+          <div style={{ ...styles.dragRegion, left: 80, right: 80 } as DragStyle} />
         </div>
       )}
     </div>
@@ -650,6 +650,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     flex: 1,
+    position: 'relative' as const,
     animation: 'meetready-fadeIn 0.2s ease'
   },
 
@@ -908,12 +909,10 @@ const styles: Record<string, CSSProperties> = {
     width: '100%'
   },
 
-  // Drag region for frameless window
+  // Drag region base style — left/right overridden per view
   dragRegion: {
     position: 'absolute',
     top: 0,
-    left: 0,
-    right: 100,
     height: 60,
     zIndex: 1
   } as DragStyle

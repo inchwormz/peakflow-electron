@@ -21,6 +21,7 @@ import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
 import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initAutoUpdater } from './services/auto-updater'
+import { setAppQuitting } from './windows'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ if (!gotLock) {
 
   // Cleanup before quitting
   app.on('before-quit', () => {
+    setAppQuitting(true)
     console.log('[PeakFlow] Shutting down...')
     destroyTodoist()
     destroySoundSplit()

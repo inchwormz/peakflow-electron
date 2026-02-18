@@ -50,6 +50,7 @@ class ClipboardService {
   private pollInterval: ReturnType<typeof setInterval> | null = null
   private lastTextHash = ''
   private lastImageHash = ''
+  private lastFormats = ''
   private history: ClipboardItem[] = []
   private store: Store
   private skippedCount = 0
@@ -151,6 +152,12 @@ class ClipboardService {
 
   private checkClipboard(): void {
     try {
+      // Fast bail: check if clipboard formats changed before doing expensive reads.
+      // availableFormats() is cheap (no image decoding or PNG compression).
+      const formats = clipboard.availableFormats().join(',')
+      const formatsChanged = formats !== this.lastFormats
+      this.lastFormats = formats
+
       // Check for text first
       const text = clipboard.readText()
       if (text && text.trim().length > 0) {
@@ -162,13 +169,15 @@ class ClipboardService {
         }
       }
 
-      // Check for image
-      const img = clipboard.readImage()
-      if (!img.isEmpty()) {
-        const imgHash = this.hashImage(img)
-        if (imgHash !== this.lastImageHash) {
-          this.lastImageHash = imgHash
-          this.handleNewImage(img)
+      // Only read/hash images when formats actually changed (avoids toPNG() every 500ms)
+      if (formatsChanged) {
+        const img = clipboard.readImage()
+        if (!img.isEmpty()) {
+          const imgHash = this.hashImage(img)
+          if (imgHash !== this.lastImageHash) {
+            this.lastImageHash = imgHash
+            this.handleNewImage(img)
+          }
         }
       }
     } catch (error) {
@@ -384,11 +393,13 @@ class ClipboardService {
     item.timestamp = new Date().toISOString()
     this.saveHistory()
 
-    // Wait for clipboard to settle and target window to re-focus, then simulate Ctrl+V
+    // Wait for the QuickBoard window to close and OS to restore focus to the
+    // target app before simulating Ctrl+V. The renderer closes after ~400ms
+    // (toast animation), so 500ms ensures focus has returned.
     setTimeout(() => {
       const success = simulateCtrlV()
       console.log(`[QuickBoard] Paste ${success ? 'sent' : 'failed'} for item ${itemId}`)
-    }, 100)
+    }, 500)
   }
 
   /** Delete a single item from history by ID. */

@@ -215,11 +215,14 @@ class ScreenSlapService {
       if (this.snoozedEvents.has(event.id)) continue
 
       const eventStart = new Date(event.startTime).getTime()
+      const eventEnd = eventStart + event.durationMinutes * 60_000
       const minutesUntil = (eventStart - now) / 60_000
 
-      if (minutesUntil >= 0 && minutesUntil <= config.alert_minutes_before) {
+      // Alert if: within the alert window OR meeting has started but not ended
+      // (covers snoozed events that pass their start time)
+      if (minutesUntil <= config.alert_minutes_before && now < eventEnd) {
         // Time to alert!
-        this.triggerAlert(event, minutesUntil)
+        this.triggerAlert(event, Math.max(0, minutesUntil))
         break // Only one alert at a time
       }
     }

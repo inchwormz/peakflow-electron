@@ -436,8 +436,11 @@ let psSetVolumeTypeCompiled = false
 
 function runPowerShell(script: string, timeoutMs = 5000): string {
   try {
+    // Use -EncodedCommand to avoid newline/comment flattening issues.
+    // PowerShell -EncodedCommand expects a UTF-16LE base64-encoded string.
+    const encoded = Buffer.from(script, 'utf16le').toString('base64')
     const result = execSync(
-      `powershell.exe -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
+      `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`,
       {
         timeout: timeoutMs,
         encoding: 'utf8',

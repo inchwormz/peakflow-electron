@@ -124,6 +124,7 @@ export const IPC_INVOKE = {
 export const IPC_SEND = {
   CLIPBOARD_ON_CHANGE: 'clipboard:on-change',
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
+  FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
   CALENDAR_STATUS_CHANGED: 'calendar:status-changed',

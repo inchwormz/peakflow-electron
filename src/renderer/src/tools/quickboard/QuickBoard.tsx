@@ -17,7 +17,7 @@
  *   - clipboard:on-change     -> push updates from main
  */
 
-import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 
 // ─── Design Tokens (dark cinematic -- matches Python COLORS) ────────────────
@@ -84,6 +84,9 @@ export function QuickBoard(): React.JSX.Element {
       if (Array.isArray(data)) {
         setHistory(data as ClipboardItem[])
       }
+    }).catch((err) => {
+      console.error('[QuickBoard] Failed to load history:', err)
+      setHistory([])
     })
   }, [])
 
@@ -114,6 +117,9 @@ export function QuickBoard(): React.JSX.Element {
           if (typeof c.plain_text_mode === 'boolean') setSettingsPlainText(c.plain_text_mode)
         }
       })
+      .catch((err) => {
+        console.error('[QuickBoard] Failed to load settings:', err)
+      })
   }, [])
 
   // ── Focus search on mount ──────────────────────────────────────────────
@@ -124,34 +130,9 @@ export function QuickBoard(): React.JSX.Element {
     }
   }, [view])
 
-  // ── Keyboard navigation ────────────────────────────────────────────────
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if (view !== 'main') return
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSelectedIndex((prev) => Math.min(prev + 1, filteredHistory.length - 1))
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSelectedIndex((prev) => Math.max(prev - 1, 0))
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        if (filteredHistory[selectedIndex]) {
-          handleSelectItem(filteredHistory[selectedIndex])
-        }
-      } else if (e.key === 'Escape') {
-        window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [view, selectedIndex, filteredHistory, handleSelectItem])
-
   // ── Filtering & sorting ────────────────────────────────────────────────
 
-  const filteredHistory = (() => {
+  const filteredHistory = useMemo(() => {
     let items = history
 
     // Filter by search query
@@ -177,18 +158,7 @@ export function QuickBoard(): React.JSX.Element {
     }
 
     return [...pinned, ...unpinned].slice(0, 50)
-  })()
-
-  // ── Actions ─────────────────────────────────────────────────────────────
-
-  const handleSelectItem = useCallback((item: ClipboardItem) => {
-    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, item.id, settingsPlainText)
-    showToast()
-    // Close after brief delay so the user sees the toast
-    setTimeout(() => {
-      window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
-    }, 400)
-  }, [settingsPlainText, showToast])
+  }, [history, searchQuery, sortMode])
 
   const handleDeleteItem = useCallback(
     (e: React.MouseEvent, itemId: string) => {
@@ -228,6 +198,42 @@ export function QuickBoard(): React.JSX.Element {
     if (toastTimer.current) clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToastVisible(false), 1200)
   }, [])
+
+  // ── Actions ─────────────────────────────────────────────────────────────
+
+  const handleSelectItem = useCallback((item: ClipboardItem) => {
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, item.id, settingsPlainText)
+    showToast()
+    // Close after brief delay so the user sees the toast
+    setTimeout(() => {
+      window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+    }, 400)
+  }, [settingsPlainText, showToast])
+
+  // ── Keyboard navigation ────────────────────────────────────────────────
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (view !== 'main') return
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedIndex((prev) => Math.min(prev + 1, filteredHistory.length - 1))
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedIndex((prev) => Math.max(prev - 1, 0))
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        if (filteredHistory[selectedIndex]) {
+          handleSelectItem(filteredHistory[selectedIndex])
+        }
+      } else if (e.key === 'Escape') {
+        window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [view, selectedIndex, filteredHistory, handleSelectItem])
 
   // ── View switching (save settings on return) ───────────────────────────
 

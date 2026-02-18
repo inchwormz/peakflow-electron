@@ -86,7 +86,8 @@ export function getTrialDaysRemaining(): number {
     const installDate = getInstallDate()
     const now = new Date()
     const elapsedMs = now.getTime() - installDate.getTime()
-    const elapsedDays = Math.floor(elapsedMs / (1000 * 60 * 60 * 24))
+    // Clamp to 0 so a backwards system clock can't grant extra trial days
+    const elapsedDays = Math.max(0, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)))
     return Math.max(TRIAL_DAYS - elapsedDays, 0)
   } catch (error) {
     console.warn('[PeakFlow:Trial] getTrialDaysRemaining failed:', error)

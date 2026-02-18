@@ -10,6 +10,7 @@ import { AlertOverlay } from './tools/screenslap/AlertOverlay'
 import { MeetReady } from './tools/meetready/MeetReady'
 import { LiquidFocus } from './tools/liquidfocus/LiquidFocus'
 import { SoundSplit } from './tools/soundsplit/SoundSplit'
+import { TrialExpired } from './components/licensing/TrialExpired'
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -138,6 +139,11 @@ export default function App(): React.JSX.Element {
     // System windows (no app shell chrome)
     if (systemId === SystemWindowId.ScreenSlapAlert) {
       return <AlertOverlay />
+    }
+
+    // Trial expired lock screen
+    if (systemId === SystemWindowId.TrialExpired) {
+      return <TrialExpired />
     }
 
     // Dashboard hub
