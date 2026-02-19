@@ -16,9 +16,11 @@
  * native Win32 SendInput API (koffi FFI).
  */
 
-import { clipboard, nativeImage, BrowserWindow } from 'electron'
+import { clipboard, nativeImage, BrowserWindow, app } from 'electron'
 import { createHash } from 'crypto'
 import Store from 'electron-store'
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs'
+import { join } from 'path'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig } from './config-store'
@@ -37,8 +39,10 @@ export interface ClipboardItem {
   copyCount: number
   pinned: boolean
   preview: string
-  /** Base64 data URL for image items */
-  imageDataUrl?: string
+  /** Path to the saved PNG on disk for image items */
+  imagePath?: string
+  /** MD5 hash of the image data for deduplication */
+  imageHash?: string
   /** Original image dimensions */
   imageWidth?: number
   imageHeight?: number
@@ -54,8 +58,14 @@ class ClipboardService {
   private history: ClipboardItem[] = []
   private store: Store
   private skippedCount = 0
+  private imagesDir: string
 
   constructor() {
+    this.imagesDir = join(app.getPath('userData'), 'quickboard-images')
+    if (!existsSync(this.imagesDir)) {
+      try { mkdirSync(this.imagesDir, { recursive: true }) } catch { }
+    }
+
     this.store = new Store({
       name: 'clipboard-history',
       clearInvalidConfig: true
@@ -95,15 +105,33 @@ class ClipboardService {
 
   // ─── Expiry ─────────────────────────────────────────────────────────────
 
+  private deleteImageFile(item: ClipboardItem): void {
+    if (item.type === 'image' && item.imagePath) {
+      try { unlinkSync(item.imagePath) } catch { }
+    }
+  }
+
   private expireOldEntries(): void {
     const conf = this.getConf()
     if (!conf.auto_expire || conf.max_age_hours <= 0) return
 
     const cutoff = new Date(Date.now() - conf.max_age_hours * 60 * 60 * 1000).toISOString()
     const before = this.history.length
-    this.history = this.history.filter(
-      (item) => item.pinned || item.timestamp >= cutoff
-    )
+
+    const kept: ClipboardItem[] = []
+    const removed: ClipboardItem[] = []
+
+    for (const item of this.history) {
+      if (item.pinned || item.timestamp >= cutoff) kept.push(item)
+      else removed.push(item)
+    }
+
+    this.history = kept
+
+    for (const item of removed) {
+      this.deleteImageFile(item)
+    }
+
     if (this.history.length < before) {
       this.saveHistory()
       console.log(
@@ -235,12 +263,11 @@ class ClipboardService {
 
   private handleNewImage(img: Electron.NativeImage): void {
     const size = img.getSize()
-    const dataUrl = img.toDataURL()
+    const imgHash = this.lastImageHash // already computed in checkClipboard
 
     // Check for duplicate image — bump copy count instead of adding new entry
-    const imgHash = this.lastImageHash // already computed in checkClipboard
     const existingIndex = this.history.findIndex(
-      (item) => item.type === 'image' && item.imageDataUrl === dataUrl
+      (item) => item.type === 'image' && item.imageHash === imgHash
     )
 
     if (existingIndex !== -1) {
@@ -255,18 +282,29 @@ class ClipboardService {
       return
     }
 
+    // New image — save to disk
+    const id = this.generateId()
+    const imagePath = join(this.imagesDir, `${id}.png`)
+    try {
+      writeFileSync(imagePath, img.toPNG())
+    } catch (error) {
+      console.error('[QuickBoard] Failed to save image to disk:', error)
+      return
+    }
+
     // Create a short preview description
     const preview = `Image ${size.width}x${size.height}`
 
     const item: ClipboardItem = {
-      id: this.generateId(),
+      id,
       text: null,
       type: 'image',
       timestamp: new Date().toISOString(),
       copyCount: 1,
       pinned: false,
       preview,
-      imageDataUrl: dataUrl,
+      imagePath,
+      imageHash: imgHash,
       imageWidth: size.width,
       imageHeight: size.height
     }
@@ -277,10 +315,6 @@ class ClipboardService {
     this.broadcastChange()
   }
 
-  /**
-   * Enforce max_entries limit. Pinned items are always kept.
-   * Oldest unpinned items are removed first.
-   */
   private trimHistory(): void {
     const conf = this.getConf()
     const maxEntries = conf.max_entries
@@ -289,7 +323,14 @@ class ClipboardService {
     const unpinned = this.history.filter((h) => !h.pinned)
 
     if (unpinned.length > maxEntries) {
-      this.history = [...pinned, ...unpinned.slice(0, maxEntries)]
+      const keptUnpinned = unpinned.slice(0, maxEntries)
+      const removedUnpinned = unpinned.slice(maxEntries)
+
+      for (const item of removedUnpinned) {
+        this.deleteImageFile(item)
+      }
+
+      this.history = [...pinned, ...keptUnpinned]
     }
   }
 
@@ -358,11 +399,22 @@ class ClipboardService {
    * Write an image to clipboard from its data URL.
    * Updates the lastImageHash so the poll loop doesn't re-capture it.
    */
-  writeImage(dataUrl: string): void {
+  writeImageDataUrl(dataUrl: string): void {
     const img = nativeImage.createFromDataURL(dataUrl)
     clipboard.writeImage(img)
     this.lastImageHash = this.hashImage(img)
-    console.log('[QuickBoard] Image written to clipboard')
+    console.log('[QuickBoard] Image written to clipboard from DataURL')
+  }
+
+  /**
+   * Write an image to clipboard from its path on disk.
+   */
+  writeImage(imagePath: string): void {
+    if (!existsSync(imagePath)) return
+    const img = nativeImage.createFromPath(imagePath)
+    clipboard.writeImage(img)
+    this.lastImageHash = this.hashImage(img)
+    console.log('[QuickBoard] Image written to clipboard from path')
   }
 
   /**
@@ -384,8 +436,8 @@ class ClipboardService {
       } else {
         this.writeText(item.text)
       }
-    } else if (item.type === 'image' && item.imageDataUrl) {
-      this.writeImage(item.imageDataUrl)
+    } else if (item.type === 'image' && item.imagePath) {
+      this.writeImage(item.imagePath)
     }
 
     // Increment usage count
@@ -404,9 +456,13 @@ class ClipboardService {
 
   /** Delete a single item from history by ID. */
   deleteItem(itemId: string): ClipboardItem[] {
-    this.history = this.history.filter((h) => h.id !== itemId)
-    this.saveHistory()
-    this.broadcastChange()
+    const idx = this.history.findIndex((h) => h.id === itemId)
+    if (idx !== -1) {
+      this.deleteImageFile(this.history[idx])
+      this.history.splice(idx, 1)
+      this.saveHistory()
+      this.broadcastChange()
+    }
     return this.history
   }
 
@@ -423,7 +479,20 @@ class ClipboardService {
 
   /** Clear all non-pinned history. */
   clearHistory(): ClipboardItem[] {
-    this.history = this.history.filter((h) => h.pinned)
+    const kept: ClipboardItem[] = []
+    const removed: ClipboardItem[] = []
+
+    for (const item of this.history) {
+      if (item.pinned) kept.push(item)
+      else removed.push(item)
+    }
+
+    this.history = kept
+
+    for (const item of removed) {
+      this.deleteImageFile(item)
+    }
+
     this.saveHistory()
     this.broadcastChange()
     return this.history
