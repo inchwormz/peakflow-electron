@@ -8,7 +8,8 @@
  *   - Individual tool windows spawned on demand
  */
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, protocol, net } from 'electron'
+import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
@@ -61,6 +62,13 @@ if (!gotLock) {
     // Optimize window creation in dev — attach devtools on F12, etc.
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
+    })
+
+    // Custom protocol for serving QuickBoard images without IPC overhead
+    protocol.handle('qboard', (request) => {
+      const filename = request.url.replace(/^qboard:\/\//, '')
+      const imagePath = join(app.getPath('userData'), 'quickboard-images', filename)
+      return net.fetch('file://' + imagePath)
     })
 
     // Initialize core systems

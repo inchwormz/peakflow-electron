@@ -39,6 +39,8 @@ export interface ClipboardItem {
   copyCount: number
   pinned: boolean
   preview: string
+  /** The custom protocol URL for the renderer to display the image */
+  imageDataUrl?: string
   /** Path to the saved PNG on disk for image items */
   imagePath?: string
   /** MD5 hash of the image data for deduplication */
@@ -303,6 +305,7 @@ class ClipboardService {
       copyCount: 1,
       pinned: false,
       preview,
+      imageDataUrl: `qboard://${id}.png`,
       imagePath,
       imageHash: imgHash,
       imageWidth: size.width,
