@@ -8,7 +8,7 @@
  *   - Individual tool windows spawned on demand
  */
 
-import { app, BrowserWindow, protocol, net } from 'electron'
+import { app, BrowserWindow, protocol, net, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createTray, destroyTray } from './tray'
@@ -58,6 +58,19 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // Set app user model id for Windows (used for taskbar grouping & notifications)
     electronApp.setAppUserModelId('com.peakflow.app')
+
+    // Handle hardware permissions securely (Webcam/Mic for MeetReady and LiquidFocus)
+    // Prevents renderer crashes/hangs when waking from sleep or hot-swapping devices in prod
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      const safePermissions = ['media', 'mediaKeySystem']
+      if (safePermissions.includes(permission)) {
+        console.log(`[PeakFlow] Auto-granted hardware permission: ${permission}`)
+        callback(true)
+      } else {
+        console.warn(`[PeakFlow] Denied unhandled permission: ${permission}`)
+        callback(false)
+      }
+    })
 
     // Optimize window creation in dev — attach devtools on F12, etc.
     app.on('browser-window-created', (_, window) => {
