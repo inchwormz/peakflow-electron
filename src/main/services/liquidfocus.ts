@@ -80,7 +80,6 @@ class LiquidFocusService {
   private total = 25 * 60
   private pomodorosCompleted = 0
   private activeTaskIndex = -1
-  private targetTime = 0
 
   constructor() {
     this.store = new Store({ name: 'liquidfocus-data', clearInvalidConfig: true })
@@ -144,7 +143,6 @@ class LiquidFocusService {
     if (this.status === 'running') return this.getTimerState()
 
     this.status = 'running'
-    this.targetTime = Date.now() + this.remaining * 1000
     this.tickInterval = setInterval(() => this.tick(), 1000)
     this.broadcastState()
     return this.getTimerState()
@@ -207,13 +205,11 @@ class LiquidFocusService {
   }
 
   private tick(): void {
-    const now = Date.now()
-    if (now >= this.targetTime) {
-      this.remaining = 0
-      this.finishPhase()
-    } else {
-      this.remaining = Math.ceil((this.targetTime - now) / 1000)
+    if (this.remaining > 0) {
+      this.remaining--
       this.broadcastState()
+    } else {
+      this.finishPhase()
     }
   }
 
