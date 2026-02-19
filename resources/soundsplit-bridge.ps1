@@ -173,7 +173,7 @@ public class AudioBridge {
                 lines.Insert(0, "MASTER|Master Volume|1.0|0.0|0");
             }
 
-            return string.Join("\\n", lines);
+            return string.Join("\n", lines);
         } finally {
             if (sessionEnum != null) Marshal.ReleaseComObject(sessionEnum);
             if (mgr != null) Marshal.ReleaseComObject(mgr);
