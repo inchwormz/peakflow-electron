@@ -527,6 +527,18 @@ export function ScreenSlap(): React.JSX.Element {
                 />
               </SettingRow>
 
+              <div style={{ marginTop: 8 }}>
+                <button
+                  style={styles.testAlertBtn}
+                  onClick={async () => {
+                    await api.invoke(IPC_INVOKE.SCREENSLAP_TEST_ALERT)
+                    showToast('Test alert fired!')
+                  }}
+                >
+                  ⚡ Fire Test Alert
+                </button>
+              </div>
+
               {/* Sync section */}
               <div style={styles.secLabel}>SYNC</div>
 
@@ -1093,6 +1105,20 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
     gap: 5,
     padding: '8px 0'
+  },
+
+  testAlertBtn: {
+    padding: '8px 16px',
+    width: '100%',
+    background: 'rgba(240,88,88,0.12)',
+    border: `1px solid rgba(240,88,88,0.25)`,
+    borderRadius: 10,
+    color: DS.red,
+    fontFamily: 'inherit',
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s'
   },
 
   disconnectBtn: {

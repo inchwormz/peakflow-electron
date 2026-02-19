@@ -85,7 +85,8 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
     if (!existing.isVisible()) {
       // Defer alwaysOnTop until after the OS finishes restoring the window
       if (cfg?.alwaysOnTop) {
-        const level = toolId === ToolId.LiquidFocus ? 'screen-saver' as const : 'normal' as const
+        const needsScreenSaver = toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert
+        const level = needsScreenSaver ? 'screen-saver' as const : 'normal' as const
         existing.once('show', () => {
           existing.setAlwaysOnTop(true, level)
           existing.focus()
@@ -95,7 +96,8 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
       if (!cfg?.alwaysOnTop) existing.focus()
     } else {
       if (cfg?.alwaysOnTop) {
-        const level = toolId === ToolId.LiquidFocus ? 'screen-saver' as const : 'normal' as const
+        const needsScreenSaver = toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert
+        const level = needsScreenSaver ? 'screen-saver' as const : 'normal' as const
         existing.setAlwaysOnTop(true, level)
       }
       existing.focus()
@@ -163,16 +165,16 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
   // Show when the renderer has painted its first frame
   win.once('ready-to-show', () => {
     win.show()
-    // LiquidFocus: 'screen-saver' level keeps it above fullscreen apps.
+    // 'screen-saver' level keeps windows above fullscreen apps (Chrome, etc.).
     // Re-assert on blur/show/restore because Windows can silently drop it.
-    if (toolId === ToolId.LiquidFocus) {
-      const pinLF = (): void => {
+    if (toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert) {
+      const pinAbove = (): void => {
         if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver')
       }
-      pinLF()
-      win.on('blur', pinLF)
-      win.on('show', pinLF)
-      win.on('restore', pinLF)
+      pinAbove()
+      win.on('blur', pinAbove)
+      win.on('show', pinAbove)
+      win.on('restore', pinAbove)
     }
   })
 

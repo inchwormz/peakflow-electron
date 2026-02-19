@@ -136,7 +136,7 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
           Settings
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
-          <NavBtn onClick={onShowTasks}>&#9776;</NavBtn>
+          <TextNavBtn onClick={onShowTasks}>Tasks</TextNavBtn>
         </div>
       </div>
 
@@ -172,7 +172,7 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
           <SitesTab config={config} onSave={saveConfigKey} />
         )}
         {activeTab === 'integrations' && (
-          <IntegrationsTab config={config} onSave={saveConfigKey} />
+          <IntegrationsTab config={config} onSave={saveConfigKey} onShowTasks={onShowTasks} />
         )}
       </div>
     </div>
@@ -379,10 +379,12 @@ interface TodoistProject {
 
 function IntegrationsTab({
   config,
-  onSave
+  onSave,
+  onShowTasks
 }: {
   config: LiquidFocusConfig
   onSave: (key: string, value: unknown) => void
+  onShowTasks: () => void
 }): React.JSX.Element {
   const [status, setStatus] = useState<TodoistStatus>({ connected: false, error: null })
   const [projects, setProjects] = useState<TodoistProject[]>([])
@@ -413,12 +415,14 @@ function IntegrationsTab({
       if (result.connected) {
         const p = (await window.peakflow.invoke(IPC_INVOKE.TODOIST_GET_PROJECTS)) as TodoistProject[]
         setProjects(p)
+        // Navigate to Tasks view so user sees imported tasks
+        onShowTasks()
       }
     } catch {
       setStatus({ connected: false, error: 'Authentication failed' })
     }
     setLoading(false)
-  }, [])
+  }, [onShowTasks])
 
   const handleDisconnect = useCallback(async () => {
     const result = (await window.peakflow.invoke(IPC_INVOKE.TODOIST_DISCONNECT)) as TodoistStatus
@@ -834,6 +838,44 @@ function NavBtn({
         transition: 'all 0.2s',
         fontFamily: 'inherit',
         padding: 0
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function TextNavBtn({
+  children,
+  onClick
+}: {
+  children: React.ReactNode
+  onClick: () => void
+}): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        height: 32,
+        paddingInline: 12,
+        borderRadius: 16,
+        border: `1px solid ${hovered ? '#444' : 'rgba(255,255,255,0.15)'}`,
+        background: hovered ? DS.elevated : 'transparent',
+        color: DS.white,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: 0.5,
+        transition: 'all 0.2s',
+        fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
+        padding: '0 12px'
       }}
     >
       {children}

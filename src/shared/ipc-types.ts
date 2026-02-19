@@ -96,6 +96,7 @@ export const IPC_INVOKE = {
   SCREENSLAP_JOIN_MEETING: 'screenslap:join-meeting',
   SCREENSLAP_START: 'screenslap:start',
   SCREENSLAP_STOP: 'screenslap:stop',
+  SCREENSLAP_TEST_ALERT: 'screenslap:test-alert',
 
   // LiquidFocus
   LIQUIDFOCUS_GET_STATE: 'liquidfocus:get-state',

@@ -1,0 +1,370 @@
+================================================================================
+MEETREADY BUG REPORT — Settings view cannot be exited
+================================================================================
+
+PROBLEM:
+When you click the settings gear icon in MeetReady, the settings view opens
+correctly. However, clicking the back arrow (◀) to return to the main view
+does NOT work — the user is stuck on the settings screen.
+
+The settings gear WAS previously unclickable due to a drag region covering it.
+That was fixed by:
+1. Adding `position: 'relative'` to the `styles.view` container
+2. Changing `right: 100` to `right: 140` on the drag region
+
+Now the settings icon IS clickable and opens settings. But the back button
+to exit settings doesn't work.
+
+ARCHITECTURE:
+- MeetReady is a single React component with a `view` state: 'main' | 'settings'
+- The main view has a nav bar with: settings gear, minimize, close buttons
+- The settings view has a nav bar with: back arrow (◀) + "Settings" title
+- The back arrow calls `saveAndCloseSettings()` which persists pending device
+  changes and sets `setView('main')`
+- Both views render a `<div style={styles.dragRegion} />` at the bottom of
+  the view div for frameless window dragging
+
+KEY SUSPICION:
+The drag region div has `position: absolute, top: 0, left: 0, right: 140, height: 60, zIndex: 1`.
+It uses `-webkit-app-region: drag` which CONSUMES all mouse events in its area.
+
+In the SETTINGS view, the nav bar only has the back button (◀) on the LEFT side.
+The `right: 140` exclusion was sized for the MAIN view's 3 buttons on the right.
+But in the SETTINGS view, the back button is on the LEFT — the drag region covers
+the LEFT side of the nav bar, which is exactly where the back button sits.
+
+The fix needs to either:
+- Make the drag region NOT cover the back button in settings view
+- OR use a different drag region configuration per view
+- OR use `-webkit-app-region: no-drag` on the nav buttons
+
+================================================================================
+FILE: src/renderer/src/tools/meetready/MeetReady.tsx
+================================================================================
+
+/**
+ * MeetReady — Pre-meeting camera & mic check panel.
+ * Matches MeetReady_Redesign.html exactly.
+ *
+ * Dark cinematic design system:
+ *   - #0a0a0a background, Be Vietnam Pro font
+ *   - 340px wide panel, frameless
+ *   - Camera preview (210px, 16px radius, gradient overlay, "Live" indicator)
+ *   - Status cards row: Lighting + Microphone
+ *   - Readiness banner (green "All Clear" or yellow warning)
+ *   - Settings view: device selection, calendar auto-popup
+ *
+ * Architecture:
+ *   - Camera/mic are entirely renderer-side (Web APIs)
+ *   - Calendar integration uses shared google-calendar service via IPC
+ *   - Config persistence via config:get / config:set IPC
+ */
+
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
+import { ToolId } from '@shared/tool-ids'
+import { useMediaDevices } from '../../hooks/useMediaDevices'
+import { CameraPreview, type BrightnessResult, type LightingStatus } from './CameraPreview'
+import { AudioMeter, type MicResult, type MicStatus } from './AudioMeter'
+
+// ─── Design Tokens (dark cinematic — matches Python COLORS + HTML) ──────────
+
+const DS = {
+  bg: '#0a0a0a',
+  bgLight: '#111111',
+  bgHover: '#141414',
+  accent: '#4ae08a',
+  text: '#f0f0f5',
+  textDim: '#666666',
+  textGray: '#888888',
+  secLabel: '#444444',
+  success: '#4ae08a',
+  warning: '#eab308',
+  error: '#f05858',
+  border: '#1a1a1a',
+  elevated: '#1a1a1a',
+  white: '#ffffff'
+} as const
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface CalendarEvent {
+  id: string
+  summary: string
+  startTime: string
+  endTime: string
+  durationMinutes: number
+  meetingLink: string | null
+  meetingService: string | null
+  location: string | null
+  description: string | null
+  allDay: boolean
+}
+
+interface CalendarStatus {
+  connected: boolean
+  email: string | null
+  lastFetched: string | null
+  error: string | null
+}
+
+interface MeetReadyConfig {
+  auto_popup_minutes_before: number
+  auto_popup_enabled: boolean
+  default_camera: string
+  default_mic: string
+}
+
+type ViewMode = 'main' | 'settings'
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const api = window.peakflow
+
+function formatRelativeShort(ms: number): string {
+  if (ms < 60_000) return 'now'
+  const min = Math.ceil(ms / 60_000)
+  if (min === 1) return '1 min'
+  if (min < 60) return `${min} min`
+  const hrs = Math.floor(min / 60)
+  const rem = min % 60
+  if (rem === 0) return `${hrs}h`
+  return `${hrs}h ${rem}m`
+}
+
+// ... helper functions omitted for brevity ...
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
+export function MeetReady(): React.JSX.Element {
+  const [view, setView] = useState<ViewMode>('main')
+  // ... other state ...
+
+  const openSettings = (): void => {
+    setPendingCamId(config.default_camera)
+    setPendingMicId(config.default_mic)
+    setView('settings')
+  }
+
+  const saveAndCloseSettings = async (): Promise<void> => {
+    // Persist device selections
+    if (pendingCamId !== config.default_camera) {
+      await updateConfig('default_camera', pendingCamId)
+      stopCamera()
+      startCamera(pendingCamId || undefined)
+    }
+    if (pendingMicId !== config.default_mic) {
+      await updateConfig('default_mic', pendingMicId)
+      stopMic()
+      startMic(pendingMicId || undefined)
+    }
+    setView('main')  // <--- THIS SHOULD SWITCH BACK TO MAIN VIEW
+  }
+
+  // ─── Render ─────────────────────────────────────────────────────────────
+
+  return (
+    <div style={styles.root}>
+      {/* ══════ MAIN VIEW ══════ */}
+      {view === 'main' && (
+        <div style={styles.view}>
+          {/* Nav bar */}
+          <div style={styles.navBar}>
+            <div style={styles.navLeft}>
+              <span style={styles.navTitle}>MeetReady</span>
+              {/* ... meeting badge ... */}
+            </div>
+            <div style={styles.navRight}>
+              <NavBtn onClick={openSettings} title="Settings">&#9881;</NavBtn>
+              <NavBtn onClick={() => api.invoke(IPC_INVOKE.WINDOW_MINIMIZE)} title="Minimize">
+                &#8212;
+              </NavBtn>
+              <NavBtn onClick={() => api.invoke(IPC_INVOKE.WINDOW_CLOSE)} title="Close" isClose>
+                &#10005;
+              </NavBtn>
+            </div>
+          </div>
+
+          {/* ... main body ... */}
+
+          {/* Drag region for frameless window */}
+          <div style={styles.dragRegion} />
+        </div>
+      )}
+
+      {/* ══════ SETTINGS VIEW ══════ */}
+      {view === 'settings' && (
+        <div style={styles.view}>
+          {/* Settings nav bar */}
+          <div style={styles.navBar}>
+            <div style={styles.navLeft}>
+              {/* BACK BUTTON — on the LEFT side */}
+              <NavBtn onClick={saveAndCloseSettings} title="Back" style={{ fontSize: 16 }}>
+                &#9664;
+              </NavBtn>
+              <span style={{ ...styles.navTitle, marginLeft: 4 }}>Settings</span>
+            </div>
+            <div style={styles.navRight} />
+          </div>
+
+          {/* ... settings body ... */}
+
+          {/* SAME drag region as main view — THIS IS THE PROBLEM */}
+          <div style={styles.dragRegion} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── NavBtn sub-component ────────────────────────────────────────────────────
+
+function NavBtn({
+  onClick,
+  title,
+  isClose = false,
+  children,
+  style: extraStyle
+}: {
+  onClick: () => void
+  title: string
+  isClose?: boolean
+  children: React.ReactNode
+  style?: CSSProperties
+}): React.JSX.Element {
+  return (
+    <button
+      style={{ ...styles.navBtn, ...extraStyle }}
+      title={title}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        const el = e.currentTarget
+        el.style.borderColor = '#333'
+        el.style.color = isClose ? DS.error : DS.white
+        el.style.background = DS.bgHover
+      }}
+      onMouseLeave={(e) => {
+        const el = e.currentTarget
+        el.style.borderColor = DS.border
+        el.style.color = DS.textDim
+        el.style.background = 'transparent'
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────────────
+
+type DragStyle = CSSProperties & { WebkitAppRegion?: string }
+
+const styles: Record<string, CSSProperties> = {
+  root: {
+    width: '100%',
+    height: '100vh',
+    background: DS.bg,
+    fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
+    color: DS.text,
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column'
+  },
+
+  view: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    position: 'relative' as const,  // <-- Added to contain the absolute dragRegion
+    animation: 'meetready-fadeIn 0.2s ease'
+  },
+
+  navBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '20px 24px 0',
+    flexShrink: 0
+  },
+
+  navLeft: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0
+  },
+
+  navRight: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    flexShrink: 0
+  },
+
+  navBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
+    border: `1px solid ${DS.border}`,
+    background: 'transparent',
+    color: DS.textDim,
+    cursor: 'pointer',
+    fontSize: 14,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s',
+    flexShrink: 0,
+    fontFamily: 'inherit',
+    padding: 0,
+    outline: 'none'
+  },
+
+  // THE PROBLEM STYLE:
+  // This drag region covers left: 0 to right: 140, top: 0, height: 60
+  // In the MAIN view, the 3 buttons (settings, minimize, close) are on the RIGHT
+  //   → right: 140 clears them
+  // In the SETTINGS view, the back button (◀) is on the LEFT
+  //   → The drag region covers LEFT side, so it blocks the back button
+  //
+  // The drag region starts at left: 0 and extends to (width - 140px).
+  // The back button is at approximately left: 24px (navBar padding).
+  // So the drag region COVERS the back button.
+  dragRegion: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 140,
+    height: 60,
+    zIndex: 1
+  } as DragStyle
+}
+
+// Apply WebkitAppRegion after object literal to avoid TS complaint
+;(styles.dragRegion as DragStyle).WebkitAppRegion = 'drag'
+
+
+================================================================================
+QUESTIONS FOR DEEPTHINK:
+================================================================================
+
+1. The drag region covers left:0 to (containerWidth - 140px), height 60px.
+   In settings view, the back button is on the LEFT at ~24px from left edge.
+   The drag region ABSOLUTELY covers it. What's the best fix?
+
+2. Options:
+   a) Use different drag region styles per view (main vs settings)
+   b) Add `-webkit-app-region: no-drag` to the NavBtn buttons so they
+      punch through the drag region
+   c) Move the drag region to only cover the center of the nav bar,
+      not the left or right edges
+   d) Make the nav bar itself the drag region and exclude buttons
+
+3. Which approach is most robust for an Electron frameless window?
+   The window needs to be draggable by the title bar area, but all
+   buttons in both views must remain clickable.
+
+4. Does `-webkit-app-region: no-drag` on a child element properly
+   override `-webkit-app-region: drag` on a parent/sibling overlay?
+   Or does the overlay's absolute positioning prevent that?

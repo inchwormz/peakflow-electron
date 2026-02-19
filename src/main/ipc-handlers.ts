@@ -307,6 +307,13 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_INVOKE.SCREENSLAP_TEST_ALERT,
+    (): void => {
+      getScreenSlapService().testAlert()
+    }
+  )
+
   // ─── LiquidFocus ─────────────────────────────────────────────────────────
 
   ipcMain.handle(

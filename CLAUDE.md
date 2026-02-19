@@ -20,6 +20,15 @@
 - **Electron alwaysOnTop drops after hide/show:** Must re-assert `win.setAlwaysOnTop(true)` when re-showing hidden windows.
 - **clip-path polygon for cutouts:** Use `polygon(evenodd, outer-CW, inner-CCW)` — NOT a single-path winding approach.
 - **PowerShell C# scripts:** NEVER use `-Command` with `.replace(/\n/g, ' ')` — it breaks `//` comments. Use `-EncodedCommand` with base64 UTF-16LE.
+- **C# inside PowerShell `@"..."@` here-strings — NEVER use `$` in C# code:**
+  - PowerShell `@"..."@` expands `$` as variable interpolation BEFORE the C# compiler sees it
+  - C# string interpolation `$"text {var}"` WILL BREAK — PowerShell eats the `$`
+  - Use `String.Format()` or string concatenation instead
+  - `$ErrorActionPreference = 'SilentlyContinue'` masks Add-Type compilation errors — NEVER set it globally
+  - Always wrap `Add-Type` in try/catch with error logging
+  - **19+ fix attempts failed because this was invisible** — do not revert these protections
+- **PowerShell reserved variables:** `$pid` is read-only (returns PowerShell's PID). Use `$targetPid` for app PIDs.
+- **PowerShell `-File` mode output:** Use `[Console]::Out.WriteLine()` not `Write-Host` — Write-Host goes to stream #6, not stdout.
 - **Window close interceptors:** Use lazy `require()` inside event handlers to avoid circular deps at module load time.
 - **Silent catch {} in C# COM interop:** Always log errors — empty catches hide real failures and make debugging impossible.
 
