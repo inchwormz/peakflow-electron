@@ -129,6 +129,25 @@ export function TaskList({
     setImporting(false)
   }, [tasks, onAdd])
 
+  // ── Auto-import from Todoist on mount if connected and no Todoist tasks exist ──
+
+  const autoImportRan = useRef(false)
+  useEffect(() => {
+    if (autoImportRan.current) return
+    if (tasks.some((t) => t.todoistId)) return
+
+    autoImportRan.current = true
+    window.peakflow
+      .invoke(IPC_INVOKE.TODOIST_GET_STATUS)
+      .then((s) => {
+        const st = s as { connected: boolean }
+        if (st.connected) {
+          handleImportTodoist().catch(() => {})
+        }
+      })
+      .catch(() => {})
+  }, [tasks, handleImportTodoist])
+
   // ── Group tasks by category ───────────────────────────────────────────
 
   const { activeTasks, completedTasks } = useMemo(() => {

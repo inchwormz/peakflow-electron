@@ -177,6 +177,24 @@ class ScreenSlapService {
   }
 
   /**
+   * Fire a fake alert for testing always-on-top behaviour.
+   */
+  testAlert(): void {
+    const now = new Date()
+    const fakeEvent: CalendarEvent = {
+      id: `test-${Date.now()}`,
+      summary: '⚡ TEST ALERT — Check if this stays on top!',
+      startTime: new Date(now.getTime() + 60_000).toISOString(),
+      durationMinutes: 30,
+      allDay: false,
+      meetingLink: null,
+      meetingService: null
+    }
+    this.triggerAlert(fakeEvent, 1)
+    console.log('[ScreenSlap] Test alert triggered')
+  }
+
+  /**
    * Cleanup on app shutdown.
    */
   destroy(): void {
@@ -321,6 +339,16 @@ class ScreenSlapService {
 
       win.once('ready-to-show', () => {
         win.show()
+        // 'screen-saver' level keeps alerts above Chrome, Claude, fullscreen apps.
+        // Re-assert on blur/show/restore — Windows silently drops alwaysOnTop.
+        const pinAbove = (): void => {
+          if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver')
+        }
+        pinAbove()
+        win.on('blur', pinAbove)
+        win.on('show', pinAbove)
+        win.on('restore', pinAbove)
+
         if (!win.isDestroyed() && this.activeAlert) {
           win.webContents.send(IPC_SEND.SCREENSLAP_ALERT_DATA, this.activeAlert)
         }

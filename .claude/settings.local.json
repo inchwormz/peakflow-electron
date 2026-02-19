@@ -4,7 +4,15 @@
       "Bash(npm run build:*)",
       "Bash(npm run dev:*)",
       "Bash(timeout:*)",
-      "Bash(xxd:*)"
+      "Bash(xxd:*)",
+      "Bash(npx electron .)",
+      "WebFetch(domain:developer.todoist.com)",
+      "mcp__dc77309b-c5f1-43f9-9bae-965012e9a4fd__hub_repo_search",
+      "mcp__dc77309b-c5f1-43f9-9bae-965012e9a4fd__space_search",
+      "mcp__mcp-registry__search_mcp_registry"
     ]
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true
   }
 }

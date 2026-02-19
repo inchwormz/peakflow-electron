@@ -15,13 +15,13 @@ import { storeOAuthToken, getOAuthToken, deleteOAuthToken } from '../security/cr
 
 const TODOIST_CLIENT_ID = 'c69c55b9691e401aad7738af4eae5709'
 const TODOIST_CLIENT_SECRET = '4a3315dcdd114be09c498ad583a75f19'
-const TODOIST_AUTH_URL = 'https://todoist.com/oauth/authorize'
-const TODOIST_TOKEN_URL = 'https://todoist.com/oauth/access_token'
+const TODOIST_AUTH_URL = 'https://api.todoist.com/oauth/authorize'
+const TODOIST_TOKEN_URL = 'https://api.todoist.com/oauth/access_token'
 const REDIRECT_PORT = 28754
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`
 
-// Todoist REST API v2
-const API_BASE = 'https://api.todoist.com/rest/v2'
+// Todoist API v1
+const API_BASE = 'https://api.todoist.com/api/v1'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -196,16 +196,21 @@ class TodoistService {
    * Optionally filtered by project ID.
    */
   async getTasks(projectFilter?: string): Promise<TodoistTask[]> {
-    if (!this.accessToken) return []
+    if (!this.accessToken) {
+      console.log('[Todoist] getTasks: no access token, returning []')
+      return []
+    }
 
     try {
       const url = projectFilter
         ? `${API_BASE}/tasks?project_id=${projectFilter}`
         : `${API_BASE}/tasks`
 
+      console.log('[Todoist] getTasks: fetching', url)
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${this.accessToken}` }
       })
+      console.log('[Todoist] getTasks: response status', res.status)
 
       if (res.status === 401 || res.status === 403) {
         this.status = { connected: false, error: 'Token expired — reconnect Todoist' }
@@ -214,9 +219,18 @@ class TodoistService {
         return []
       }
 
-      if (!res.ok) throw new Error(`Todoist API ${res.status}`)
+      if (!res.ok) {
+        const body = await res.text()
+        console.warn('[Todoist] getTasks: API error', res.status, body)
+        this.status.error = `Todoist API ${res.status}`
+        return []
+      }
 
-      return (await res.json()) as TodoistTask[]
+      const raw = await res.json()
+      console.log('[Todoist] getTasks: raw response:', JSON.stringify(raw).slice(0, 500))
+      const tasks = Array.isArray(raw) ? raw : (raw as { results?: TodoistTask[] }).results ?? []
+      console.log('[Todoist] getTasks: got', tasks.length, 'tasks')
+      return tasks as TodoistTask[]
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Fetch failed'
       this.status.error = msg
@@ -253,16 +267,30 @@ class TodoistService {
    * Fetch all projects from Todoist (for project filter dropdown).
    */
   async getProjects(): Promise<TodoistProject[]> {
-    if (!this.accessToken) return []
+    if (!this.accessToken) {
+      console.log('[Todoist] getProjects: no access token, returning []')
+      return []
+    }
 
     try {
+      console.log('[Todoist] getProjects: fetching', `${API_BASE}/projects`)
       const res = await fetch(`${API_BASE}/projects`, {
         headers: { Authorization: `Bearer ${this.accessToken}` }
       })
+      console.log('[Todoist] getProjects: response status', res.status)
 
-      if (!res.ok) return []
-      return (await res.json()) as TodoistProject[]
-    } catch {
+      if (!res.ok) {
+        const body = await res.text()
+        console.warn('[Todoist] getProjects: API error', res.status, body)
+        return []
+      }
+      const raw = await res.json()
+      console.log('[Todoist] getProjects: raw response:', JSON.stringify(raw).slice(0, 500))
+      const projects = Array.isArray(raw) ? raw : (raw as { results?: TodoistProject[] }).results ?? []
+      console.log('[Todoist] getProjects: got', projects.length, 'projects')
+      return projects as TodoistProject[]
+    } catch (err) {
+      console.warn('[Todoist] getProjects error:', err)
       return []
     }
   }

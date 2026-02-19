@@ -90,8 +90,17 @@ export function AlertOverlay(): React.JSX.Element {
   // ─── Receive alert data from main process ───────────────────────────────
 
   useEffect(() => {
+    // Listen for pushed alert data from main
     const unsub = api.on(IPC_SEND.SCREENSLAP_ALERT_DATA, (data: unknown) => {
       setAlert(data as AlertInfo)
+    })
+    // Also pull current state on mount — the push may have arrived before
+    // React mounted and registered the listener above
+    api.invoke(IPC_INVOKE.SCREENSLAP_GET_STATE).then((state: unknown) => {
+      const s = state as { activeAlert: AlertInfo | null }
+      if (s?.activeAlert && !alert) {
+        setAlert(s.activeAlert)
+      }
     })
     return unsub
   }, [])

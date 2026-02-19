@@ -100,9 +100,7 @@ export function TimerView({
       {/* Nav bar */}
       <div style={navBar}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <NavButton onClick={onShowTasks} title="Tasks">
-            &#9776;
-          </NavButton>
+          <TextNavButton onClick={onShowTasks}>Tasks</TextNavButton>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <NavButton onClick={onShowSettings} title="Settings">
@@ -343,6 +341,43 @@ function NavButton({
         transition: 'all 0.2s',
         fontFamily: 'inherit',
         padding: 0
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function TextNavButton({
+  children,
+  onClick
+}: {
+  children: React.ReactNode
+  onClick: () => void
+}): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        height: 32,
+        borderRadius: 16,
+        border: `1px solid ${hovered ? '#444' : 'rgba(255,255,255,0.15)'}`,
+        background: hovered ? DS.elevated : 'transparent',
+        color: DS.white,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: 0.5,
+        transition: 'all 0.2s',
+        fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
+        padding: '0 12px'
       }}
     >
       {children}

@@ -1,0 +1,700 @@
+================================================================================
+FOCUSDIM BUG REPORT — Overlay obscures bottom of active windows
+================================================================================
+
+PROBLEM:
+When FocusDim is enabled, the dim overlay obscures the bottom portion of the
+active (focused) window. The cutout hole in the overlay does not fully match
+the active window's bounds — the bottom edge is clipped/covered.
+
+ARCHITECTURE:
+- FocusDim creates one transparent BrowserWindow per monitor
+- Each overlay is fullscreen, always-on-top, ignores mouse events
+- A CSS clip-path polygon carves out a rectangular "hole" for the active window
+- Active window bounds come from Win32 API (GetForegroundWindow + DwmGetWindowAttribute)
+- The bounds are in physical pixels, converted to logical CSS percentages for clip-path
+- Overlay HTML is a data: URL loaded into each BrowserWindow
+- Tracking polls every 50ms via setInterval
+
+KEY FILES:
+1. src/main/services/focus-dim.ts — The service (full code below)
+2. src/main/native/active-window.ts — Win32 FFI for getting foreground window rect
+
+WHAT WE'VE TRIED:
+- Changed clip-path from a self-intersecting single-path polygon to an evenodd
+  polygon with outer rect clockwise + inner hole counter-clockwise
+- The fix IS in the compiled output (verified via grep)
+- But the bottom of windows is still obscured
+
+HYPOTHESIS:
+The coordinate conversion from physical pixels to CSS percentages may be wrong,
+OR DwmGetWindowAttribute returns bounds that don't include the full window area,
+OR the overlay window bounds don't perfectly match the display bounds, causing
+percentage math to be off.
+
+================================================================================
+FILE: src/main/services/focus-dim.ts
+================================================================================
+
+/**
+ * FocusDim Service — dims everything except the active window.
+ *
+ * Creates one transparent overlay BrowserWindow per monitor and uses
+ * CSS clip-path to carve out a rectangular "hole" on the monitor that
+ * contains the active window. All other monitors get a full dim.
+ *
+ * Per-monitor overlays solve the Electron/Windows limitation where a
+ * single transparent window cannot reliably span multiple displays
+ * (transparency breaks, DPI mismatches, rendering artifacts).
+ *
+ * Uses native Win32 API (GetForegroundWindow + DwmGetWindowAttribute)
+ * via koffi FFI for real foreground window tracking.
+ *
+ * State is persisted via config-store so settings survive app restarts.
+ */
+
+import { BrowserWindow, screen } from 'electron'
+import { ToolId } from '@shared/tool-ids'
+import { IPC_SEND } from '@shared/ipc-types'
+import { getConfig, setConfig } from './config-store'
+import type { FocusDimConfig } from '@shared/config-schemas'
+import { getActiveWindow } from '../native/active-window'
+
+// ─── Dim color presets (must match Python + renderer) ────────────────────────
+
+const DIM_COLORS: Record<string, string> = {
+  black: '#000000',
+  dark_purple: '#1a0a2e',
+  dark_blue: '#0a1628',
+  dark_gray: '#151515'
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface FocusDimState {
+  enabled: boolean
+  opacity: number
+  dimColor: string
+  showBorder: boolean
+  fadeDuration: number
+}
+
+interface OverlayEntry {
+  window: BrowserWindow
+  displayId: number
+  bounds: Electron.Rectangle
+  scaleFactor: number
+  /** Physical pixel bounds (bounds * scaleFactor) for matching against Win32 coords */
+  physicalBounds: { x: number; y: number; width: number; height: number }
+}
+
+// ─── Service class ───────────────────────────────────────────────────────────
+
+class FocusDimService {
+  private overlays: OverlayEntry[] = []
+  private trackingInterval: ReturnType<typeof setInterval> | null = null
+  private _enabled = false
+  private displayChangeHandler: (() => void) | null = null
+
+  /** Read current config from the persistent store */
+  private getConf(): FocusDimConfig {
+    return getConfig(ToolId.FocusDim) as FocusDimConfig
+  }
+
+  /** Persist a single config key */
+  private setConf(key: string, value: unknown): void {
+    setConfig(ToolId.FocusDim, key, value)
+  }
+
+  /** Broadcast state change to all renderer windows */
+  private broadcastState(): void {
+    const state = this.getState()
+    const overlayIds = new Set(this.overlays.map((o) => o.window.id))
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed() && !overlayIds.has(win.id)) {
+        win.webContents.send(IPC_SEND.FOCUSDIM_STATE_CHANGED, state)
+      }
+    })
+  }
+
+  // ─── Public API ──────────────────────────────────────────────────────────
+
+  init(): void {
+    this.setConf('enabled', false)
+    console.log('[FocusDim] Service initialized')
+  }
+
+  getState(): FocusDimState {
+    const conf = this.getConf()
+    return {
+      enabled: this._enabled,
+      opacity: conf.opacity,
+      dimColor: conf.dim_color,
+      showBorder: conf.show_border,
+      fadeDuration: conf.fade_duration
+    }
+  }
+
+  toggle(): FocusDimState {
+    if (this._enabled) {
+      this.disable()
+    } else {
+      this.enable()
+    }
+    return this.getState()
+  }
+
+  enable(): void {
+    if (this._enabled && this.overlays.length > 0) {
+      this.updateAllOverlays()
+      return
+    }
+    this._enabled = true
+    this.setConf('enabled', true)
+    this.createOverlayWindows()
+    this.listenForDisplayChanges()
+    this.startTracking()
+    this.broadcastState()
+    console.log('[FocusDim] Enabled')
+  }
+
+  disable(): void {
+    this._enabled = false
+    this.setConf('enabled', false)
+    this.stopTracking()
+    this.stopListeningForDisplayChanges()
+    this.destroyAllOverlays()
+    this.broadcastState()
+    console.log('[FocusDim] Disabled')
+  }
+
+  setOpacity(opacity: number): void {
+    const clamped = Math.max(0, Math.min(1, opacity))
+    this.setConf('opacity', clamped)
+    this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  setColor(colorKey: string): void {
+    if (!(colorKey in DIM_COLORS)) {
+      console.warn(`[FocusDim] Unknown color key: ${colorKey}`)
+      return
+    }
+    this.setConf('dim_color', colorKey)
+    this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  setBorder(show: boolean): void {
+    this.setConf('show_border', show)
+    this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  setFadeDuration(ms: number): void {
+    this.setConf('fade_duration', Math.max(0, Math.min(2000, ms)))
+    this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  destroy(): void {
+    this.stopTracking()
+    this.stopListeningForDisplayChanges()
+    this.destroyAllOverlays()
+    console.log('[FocusDim] Service destroyed')
+  }
+
+  // ─── Display Change Handling ────────────────────────────────────────────
+
+  private listenForDisplayChanges(): void {
+    if (this.displayChangeHandler) return
+    this.displayChangeHandler = (): void => {
+      if (!this._enabled) return
+      console.log('[FocusDim] Display configuration changed — rebuilding overlays')
+      this.destroyAllOverlays()
+      this.createOverlayWindows()
+    }
+    screen.on('display-added', this.displayChangeHandler)
+    screen.on('display-removed', this.displayChangeHandler)
+    screen.on('display-metrics-changed', this.displayChangeHandler)
+  }
+
+  private stopListeningForDisplayChanges(): void {
+    if (!this.displayChangeHandler) return
+    screen.removeListener('display-added', this.displayChangeHandler)
+    screen.removeListener('display-removed', this.displayChangeHandler)
+    screen.removeListener('display-metrics-changed', this.displayChangeHandler)
+    this.displayChangeHandler = null
+  }
+
+  // ─── Overlay Window Management ───────────────────────────────────────────
+
+  private createOverlayWindows(): void {
+    this.destroyAllOverlays()
+
+    const displays = screen.getAllDisplays()
+    const conf = this.getConf()
+    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+
+    for (const display of displays) {
+      const { x, y, width, height } = display.bounds
+      const overlayHtml = this.buildOverlayHtml(hex, conf.opacity, conf.show_border, conf.fade_duration)
+
+      const win = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        focusable: false,
+        hasShadow: false,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        closable: false,
+        show: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false
+        }
+      })
+
+      win.setIgnoreMouseEvents(true)
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml)}`)
+
+      const sf = display.scaleFactor || 1
+      const entry: OverlayEntry = {
+        window: win,
+        displayId: display.id,
+        bounds: { x, y, width, height },
+        scaleFactor: sf,
+        physicalBounds: {
+          x: x * sf,
+          y: y * sf,
+          width: width * sf,
+          height: height * sf
+        }
+      }
+
+      win.once('ready-to-show', () => {
+        if (!win.isDestroyed()) {
+          win.showInactive()
+        }
+      })
+
+      win.on('closed', () => {
+        this.overlays = this.overlays.filter((o) => o.window !== win)
+      })
+
+      this.overlays.push(entry)
+    }
+
+    console.log(`[FocusDim] Created ${displays.length} overlay(s) for ${displays.length} display(s)`)
+  }
+
+  private destroyAllOverlays(): void {
+    for (const entry of this.overlays) {
+      if (!entry.window.isDestroyed()) {
+        entry.window.destroy()
+      }
+    }
+    this.overlays = []
+  }
+
+  private buildOverlayHtml(
+    color: string,
+    opacity: number,
+    showBorder: boolean,
+    fadeDuration: number
+  ): string {
+    return `<!DOCTYPE html>
+<html><head><style>
+  * { margin: 0; padding: 0; }
+  html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
+  #dim-overlay {
+    position: fixed; inset: 0;
+    background: ${color};
+    opacity: ${opacity};
+    transition: opacity ${fadeDuration}ms ease, clip-path 0.05s linear;
+    clip-path: polygon(
+      0% 0%, 0% 100%, 100% 100%, 100% 0%,
+      0% 0%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+  #border-frame {
+    position: fixed;
+    border: 3px solid rgba(168, 85, 247, 0.9);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 2;
+    transition: all 0.05s linear;
+    display: ${showBorder ? 'block' : 'none'};
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+  }
+</style></head><body>
+<div id="dim-overlay"></div>
+<div id="border-frame"></div>
+</body></html>`
+  }
+
+  // NOTE: The initial clip-path above fills the ENTIRE screen (no hole).
+  // The hole is created dynamically via sendOverlayUpdate() below.
+
+  private findOverlayForRect(rect: { x: number; y: number; w: number; h: number }): OverlayEntry | null {
+    const cx = rect.x + rect.w / 2
+    const cy = rect.y + rect.h / 2
+
+    for (const entry of this.overlays) {
+      const b = entry.physicalBounds
+      if (cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height) {
+        return entry
+      }
+    }
+
+    let bestEntry: OverlayEntry | null = null
+    let bestOverlap = 0
+    for (const entry of this.overlays) {
+      const b = entry.physicalBounds
+      const overlapX = Math.max(0, Math.min(rect.x + rect.w, b.x + b.width) - Math.max(rect.x, b.x))
+      const overlapY = Math.max(0, Math.min(rect.y + rect.h, b.y + b.height) - Math.max(rect.y, b.y))
+      const overlap = overlapX * overlapY
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap
+        bestEntry = entry
+      }
+    }
+    return bestEntry
+  }
+
+  /**
+   * CRITICAL METHOD — this is where the clip-path cutout is computed.
+   *
+   * `rect` contains physical pixel coordinates from Win32 API:
+   *   rect.x, rect.y = top-left corner (physical pixels)
+   *   rect.w, rect.h = size (physical pixels)
+   *
+   * The overlay BrowserWindow is sized to display.bounds (logical pixels).
+   * CSS clip-path uses percentages relative to the overlay element.
+   *
+   * Conversion: physical → logical → percentage
+   */
+  private sendOverlayUpdate(rect: { x: number; y: number; w: number; h: number }): void {
+    if (this.overlays.length === 0) return
+
+    const conf = this.getConf()
+    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+    const activeOverlay = this.findOverlayForRect(rect)
+
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+
+      if (entry === activeOverlay) {
+        const sf = entry.scaleFactor
+        const pb = entry.physicalBounds
+        const lb = entry.bounds
+
+        // Physical-pixel relative position on this display
+        const physRelX = rect.x - pb.x
+        const physRelY = rect.y - pb.y
+
+        // Convert to logical pixels for CSS
+        const logRelX = physRelX / sf
+        const logRelY = physRelY / sf
+        const logW = rect.w / sf
+        const logH = rect.h / sf
+
+        // Convert logical pixels to percentages of overlay dimensions
+        const l = (logRelX / lb.width) * 100
+        const t = (logRelY / lb.height) * 100
+        const r = ((logRelX + logW) / lb.width) * 100
+        const bPct = ((logRelY + logH) / lb.height) * 100
+
+        // evenodd polygon: outer rect clockwise, inner hole counter-clockwise
+        const clipPath = `polygon(evenodd,
+          0% 0%, 100% 0%, 100% 100%, 0% 100%,
+          0% 0%,
+          ${l}% ${t}%, ${l}% ${bPct}%, ${r}% ${bPct}%, ${r}% ${t}%,
+          ${l}% ${t}%
+        )`
+
+        entry.window.webContents.executeJavaScript(`
+          (function() {
+            var overlay = document.getElementById('dim-overlay');
+            var border = document.getElementById('border-frame');
+            if (overlay) {
+              overlay.style.clipPath = ${JSON.stringify(clipPath)};
+              overlay.style.background = ${JSON.stringify(hex)};
+              overlay.style.opacity = ${conf.opacity};
+            }
+            if (border) {
+              border.style.left = '${logRelX}px';
+              border.style.top = '${logRelY}px';
+              border.style.width = '${logW}px';
+              border.style.height = '${logH}px';
+              border.style.display = ${conf.show_border ? "'block'" : "'none'"};
+            }
+          })();
+        `).catch(() => { /* overlay may be closing */ })
+      } else {
+        const fullDim = `polygon(0% 0%, 0% 100%, 100% 100%, 100% 0%)`
+        entry.window.webContents.executeJavaScript(`
+          (function() {
+            var overlay = document.getElementById('dim-overlay');
+            var border = document.getElementById('border-frame');
+            if (overlay) {
+              overlay.style.clipPath = ${JSON.stringify(fullDim)};
+              overlay.style.background = ${JSON.stringify(hex)};
+              overlay.style.opacity = ${conf.opacity};
+            }
+            if (border) {
+              border.style.display = 'none';
+            }
+          })();
+        `).catch(() => { /* overlay may be closing */ })
+      }
+    }
+  }
+
+  private updateAllOverlays(): void {
+    const conf = this.getConf()
+    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var overlay = document.getElementById('dim-overlay');
+          var border = document.getElementById('border-frame');
+          if (overlay) {
+            overlay.style.background = ${JSON.stringify(hex)};
+            overlay.style.opacity = ${conf.opacity};
+            overlay.style.transition = 'opacity ${conf.fade_duration}ms ease, clip-path 0.05s linear';
+          }
+          if (border) {
+            border.style.display = ${conf.show_border ? "'block'" : "'none'"};
+          }
+        })();
+      `).catch(() => { /* overlay may be closing */ })
+    }
+  }
+
+  // ─── Active Window Tracking ──────────────────────────────────────────────
+
+  private startTracking(): void {
+    if (this.trackingInterval) return
+    this.trackActiveWindow()
+    this.trackingInterval = setInterval(() => this.trackActiveWindow(), 50)
+  }
+
+  private stopTracking(): void {
+    if (this.trackingInterval) {
+      clearInterval(this.trackingInterval)
+      this.trackingInterval = null
+    }
+  }
+
+  private trackActiveWindow(): void {
+    if (!this._enabled || this.overlays.length === 0) return
+
+    const activeWin = getActiveWindow()
+
+    if (activeWin) {
+      this.sendOverlayUpdate({
+        x: activeWin.x,
+        y: activeWin.y,
+        w: activeWin.w,
+        h: activeWin.h
+      })
+      return
+    }
+
+    // No valid foreground window — dim everything
+    this.sendOverlayUpdate({ x: -10000, y: -10000, w: 1, h: 1 })
+  }
+}
+
+// ─── Singleton ───────────────────────────────────────────────────────────────
+
+let instance: FocusDimService | null = null
+
+export function getFocusDimService(): FocusDimService {
+  if (!instance) {
+    instance = new FocusDimService()
+  }
+  return instance
+}
+
+export function initFocusDim(): void {
+  getFocusDimService().init()
+}
+
+export function destroyFocusDim(): void {
+  if (instance) {
+    instance.destroy()
+    instance = null
+  }
+}
+
+
+================================================================================
+FILE: src/main/native/active-window.ts
+================================================================================
+
+/**
+ * Native active window tracking using Win32 API via koffi.
+ *
+ * Calls GetForegroundWindow() + GetWindowRect() to get the position
+ * and size of the currently focused window on Windows.
+ */
+
+import koffi from 'koffi'
+
+// ─── Win32 types and bindings ────────────────────────────────────────────────
+
+const user32 = koffi.load('user32.dll')
+const dwmapi = koffi.load('dwmapi.dll')
+
+// RECT struct: { left, top, right, bottom } — all int32
+const RECT = koffi.struct('RECT', {
+  left: 'int32',
+  top: 'int32',
+  right: 'int32',
+  bottom: 'int32'
+})
+
+// Win32 function bindings
+const GetForegroundWindow = user32.func('GetForegroundWindow', 'void *', [])
+const GetWindowRect = user32.func('GetWindowRect', 'bool', ['void *', koffi.out(koffi.pointer(RECT))])
+const IsWindow = user32.func('IsWindow', 'bool', ['void *'])
+const IsWindowVisible = user32.func('IsWindowVisible', 'bool', ['void *'])
+const GetWindowTextW = user32.func('GetWindowTextW', 'int', ['void *', 'void *', 'int'])
+const GetClassNameW = user32.func('GetClassNameW', 'int', ['void *', 'void *', 'int'])
+
+// DwmGetWindowAttribute — for getting the actual rendered bounds (respects DPI, shadows)
+// DWMWA_EXTENDED_FRAME_BOUNDS = 9
+const DwmGetWindowAttribute = dwmapi.func('DwmGetWindowAttribute', 'long', [
+  'void *',
+  'uint32',
+  koffi.out(koffi.pointer(RECT)),
+  'uint32'
+])
+
+// ─── Public interface ────────────────────────────────────────────────────────
+
+export interface ActiveWindowInfo {
+  hwnd: unknown
+  x: number
+  y: number
+  w: number
+  h: number
+  title: string
+  className: string
+}
+
+// Windows that should be ignored (desktop, taskbar, etc.)
+const IGNORED_CLASSES = new Set([
+  'Progman',           // Desktop
+  'WorkerW',           // Desktop worker
+  'Shell_TrayWnd',     // Taskbar
+  'Shell_SecondaryTrayWnd', // Secondary taskbar
+  'Windows.UI.Core.CoreWindow', // Start menu, Action Center
+  'MultitaskingViewFrame'        // Task view
+])
+
+/**
+ * Get the currently focused window's position and size.
+ * Returns null if no valid foreground window is found, or if it's a
+ * system window that should be ignored (desktop, taskbar, etc.).
+ *
+ * IMPORTANT: Returns PHYSICAL pixel coordinates (not logical).
+ * DwmGetWindowAttribute with DWMWA_EXTENDED_FRAME_BOUNDS returns
+ * coordinates in physical pixels (accounting for DPI scaling).
+ */
+export function getActiveWindow(): ActiveWindowInfo | null {
+  try {
+    const hwnd = GetForegroundWindow()
+    if (!hwnd || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
+      return null
+    }
+
+    // Get class name to filter system windows
+    const classNameBuf = Buffer.alloc(512)
+    const classLen = GetClassNameW(hwnd, classNameBuf, 256)
+    const className = classLen > 0 ? classNameBuf.toString('utf16le', 0, classLen * 2).replace(/\0/g, '') : ''
+
+    if (IGNORED_CLASSES.has(className)) {
+      return null
+    }
+
+    // Try DwmGetWindowAttribute first for accurate bounds (handles DPI scaling)
+    const rect = { left: 0, top: 0, right: 0, bottom: 0 }
+    const DWMWA_EXTENDED_FRAME_BOUNDS = 9
+    const sizeOfRect = 16 // 4 int32s = 16 bytes
+
+    const dwmResult = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, rect, sizeOfRect)
+
+    if (dwmResult !== 0) {
+      // Fallback to GetWindowRect
+      const success = GetWindowRect(hwnd, rect)
+      if (!success) return null
+    }
+
+    const w = rect.right - rect.left
+    const h = rect.bottom - rect.top
+
+    // Skip zero-size or tiny windows
+    if (w < 10 || h < 10) return null
+
+    // Get window title
+    const titleBuf = Buffer.alloc(512)
+    const titleLen = GetWindowTextW(hwnd, titleBuf, 256)
+    const title = titleLen > 0 ? titleBuf.toString('utf16le', 0, titleLen * 2).replace(/\0/g, '') : ''
+
+    return {
+      hwnd,
+      x: rect.left,
+      y: rect.top,
+      w,
+      h,
+      title,
+      className
+    }
+  } catch (error) {
+    console.warn('[ActiveWindow] FFI error:', error)
+    return null
+  }
+}
+
+
+================================================================================
+QUESTIONS FOR DEEPTHINK:
+================================================================================
+
+1. Is the clip-path polygon(evenodd, ...) syntax correct for CSS clip-path?
+   Does CSS clip-path actually support "evenodd"? Or is that only SVG?
+
+2. Are the coordinate conversions correct?
+   - Win32 DwmGetWindowAttribute returns physical pixels
+   - display.bounds from Electron are logical pixels
+   - physicalBounds is computed as bounds * scaleFactor
+   - But is Electron's display.bounds.x/y in logical or physical pixels?
+   - On a 150% DPI display: if display.bounds = {x:0, y:0, width:2560, height:1440}
+     and scaleFactor = 1.5, are those bounds already in logical pixels?
+
+3. The overlay BrowserWindow is created with display.bounds dimensions.
+   Electron BrowserWindow width/height are in logical pixels.
+   So the overlay HTML viewport is display.bounds.width x display.bounds.height
+   logical pixels. Are the percentage calculations correct?
+
+4. Could the overlay BrowserWindow not actually be filling the entire display?
+   Could the taskbar be causing the overlay to be offset?
+
+5. Is there a simpler/more reliable approach than clip-path for creating the
+   cutout? E.g., using 4 separate div rectangles (top/left/right/bottom)?

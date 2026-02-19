@@ -1,0 +1,1512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoundSplit — Phase 1 Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface2: #1a1a1a;
+    --surface3: #222222;
+    --border: #141414;
+    --border-light: #1e1e1e;
+    --text-primary: #f0f0f5;
+    --text-secondary: #888888;
+    --text-muted: #666666;
+    --text-label: #444444;
+    --text-empty: #333333;
+    --green: #4ae08a;
+    --green-dim: #2a8a50;
+    --green-glow: rgba(74,224,138,0.15);
+    --yellow: #eab308;
+    --red: #f05858;
+    --white: #ffffff;
+    --font: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 6px;
+  }
+
+  body {
+    font-family: var(--font);
+    background: #1a1a2e;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-end;
+    min-height: 100vh;
+    padding: 0 60px 48px 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Simulated taskbar */
+  .taskbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 48px;
+    background: #111111;
+    border-top: 1px solid #1a1a1a;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 16px;
+    gap: 8px;
+    z-index: 100;
+  }
+
+  .tray-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .tray-icon:hover { background: #2a2a2a; }
+  .tray-icon.active { background: #2a2a2a; }
+  .tray-icon svg { width: 18px; height: 18px; fill: #888; }
+  .tray-icon.active svg { fill: var(--green); }
+
+  /* Popover container */
+  .popover {
+    width: 370px;
+    max-height: 620px;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: 16px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow:
+      0 -4px 40px rgba(0,0,0,0.6),
+      0 -2px 16px rgba(0,0,0,0.4),
+      0 0 0 1px rgba(255,255,255,0.03) inset;
+    animation: popoverIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transform-origin: bottom center;
+  }
+
+  @keyframes popoverIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Caret */
+  .popover::after {
+    content: '';
+    position: absolute;
+    bottom: -7px;
+    right: 38px;
+    width: 14px;
+    height: 14px;
+    background: var(--bg);
+    border-right: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+    transform: rotate(45deg);
+    z-index: 10;
+  }
+
+  /* Ambient glow */
+  .popover::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 200px;
+    height: 80px;
+    background: radial-gradient(ellipse, rgba(74,224,138,0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ===== VIEW CONTAINER ===== */
+  .view-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .view {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Settings panel overlay */
+  .settings-panel {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow-y: auto;
+  }
+  .settings-panel.open { transform: translateX(0); }
+  .settings-panel::-webkit-scrollbar { width: 3px; }
+  .settings-panel::-webkit-scrollbar-track { background: transparent; }
+  .settings-panel::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+
+  /* Presets panel overlay */
+  .presets-panel {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow-y: auto;
+  }
+  .presets-panel.open { transform: translateX(0); }
+  .presets-panel::-webkit-scrollbar { width: 3px; }
+  .presets-panel::-webkit-scrollbar-track { background: transparent; }
+  .presets-panel::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+
+  /* Panel header */
+  .panel-header {
+    padding: 16px 18px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .panel-back {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .panel-back svg { width: 16px; height: 16px; fill: var(--text-muted); transition: fill 0.15s; }
+  .panel-back:hover { background: var(--surface2); }
+  .panel-back:hover svg { fill: var(--text-secondary); }
+
+  .panel-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+  }
+
+  /* Settings content */
+  .settings-body { padding: 14px 18px 20px; }
+
+  .settings-group { margin-bottom: 18px; }
+  .settings-group:last-child { margin-bottom: 0; }
+
+  .settings-group-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-label);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .settings-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 4px;
+  }
+  .settings-item:last-child { margin-bottom: 0; }
+
+  .settings-item-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .settings-item-icon {
+    width: 28px;
+    height: 28px;
+    background: var(--surface2);
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .settings-item-icon svg { width: 14px; height: 14px; fill: var(--text-muted); }
+
+  .settings-item-text { flex: 1; min-width: 0; }
+
+  .settings-item-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 1px;
+  }
+
+  .settings-item-desc {
+    font-size: 9px;
+    color: var(--text-muted);
+    letter-spacing: 0.2px;
+  }
+
+  /* Toggle switch */
+  .toggle {
+    width: 36px;
+    height: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle.on {
+    background: var(--green-dim);
+    border-color: var(--green-dim);
+  }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: all 0.2s;
+  }
+  .toggle.on::after {
+    left: 18px;
+    background: var(--green);
+  }
+
+  /* Select dropdown */
+  .settings-select {
+    appearance: none;
+    background: var(--surface2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xs);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 4px 24px 4px 8px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%23666' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+  }
+  .settings-select:hover { border-color: #2a2a2a; }
+  .settings-select:focus { outline: none; border-color: var(--green-dim); }
+
+  /* ===== PRESETS CONTENT ===== */
+  .presets-body { padding: 14px 18px 20px; }
+
+  .preset-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .preset-card:hover {
+    border-color: var(--border-light);
+    background: #121212;
+  }
+  .preset-card.active {
+    border-color: var(--green-dim);
+    background: rgba(74,224,138,0.04);
+  }
+
+  .preset-card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .preset-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .preset-card.active .preset-icon {
+    background: rgba(74,224,138,0.1);
+  }
+
+  .preset-info { flex: 1; min-width: 0; }
+
+  .preset-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+  }
+
+  .preset-meta {
+    font-size: 9px;
+    color: var(--text-muted);
+    letter-spacing: 0.2px;
+  }
+
+  .preset-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .preset-action-btn {
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .preset-action-btn svg { width: 13px; height: 13px; fill: var(--text-label); transition: fill 0.15s; }
+  .preset-action-btn:hover { background: var(--surface2); }
+  .preset-action-btn:hover svg { fill: var(--text-secondary); }
+  .preset-action-btn.delete:hover svg { fill: var(--red); }
+  .preset-action-btn.delete:hover { background: rgba(240,88,88,0.08); }
+
+  .preset-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .preset-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 18px;
+    padding: 0 6px;
+    background: var(--surface2);
+    border-radius: 9px;
+    font-size: 8px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.3px;
+  }
+  .preset-tag.muted-tag { color: var(--red); opacity: 0.7; }
+
+  .preset-card.active::before {
+    content: '';
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 8px;
+    height: 8px;
+    background: var(--green);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--green-glow);
+  }
+
+  .save-preset-btn {
+    width: 100%;
+    height: 40px;
+    background: var(--surface);
+    border: 1px dashed var(--border-light);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-top: 4px;
+  }
+  .save-preset-btn svg { width: 14px; height: 14px; fill: var(--text-label); transition: fill 0.15s; }
+  .save-preset-btn span {
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-label);
+    transition: color 0.15s;
+  }
+  .save-preset-btn:hover {
+    border-color: var(--green-dim);
+    background: rgba(74,224,138,0.03);
+  }
+  .save-preset-btn:hover svg { fill: var(--green-dim); }
+  .save-preset-btn:hover span { color: var(--green-dim); }
+
+  /* Save preset modal */
+  .save-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .save-modal-overlay.visible {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .save-modal {
+    width: 300px;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    transform: scale(0.95);
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .save-modal-overlay.visible .save-modal { transform: scale(1); }
+
+  .save-modal-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .save-modal-desc {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+
+  .save-modal-input {
+    width: 100%;
+    height: 36px;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xs);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 0 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    margin-bottom: 10px;
+  }
+  .save-modal-input:focus { border-color: var(--green-dim); }
+  .save-modal-input::placeholder { color: var(--text-label); }
+
+  .save-modal-icon-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .save-modal-icon-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
+  .icon-option {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: transparent;
+  }
+  .icon-option:hover { border-color: var(--border-light); background: var(--surface2); }
+  .icon-option.selected { border-color: var(--green-dim); background: rgba(74,224,138,0.08); }
+
+  .save-modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .modal-btn {
+    height: 32px;
+    padding: 0 16px;
+    border: none;
+    border-radius: var(--radius-xs);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .modal-btn.cancel {
+    background: var(--surface2);
+    color: var(--text-muted);
+  }
+  .modal-btn.cancel:hover { background: var(--surface3); color: var(--text-secondary); }
+  .modal-btn.save {
+    background: var(--green-dim);
+    color: var(--white);
+  }
+  .modal-btn.save:hover { background: var(--green); color: var(--bg); }
+
+  /* Toast notification */
+  .toast {
+    position: absolute;
+    bottom: 56px;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: var(--surface);
+    border: 1px solid var(--green-dim);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 300;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  .toast.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast svg { width: 14px; height: 14px; fill: var(--green); flex-shrink: 0; }
+  .toast span { font-size: 11px; font-weight: 500; color: var(--text-primary); white-space: nowrap; }
+
+  /* ===== HEADER ===== */
+  .header {
+    padding: 16px 18px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-logo {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    background: linear-gradient(135deg, var(--green), #2dd4a0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .header-logo svg { width: 12px; height: 12px; fill: #0a0a0a; }
+
+  .header-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.3px;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .header-btn {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .header-btn svg { width: 15px; height: 15px; fill: var(--text-muted); transition: fill 0.15s; }
+  .header-btn:hover { background: var(--surface2); }
+  .header-btn:hover svg { fill: var(--text-secondary); }
+  .header-btn.active { background: var(--surface2); }
+  .header-btn.active svg { fill: var(--text-primary); }
+
+  .header-btn.star-btn.has-presets svg { fill: var(--yellow); }
+  .header-btn.star-btn.has-presets:hover svg { fill: #fbbf24; }
+
+  /* ===== DEVICE SELECTOR (system-wide) ===== */
+  .device-selector {
+    padding: 0 18px 14px;
+    position: relative;
+    z-index: 50;
+    flex-shrink: 0;
+  }
+
+  .device-selector-btn {
+    width: 100%;
+    height: 34px;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    gap: 8px;
+  }
+  .device-selector-btn:hover { border-color: #2a2a2a; background: var(--surface2); }
+  .device-selector-btn .device-icon { width: 16px; height: 16px; fill: var(--text-muted); flex-shrink: 0; }
+  .device-selector-btn .device-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); letter-spacing: 0.3px; flex: 1; text-align: left; }
+  .device-selector-btn .device-name { font-size: 11px; font-weight: 500; color: var(--text-primary); }
+  .device-selector-btn .chevron { width: 12px; height: 12px; fill: var(--text-label); transition: transform 0.2s; }
+  .device-selector-btn.open .chevron { transform: rotate(180deg); }
+
+  /* Device dropdown (system-wide) */
+  .device-dropdown {
+    position: absolute;
+    top: 42px;
+    left: 18px;
+    right: 18px;
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    z-index: 60;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
+  }
+  .device-dropdown.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: all;
+  }
+  .device-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .device-dropdown-item:hover { background: var(--surface2); }
+  .device-dropdown-item.active { background: rgba(74,224,138,0.08); }
+  .device-dropdown-item svg { width: 15px; height: 15px; fill: var(--text-muted); flex-shrink: 0; }
+  .device-dropdown-item.active svg { fill: var(--green); }
+  .device-dropdown-item-info { flex: 1; min-width: 0; }
+  .device-dropdown-item-name { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+  .device-dropdown-item.active .device-dropdown-item-name { color: var(--green); }
+  .device-dropdown-item-type { font-size: 9px; color: var(--text-label); letter-spacing: 0.2px; }
+  .device-dropdown-item .checkmark { width: 13px; height: 13px; fill: var(--green); opacity: 0; flex-shrink: 0; }
+  .device-dropdown-item.active .checkmark { opacity: 1; }
+
+  /* ===== MASTER SECTION ===== */
+  .master-section { padding: 0 18px 14px; position: relative; z-index: 1; flex-shrink: 0; }
+  .section-label { font-size: 9px; font-weight: 600; color: var(--text-label); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; }
+
+  .master-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+  .master-row { display: flex; align-items: center; gap: 12px; }
+  .master-icon { width: 36px; height: 36px; background: var(--surface2); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .master-icon svg { width: 18px; height: 18px; fill: var(--text-secondary); }
+  .master-controls { flex: 1; min-width: 0; }
+  .master-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .master-name { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+  .master-value { font-size: 11px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
+
+  .slider-wrap { position: relative; height: 6px; margin-bottom: 8px; }
+  .slider-track { position: absolute; top: 0; left: 0; right: 0; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+  .slider-fill { height: 100%; background: var(--white); border-radius: 3px; transition: width 0.05s ease; position: relative; }
+  .slider-fill::after { content: ''; position: absolute; right: 0; top: 50%; transform: translate(50%, -50%); width: 14px; height: 14px; background: var(--white); border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.15s; }
+  .slider-wrap:hover .slider-fill::after, .slider-wrap.dragging .slider-fill::after { opacity: 1; }
+  input[type="range"] { position: absolute; top: -6px; left: 0; width: 100%; height: 18px; opacity: 0; cursor: pointer; z-index: 2; margin: 0; }
+
+  .slider-wrap.small { height: 4px; margin-bottom: 6px; }
+  .slider-wrap.small .slider-track { height: 4px; border-radius: 2px; }
+  .slider-wrap.small .slider-fill { border-radius: 2px; }
+  .slider-wrap.small .slider-fill::after { width: 12px; height: 12px; }
+
+  .vu-meter { height: 3px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+  .vu-meter-fill { height: 100%; border-radius: 2px; transition: width 0.1s ease, background 0.2s; will-change: width; }
+
+  .divider { height: 1px; background: var(--border); margin: 0 18px 14px; flex-shrink: 0; }
+
+  /* ===== APPS SECTION ===== */
+  .apps-section { padding: 0 18px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .apps-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .apps-count { font-size: 9px; font-weight: 500; color: var(--text-label); background: var(--surface2); padding: 2px 7px; border-radius: 10px; letter-spacing: 0.5px; }
+  .apps-list { flex: 1; overflow-y: auto; padding-bottom: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .apps-list::-webkit-scrollbar { width: 3px; }
+  .apps-list::-webkit-scrollbar-track { background: transparent; }
+  .apps-list::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+
+  .app-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+    animation: rowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  .app-row:hover { border-color: var(--border-light); background: #121212; }
+  @keyframes rowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .app-row-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .app-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    user-select: none;
+  }
+  .app-info { flex: 1; min-width: 0; }
+  .app-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .app-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .app-value { font-size: 11px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; min-width: 28px; text-align: right; }
+  .mute-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mute-btn svg { width: 15px; height: 15px; fill: var(--text-muted); transition: fill 0.15s; }
+  .mute-btn:hover { background: var(--surface2); }
+  .mute-btn:hover svg { fill: var(--text-secondary); }
+  .mute-btn.muted svg { fill: var(--red); }
+  .mute-btn.muted:hover { background: rgba(240,88,88,0.1); }
+  .app-row.muted { opacity: 0.55; }
+  .app-row.muted:hover { opacity: 0.7; }
+  .app-row.muted .slider-fill { background: var(--text-label); }
+
+  /* ===== FOOTER ===== */
+  .footer { padding: 10px 18px 14px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .footer-link { font-size: 10px; font-weight: 500; color: var(--text-muted); cursor: pointer; transition: color 0.15s; display: flex; align-items: center; gap: 5px; }
+  .footer-link:hover { color: var(--text-secondary); }
+  .footer-link svg { width: 12px; height: 12px; fill: currentColor; }
+  .footer-badge { font-size: 8px; font-weight: 600; color: var(--green-dim); letter-spacing: 1px; text-transform: uppercase; }
+
+  /* Version info in settings */
+  .settings-version { text-align: center; padding: 16px 0 4px; }
+  .settings-version-text { font-size: 9px; color: var(--text-label); letter-spacing: 0.3px; }
+  .settings-version-text a { color: var(--green-dim); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="popover" id="popover">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="header-logo">
+        <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+      </div>
+      <span class="header-title">SoundSplit</span>
+    </div>
+    <div class="header-actions">
+      <button class="header-btn" title="Pin window" id="pinBtn">
+        <svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+      </button>
+      <button class="header-btn star-btn has-presets" title="Presets" id="presetsBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      </button>
+      <button class="header-btn" title="Settings" id="settingsBtn">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- View container -->
+  <div class="view-container">
+    <!-- Main mixer view -->
+    <div class="view" id="mainView">
+      <!-- System-wide output device selector -->
+      <div class="device-selector" id="deviceSelector">
+        <div class="device-selector-btn" id="systemDeviceBtn">
+          <svg class="device-icon" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.47 4.47 0 0 0 2.5-3.5zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+          <span class="device-label">Output</span>
+          <span class="device-name" id="systemDeviceName">Speakers (Realtek)</span>
+          <svg class="chevron" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+        </div>
+        <!-- Dropdown rendered by JS -->
+      </div>
+
+      <div class="master-section">
+        <div class="section-label">Master</div>
+        <div class="master-card">
+          <div class="master-row">
+            <div class="master-icon">
+              <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.47 4.47 0 0 0 2.5-3.5zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            </div>
+            <div class="master-controls">
+              <div class="master-label-row">
+                <span class="master-name">System Volume</span>
+                <span class="master-value" id="masterValue">72%</span>
+              </div>
+              <div class="slider-wrap" id="masterSlider">
+                <div class="slider-track"><div class="slider-fill" style="width: 72%"></div></div>
+                <input type="range" min="0" max="100" value="72">
+              </div>
+              <div class="vu-meter">
+                <div class="vu-meter-fill" id="masterVU" style="width: 55%; background: var(--green)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="apps-section">
+        <div class="apps-header">
+          <div class="section-label" style="margin-bottom:0">Applications</div>
+          <div class="apps-count" id="appCount">6</div>
+        </div>
+        <div class="apps-list" id="appsList"></div>
+      </div>
+
+      <div class="footer">
+        <div class="footer-link">
+          <svg viewBox="0 0 24 24"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+          Open full mixer
+        </div>
+        <div class="footer-badge">PeakFlow</div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS PANEL ===== -->
+    <div class="settings-panel" id="settingsPanel">
+      <div class="panel-header">
+        <button class="panel-back" id="settingsBack">
+          <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        </button>
+        <span class="panel-title">Settings</span>
+      </div>
+
+      <div class="settings-body">
+        <!-- Behavior -->
+        <div class="settings-group">
+          <div class="settings-group-label">Behavior</div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-icon">
+                <svg viewBox="0 0 24 24"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+              </div>
+              <div class="settings-item-text">
+                <div class="settings-item-name">Remember volumes</div>
+                <div class="settings-item-desc">Restore per-app levels on relaunch</div>
+              </div>
+            </div>
+            <div class="toggle on" data-setting="remember"></div>
+          </div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-icon">
+                <svg viewBox="0 0 24 24"><path d="M18 16v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-5 0h-2v-2h2v2zm0-4h-2V8h2v4zm-1 10c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2z"/></svg>
+              </div>
+              <div class="settings-item-text">
+                <div class="settings-item-name">Show notifications</div>
+                <div class="settings-item-desc">Alert when new apps start playing</div>
+              </div>
+            </div>
+            <div class="toggle" data-setting="notifications"></div>
+          </div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-icon">
+                <svg viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+              </div>
+              <div class="settings-item-text">
+                <div class="settings-item-name">Poll interval</div>
+                <div class="settings-item-desc">How often to refresh audio levels</div>
+              </div>
+            </div>
+            <select class="settings-select">
+              <option>100ms</option>
+              <option selected>150ms</option>
+              <option>200ms</option>
+              <option>300ms</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Appearance -->
+        <div class="settings-group">
+          <div class="settings-group-label">Appearance</div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-icon">
+                <svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+              </div>
+              <div class="settings-item-text">
+                <div class="settings-item-name">Attach to tray</div>
+                <div class="settings-item-desc">Open as popover above tray icon</div>
+              </div>
+            </div>
+            <div class="toggle on" data-setting="tray-attach"></div>
+          </div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-icon">
+                <svg viewBox="0 0 24 24"><path d="M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z"/></svg>
+              </div>
+              <div class="settings-item-text">
+                <div class="settings-item-name">VU meters</div>
+                <div class="settings-item-desc">Show real-time audio level bars</div>
+              </div>
+            </div>
+            <div class="toggle on" data-setting="vu-meters"></div>
+          </div>
+        </div>
+
+        <!-- Keyboard shortcuts -->
+        <div class="settings-group">
+          <div class="settings-group-label">Shortcuts</div>
+          <div class="settings-item">
+            <div class="settings-item-left">
+              <div class="settings-item-icon">
+                <svg viewBox="0 0 24 24"><path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg>
+              </div>
+              <div class="settings-item-text">
+                <div class="settings-item-name">Toggle SoundSplit</div>
+                <div class="settings-item-desc">Open/close the mixer popover</div>
+              </div>
+            </div>
+            <span style="font-size:10px;color:var(--text-muted);font-weight:500;background:var(--surface2);padding:3px 8px;border-radius:4px;letter-spacing:0.5px">Ctrl+Shift+S</span>
+          </div>
+        </div>
+
+        <div class="settings-version">
+          <div class="settings-version-text">SoundSplit v1.2.0 &middot; <a href="#">PeakFlow</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PRESETS PANEL ===== -->
+    <div class="presets-panel" id="presetsPanel">
+      <div class="panel-header">
+        <button class="panel-back" id="presetsBack">
+          <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        </button>
+        <span class="panel-title">Presets</span>
+      </div>
+
+      <div class="presets-body" id="presetsBody">
+        <!-- Generated by JS -->
+      </div>
+    </div>
+
+    <!-- Save preset modal -->
+    <div class="save-modal-overlay" id="saveModal">
+      <div class="save-modal">
+        <div class="save-modal-title">Save Current Config</div>
+        <div class="save-modal-desc">Capture all app volumes and mute states</div>
+        <input class="save-modal-input" id="presetNameInput" type="text" placeholder="Preset name..." autocomplete="off">
+        <div class="save-modal-icon-row">
+          <span class="save-modal-icon-label">Icon</span>
+          <div class="icon-option selected" data-icon="🎧">🎧</div>
+          <div class="icon-option" data-icon="🎮">🎮</div>
+          <div class="icon-option" data-icon="🎵">🎵</div>
+          <div class="icon-option" data-icon="📹">📹</div>
+          <div class="icon-option" data-icon="🔇">🔇</div>
+          <div class="icon-option" data-icon="🏠">🏠</div>
+          <div class="icon-option" data-icon="💼">💼</div>
+        </div>
+        <div class="save-modal-actions">
+          <button class="modal-btn cancel" id="modalCancel">Cancel</button>
+          <button class="modal-btn save" id="modalSave">Save Preset</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">
+      <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+      <span id="toastText">Preset saved</span>
+    </div>
+  </div>
+</div>
+
+<!-- Simulated taskbar -->
+<div class="taskbar">
+  <div class="tray-icon"><svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" fill="#555"/></svg></div>
+  <div class="tray-icon"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" fill="#555"/></svg></div>
+  <div class="tray-icon active" id="trayIcon">
+    <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+  </div>
+</div>
+
+<script>
+// ===== DATA =====
+const devices = [
+  { id: 'speakers', name: 'Speakers (Realtek)', type: 'Built-in', icon: 'speaker' },
+  { id: 'usb', name: 'USB Speakers', type: 'USB Audio', icon: 'usb' },
+  { id: 'headphones', name: 'Headphones', type: 'Wired 3.5mm', icon: 'headphones' },
+  { id: 'hdmi', name: 'HDMI Monitor Audio', type: 'HDMI / DisplayPort', icon: 'monitor' },
+  { id: 'bluetooth', name: 'AirPods Pro', type: 'Bluetooth', icon: 'bluetooth' }
+];
+let currentDevice = 'speakers';
+
+const apps = [
+  { id: 1, name: 'Spotify', icon: '🎵', volume: 65, muted: false, peak: 0.6 },
+  { id: 2, name: 'Discord', icon: '💬', volume: 45, muted: false, peak: 0.35 },
+  { id: 3, name: 'Chrome', icon: '🌐', volume: 80, muted: false, peak: 0.72 },
+  { id: 4, name: 'Zoom', icon: '📹', volume: 55, muted: true, peak: 0 },
+  { id: 5, name: 'Steam', icon: '🎮', volume: 30, muted: false, peak: 0.15 },
+  { id: 6, name: 'VLC Media Player', icon: '🎬', volume: 0, muted: true, peak: 0 }
+];
+
+let presets = [
+  {
+    id: 1, name: 'Gaming Mode', icon: '🎮', active: false,
+    config: { master: 85, apps: [
+      { name: 'Discord', volume: 70, muted: false },
+      { name: 'Steam', volume: 80, muted: false },
+      { name: 'Spotify', volume: 20, muted: false },
+      { name: 'Chrome', volume: 40, muted: false }
+    ]}
+  },
+  {
+    id: 2, name: 'Meeting', icon: '📹', active: true,
+    config: { master: 72, apps: [
+      { name: 'Zoom', volume: 55, muted: false },
+      { name: 'Spotify', volume: 0, muted: true },
+      { name: 'Discord', volume: 0, muted: true },
+      { name: 'Chrome', volume: 30, muted: false }
+    ]}
+  },
+  {
+    id: 3, name: 'Music Production', icon: '🎵', active: false,
+    config: { master: 60, apps: [
+      { name: 'Spotify', volume: 85, muted: false },
+      { name: 'Chrome', volume: 10, muted: false },
+      { name: 'Discord', volume: 15, muted: false }
+    ]}
+  }
+];
+
+const deviceIcons = {
+  speaker: '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.47 4.47 0 0 0 2.5-3.5z"/></svg>',
+  usb: '<svg viewBox="0 0 24 24"><path d="M15 7v4h1v2h-3V5h2l-3-4-3 4h2v8H8v-2.07c.7-.37 1.2-1.08 1.2-1.93 0-1.21-.99-2.2-2.2-2.2-1.21 0-2.2.99-2.2 2.2 0 .85.5 1.56 1.2 1.93V13c0 1.11.89 2 2 2h3v3.05c-.71.37-1.2 1.1-1.2 1.95a2.2 2.2 0 0 0 4.4 0c0-.85-.49-1.58-1.2-1.95V15h3c1.11 0 2-.89 2-2v-2h1V7h-4z"/></svg>',
+  headphones: '<svg viewBox="0 0 24 24"><path d="M12 1a9 9 0 0 0-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7a9 9 0 0 0-9-9z"/></svg>',
+  monitor: '<svg viewBox="0 0 24 24"><path d="M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7l-2 3v1h8v-1l-2-3h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H3V4h18v10z"/></svg>',
+  bluetooth: '<svg viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>'
+};
+
+// ===== HELPERS =====
+function getVUColor(peak) {
+  if (peak > 0.8) return 'var(--red)';
+  if (peak > 0.55) return 'var(--yellow)';
+  return 'var(--green)';
+}
+
+// ===== DEVICE SELECTOR (system-wide) =====
+let deviceDropdownOpen = false;
+
+document.getElementById('systemDeviceBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  deviceDropdownOpen = !deviceDropdownOpen;
+  renderDeviceDropdown();
+});
+
+function renderDeviceDropdown() {
+  const selector = document.getElementById('deviceSelector');
+  const btn = document.getElementById('systemDeviceBtn');
+  const existing = selector.querySelector('.device-dropdown');
+  if (existing) existing.remove();
+
+  btn.classList.toggle('open', deviceDropdownOpen);
+
+  if (!deviceDropdownOpen) return;
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'device-dropdown';
+
+  dropdown.innerHTML = devices.map(d => {
+    const isActive = d.id === currentDevice;
+    return `
+      <div class="device-dropdown-item${isActive ? ' active' : ''}" data-device-id="${d.id}">
+        ${deviceIcons[d.icon]}
+        <div class="device-dropdown-item-info">
+          <div class="device-dropdown-item-name">${d.name}</div>
+          <div class="device-dropdown-item-type">${d.type}</div>
+        </div>
+        <svg class="checkmark" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+      </div>
+    `;
+  }).join('');
+
+  selector.appendChild(dropdown);
+  requestAnimationFrame(() => dropdown.classList.add('visible'));
+
+  dropdown.querySelectorAll('.device-dropdown-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      currentDevice = item.dataset.deviceId;
+      const dev = devices.find(d => d.id === currentDevice);
+      document.getElementById('systemDeviceName').textContent = dev.name;
+      deviceDropdownOpen = false;
+      renderDeviceDropdown();
+      showToast(`Output: ${dev.name}`);
+    });
+  });
+}
+
+// ===== SETTINGS PANEL =====
+document.getElementById('settingsBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('settingsPanel').classList.add('open');
+  document.getElementById('presetsPanel').classList.remove('open');
+});
+
+document.getElementById('settingsBack').addEventListener('click', () => {
+  document.getElementById('settingsPanel').classList.remove('open');
+});
+
+// Toggle switches
+document.querySelectorAll('.toggle').forEach(t => {
+  t.addEventListener('click', () => t.classList.toggle('on'));
+});
+
+// ===== PRESETS PANEL =====
+document.getElementById('presetsBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('presetsPanel').classList.add('open');
+  document.getElementById('settingsPanel').classList.remove('open');
+  renderPresets();
+});
+
+document.getElementById('presetsBack').addEventListener('click', () => {
+  document.getElementById('presetsPanel').classList.remove('open');
+});
+
+function renderPresets() {
+  const body = document.getElementById('presetsBody');
+  body.innerHTML = '';
+
+  presets.forEach(p => {
+    const card = document.createElement('div');
+    card.className = `preset-card${p.active ? ' active' : ''}`;
+    card.dataset.id = p.id;
+
+    const tags = p.config.apps.map(a => {
+      if (a.muted) return `<span class="preset-tag muted-tag">${a.name} muted</span>`;
+      return `<span class="preset-tag">${a.name} ${a.volume}%</span>`;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="preset-card-top">
+        <div class="preset-icon">${p.icon}</div>
+        <div class="preset-info">
+          <div class="preset-name">${p.name}</div>
+          <div class="preset-meta">Master ${p.config.master}% &middot; ${p.config.apps.length} apps configured</div>
+        </div>
+        <div class="preset-actions">
+          <button class="preset-action-btn delete" data-preset-id="${p.id}" title="Delete">
+            <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="preset-details">${tags}</div>
+    `;
+
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.preset-action-btn')) return;
+      presets.forEach(pp => pp.active = false);
+      p.active = true;
+      showToast(`Applied "${p.name}"`);
+      renderPresets();
+    });
+
+    body.appendChild(card);
+  });
+
+  // Delete buttons
+  body.querySelectorAll('.preset-action-btn.delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.presetId);
+      presets = presets.filter(p => p.id !== id);
+      renderPresets();
+      showToast('Preset deleted');
+    });
+  });
+
+  // Save new button
+  const saveBtn = document.createElement('div');
+  saveBtn.className = 'save-preset-btn';
+  saveBtn.innerHTML = `
+    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+    <span>Save current config</span>
+  `;
+  saveBtn.addEventListener('click', openSaveModal);
+  body.appendChild(saveBtn);
+}
+
+// ===== SAVE MODAL =====
+let selectedIcon = '🎧';
+
+function openSaveModal() {
+  document.getElementById('saveModal').classList.add('visible');
+  document.getElementById('presetNameInput').value = '';
+  document.getElementById('presetNameInput').focus();
+  selectedIcon = '🎧';
+  document.querySelectorAll('.icon-option').forEach(o => {
+    o.classList.toggle('selected', o.dataset.icon === selectedIcon);
+  });
+}
+
+document.getElementById('modalCancel').addEventListener('click', () => {
+  document.getElementById('saveModal').classList.remove('visible');
+});
+
+document.getElementById('saveModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('saveModal')) {
+    document.getElementById('saveModal').classList.remove('visible');
+  }
+});
+
+document.querySelectorAll('.icon-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    selectedIcon = opt.dataset.icon;
+    document.querySelectorAll('.icon-option').forEach(o => o.classList.remove('selected'));
+    opt.classList.add('selected');
+  });
+});
+
+document.getElementById('modalSave').addEventListener('click', () => {
+  const name = document.getElementById('presetNameInput').value.trim() || 'Untitled Preset';
+  const masterVol = parseInt(document.getElementById('masterSlider').querySelector('input').value);
+
+  const newPreset = {
+    id: Date.now(),
+    name: name,
+    icon: selectedIcon,
+    active: false,
+    config: {
+      master: masterVol,
+      apps: apps.map(a => ({
+        name: a.name,
+        volume: a.volume,
+        muted: a.muted
+      }))
+    }
+  };
+
+  presets.push(newPreset);
+  document.getElementById('saveModal').classList.remove('visible');
+  renderPresets();
+  showToast(`"${name}" saved`);
+});
+
+// ===== TOAST =====
+let toastTimer;
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  document.getElementById('toastText').textContent = msg;
+  toast.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('visible'), 2200);
+}
+
+// ===== APP ROWS =====
+function renderApps() {
+  const list = document.getElementById('appsList');
+  list.innerHTML = '';
+  document.getElementById('appCount').textContent = apps.length;
+
+  apps.forEach((app, i) => {
+    const row = document.createElement('div');
+    row.className = `app-row${app.muted ? ' muted' : ''}`;
+    row.style.animationDelay = `${0.05 + i * 0.04}s`;
+    row.dataset.id = app.id;
+
+    row.innerHTML = `
+      <div class="app-row-top">
+        <div class="app-icon">${app.icon}</div>
+        <div class="app-info">
+          <span class="app-name">${app.name}</span>
+        </div>
+        <div class="app-right">
+          <span class="app-value">${app.volume}%</span>
+          <button class="mute-btn${app.muted ? ' muted' : ''}" data-app-id="${app.id}">
+            ${app.muted
+              ? '<svg viewBox="0 0 24 24"><path d="M16.5 12A4.5 4.5 0 0 0 14 8.5v2.09l2.5 2.5V12zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>'
+              : '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.47 4.47 0 0 0 2.5-3.5zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>'
+            }
+          </button>
+        </div>
+      </div>
+      <div class="slider-wrap small" data-app-id="${app.id}">
+        <div class="slider-track"><div class="slider-fill" style="width: ${app.volume}%"></div></div>
+        <input type="range" min="0" max="100" value="${app.volume}">
+      </div>
+      <div class="vu-meter">
+        <div class="vu-meter-fill" data-vu="${app.id}" style="width: ${app.peak * 100}%; background: ${getVUColor(app.peak)}"></div>
+      </div>
+    `;
+
+    list.appendChild(row);
+  });
+
+  // Slider events
+  document.querySelectorAll('.app-row .slider-wrap').forEach(wrap => {
+    const input = wrap.querySelector('input[type="range"]');
+    const fill = wrap.querySelector('.slider-fill');
+    const appId = parseInt(wrap.dataset.appId);
+
+    input.addEventListener('input', () => {
+      const val = input.value;
+      fill.style.width = val + '%';
+      const app = apps.find(a => a.id === appId);
+      if (app) {
+        app.volume = parseInt(val);
+        if (app.muted && val > 0) { app.muted = false; updateMuteState(appId); }
+      }
+      wrap.closest('.app-row').querySelector('.app-value').textContent = val + '%';
+    });
+    input.addEventListener('mousedown', () => wrap.classList.add('dragging'));
+    input.addEventListener('mouseup', () => wrap.classList.remove('dragging'));
+  });
+
+  // Mute events
+  document.querySelectorAll('.mute-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const appId = parseInt(btn.dataset.appId);
+      const app = apps.find(a => a.id === appId);
+      if (app) { app.muted = !app.muted; if (app.muted) app.peak = 0; updateMuteState(appId); }
+    });
+  });
+}
+
+function updateMuteState(appId) {
+  const app = apps.find(a => a.id === appId);
+  const row = document.querySelector(`.app-row[data-id="${appId}"]`);
+  if (!app || !row) return;
+  row.className = `app-row${app.muted ? ' muted' : ''}`;
+  const btn = row.querySelector('.mute-btn');
+  btn.className = `mute-btn${app.muted ? ' muted' : ''}`;
+  btn.innerHTML = app.muted
+    ? '<svg viewBox="0 0 24 24"><path d="M16.5 12A4.5 4.5 0 0 0 14 8.5v2.09l2.5 2.5V12zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.47 4.47 0 0 0 2.5-3.5zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
+}
+
+// Close dropdown on outside click
+document.addEventListener('click', (e) => {
+  if (deviceDropdownOpen && !e.target.closest('#deviceSelector')) {
+    deviceDropdownOpen = false;
+    renderDeviceDropdown();
+  }
+  if (!e.target.closest('.settings-panel') && !e.target.closest('#settingsBtn')) {
+    document.getElementById('settingsPanel').classList.remove('open');
+  }
+  if (!e.target.closest('.presets-panel') && !e.target.closest('#presetsBtn') && !e.target.closest('.save-modal-overlay')) {
+    document.getElementById('presetsPanel').classList.remove('open');
+  }
+});
+
+// Master slider
+const masterSlider = document.getElementById('masterSlider');
+const masterInput = masterSlider.querySelector('input[type="range"]');
+const masterFill = masterSlider.querySelector('.slider-fill');
+const masterValue = document.getElementById('masterValue');
+
+masterInput.addEventListener('input', () => {
+  masterFill.style.width = masterInput.value + '%';
+  masterValue.textContent = masterInput.value + '%';
+});
+masterInput.addEventListener('mousedown', () => masterSlider.classList.add('dragging'));
+masterInput.addEventListener('mouseup', () => masterSlider.classList.remove('dragging'));
+
+// VU meter animation
+function animateVU() {
+  apps.forEach(app => {
+    if (app.muted) { app.peak = 0; }
+    else if (app.volume > 0) {
+      const base = (app.volume / 100) * 0.7;
+      app.peak = Math.min(1, Math.max(0, base + (Math.random() - 0.5) * 0.25));
+    }
+    const el = document.querySelector(`[data-vu="${app.id}"]`);
+    if (el) { el.style.width = (app.peak * 100) + '%'; el.style.background = getVUColor(app.peak); }
+  });
+  const masterVU = document.getElementById('masterVU');
+  const masterVol = parseInt(masterInput.value) / 100;
+  const masterPeak = Math.min(1, Math.max(0, masterVol * 0.65 + (Math.random() - 0.5) * 0.15));
+  masterVU.style.width = (masterPeak * 100) + '%';
+  masterVU.style.background = getVUColor(masterPeak);
+  requestAnimationFrame(() => setTimeout(animateVU, 120));
+}
+
+// Init
+renderApps();
+animateVU();
+</script>
+</body>
+</html>

@@ -15,8 +15,9 @@
 
 import { BrowserWindow, app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
-import { appendFileSync } from 'fs'
+import { appendFileSync, writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import Store from 'electron-store'
 import { IPC_SEND } from '@shared/ipc-types'
 import { ToolId } from '@shared/tool-ids'
@@ -78,130 +79,166 @@ function formatName(name: string): string {
 // ─── PowerShell sidecar script ───────────────────────────────────────────────
 
 const PS_SIDECAR_SCRIPT = `
-$ErrorActionPreference = 'SilentlyContinue'
+# Do NOT set $ErrorActionPreference = 'SilentlyContinue' globally —
+# it masks Add-Type compilation errors, making C# failures invisible.
+try {
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
 class MMDeviceEnumerator {}
+
 [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IMMDeviceEnumerator {
-    int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr ppDevices);
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
+    [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr ppDevices);
+    [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
 }
+
 [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IMMDevice {
-    int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+    [PreserveSig] int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
 }
+
 [ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioSessionManager2 {
-    int GetAudioSessionControl(ref Guid AudioSessionGuid, uint StreamFlags, out IntPtr SessionControl);
-    int GetSimpleAudioVolume(ref Guid AudioSessionGuid, uint StreamFlags, out IntPtr AudioVolume);
-    int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
+    [PreserveSig] int GetAudioSessionControl(ref Guid AudioSessionGuid, uint StreamFlags, out IntPtr SessionControl);
+    [PreserveSig] int GetSimpleAudioVolume(ref Guid AudioSessionGuid, uint StreamFlags, out IntPtr AudioVolume);
+    [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
 }
+
 [ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioSessionEnumerator {
-    int GetCount(out int SessionCount);
-    int GetSession(int SessionCount, out IAudioSessionControl Session);
+    [PreserveSig] int GetCount(out int SessionCount);
+    [PreserveSig] int GetSession(int SessionCount, out IAudioSessionControl Session);
 }
+
 [ComImport, Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioSessionControl {
-    int GetState(out int pRetVal);
+    [PreserveSig] int GetState(out int pRetVal);
 }
+
 [ComImport, Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioSessionControl2 {
-    int GetState(out int pRetVal);
-    int GetDisplayName(out IntPtr pRetVal);
-    int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string Value, ref Guid EventContext);
-    int GetIconPath(out IntPtr pRetVal);
-    int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string Value, ref Guid EventContext);
-    int GetGroupingParam(out Guid pRetVal);
-    int SetGroupingParam(ref Guid Override, ref Guid EventContext);
-    int RegisterAudioSessionNotification(IntPtr NewNotifications);
-    int UnregisterAudioSessionNotification(IntPtr NewNotifications);
-    int GetSessionIdentifier(out IntPtr pRetVal);
-    int GetSessionInstanceIdentifier(out IntPtr pRetVal);
-    int GetProcessId(out uint pRetVal);
-    int IsSystemSoundsSession();
-    int SetDuckingPreference(bool optOut);
+    [PreserveSig] int GetState(out int pRetVal);
+    [PreserveSig] int GetDisplayName(out IntPtr pRetVal);
+    [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string Value, ref Guid EventContext);
+    [PreserveSig] int GetIconPath(out IntPtr pRetVal);
+    [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string Value, ref Guid EventContext);
+    [PreserveSig] int GetGroupingParam(out Guid pRetVal);
+    [PreserveSig] int SetGroupingParam(ref Guid Override, ref Guid EventContext);
+    [PreserveSig] int RegisterAudioSessionNotification(IntPtr NewNotifications);
+    [PreserveSig] int UnregisterAudioSessionNotification(IntPtr NewNotifications);
+    [PreserveSig] int GetSessionIdentifier(out IntPtr pRetVal);
+    [PreserveSig] int GetSessionInstanceIdentifier(out IntPtr pRetVal);
+    [PreserveSig] int GetProcessId(out uint pRetVal);
+    [PreserveSig] int IsSystemSoundsSession();
+    [PreserveSig] int SetDuckingPreference(bool optOut);
 }
+
 [ComImport, Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ISimpleAudioVolume {
-    int SetMasterVolume(float fLevel, ref Guid EventContext);
-    int GetMasterVolume(out float pfLevel);
-    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid EventContext);
-    int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+    [PreserveSig] int SetMasterVolume(float fLevel, ref Guid EventContext);
+    [PreserveSig] int GetMasterVolume(out float pfLevel);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid EventContext);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
 }
+
 [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioMeterInformation {
-    int GetPeakValue(out float pfPeak);
+    [PreserveSig] int GetPeakValue(out float pfPeak);
 }
+
 [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioEndpointVolume {
-    int RegisterControlChangeNotify(IntPtr pNotify);
-    int UnregisterControlChangeNotify(IntPtr pNotify);
-    int GetChannelCount(out uint pnChannelCount);
-    int SetMasterVolumeLevel(float fLevelDB, ref Guid pguidEventContext);
-    int SetMasterVolumeLevelScalar(float fLevel, ref Guid pguidEventContext);
-    int GetMasterVolumeLevel(out float pfLevelDB);
-    int GetMasterVolumeLevelScalar(out float pfLevel);
-    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, ref Guid pguidEventContext);
-    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, ref Guid pguidEventContext);
-    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
-    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
-    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
-    int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+    [PreserveSig] int RegisterControlChangeNotify(IntPtr pNotify);
+    [PreserveSig] int UnregisterControlChangeNotify(IntPtr pNotify);
+    [PreserveSig] int GetChannelCount(out uint pnChannelCount);
+    [PreserveSig] int SetMasterVolumeLevel(float fLevelDB, ref Guid pguidEventContext);
+    [PreserveSig] int SetMasterVolumeLevelScalar(float fLevel, ref Guid pguidEventContext);
+    [PreserveSig] int GetMasterVolumeLevel(out float pfLevelDB);
+    [PreserveSig] int GetMasterVolumeLevelScalar(out float pfLevel);
+    [PreserveSig] int SetChannelVolumeLevel(uint nChannel, float fLevelDB, ref Guid pguidEventContext);
+    [PreserveSig] int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, ref Guid pguidEventContext);
+    [PreserveSig] int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
+    [PreserveSig] int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
 }
+
 public class AudioBridge {
     private static Guid IID_IAudioSessionManager2 = new Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
     private static Guid IID_IAudioEndpointVolume = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
     private static Guid GUID_NULL = Guid.Empty;
+    private const int S_OK = 0;
+
     public static string Poll() {
+        IMMDeviceEnumerator enumerator = null;
+        IMMDevice device = null;
+        IAudioSessionManager2 mgr = null;
+        IAudioSessionEnumerator sessionEnum = null;
         try {
-            var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
-            IMMDevice device;
-            enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+            enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+            IMMDevice deviceOut;
+            enumerator.GetDefaultAudioEndpoint(0, 1, out deviceOut);
+            device = deviceOut;
             object o;
             device.Activate(ref IID_IAudioSessionManager2, 23, IntPtr.Zero, out o);
-            var mgr = (IAudioSessionManager2)o;
-            IAudioSessionEnumerator sessionEnum;
-            mgr.GetSessionEnumerator(out sessionEnum);
+            mgr = (IAudioSessionManager2)o;
+            IAudioSessionEnumerator se;
+            mgr.GetSessionEnumerator(out se);
+            sessionEnum = se;
+
             int count;
             sessionEnum.GetCount(out count);
             var lines = new List<string>();
+
             for (int i = 0; i < count; i++) {
+                IAudioSessionControl ctl = null;
                 try {
-                    IAudioSessionControl ctl;
-                    sessionEnum.GetSession(i, out ctl);
-                    var ctl2 = (IAudioSessionControl2)ctl;
+                    IAudioSessionControl c;
+                    sessionEnum.GetSession(i, out c);
+                    ctl = c;
+                    var ctl2 = ctl as IAudioSessionControl2;
+                    if (ctl2 == null) continue;
+
                     uint pid = 0;
                     ctl2.GetProcessId(out pid);
                     if (pid == 0) continue;
+
                     int state;
                     ctl2.GetState(out state);
+
                     string procName = "Unknown";
-                    try {
-                        procName = Process.GetProcessById((int)pid).ProcessName.ToLower();
-                    } catch {}
-                    var vol = (ISimpleAudioVolume)ctl;
+                    try { procName = Process.GetProcessById((int)pid).ProcessName.ToLower(); } catch {}
+
+                    var vol = ctl as ISimpleAudioVolume;
                     float level = 0f;
                     vol.GetMasterVolume(out level);
+
                     bool muted = false;
                     vol.GetMute(out muted);
+
                     float peak = 0f;
                     try {
-                        var meter = (IAudioMeterInformation)ctl;
+                        var meter = ctl as IAudioMeterInformation;
                         meter.GetPeakValue(out peak);
                     } catch {}
+
                     if (state == 2 && peak < 0.001f) continue;
+
                     string strLevel = Math.Round(level, 4).ToString(CultureInfo.InvariantCulture);
                     string strPeak = Math.Round(peak, 4).ToString(CultureInfo.InvariantCulture);
                     lines.Add(pid + "|" + procName + "|" + strLevel + "|" + strPeak + "|" + (muted ? "1" : "0"));
-                } catch {}
+                } finally {
+                    if (ctl != null) Marshal.ReleaseComObject(ctl);
+                }
             }
+
+            // Master volume
             try {
                 object oAev;
                 device.Activate(ref IID_IAudioEndpointVolume, 23, IntPtr.Zero, out oAev);
@@ -212,128 +249,215 @@ public class AudioBridge {
                 aev.GetMute(out masterMute);
                 string mVol = Math.Round(masterVol, 4).ToString(CultureInfo.InvariantCulture);
                 lines.Insert(0, "MASTER|Master Volume|" + mVol + "|0.0|" + (masterMute ? "1" : "0"));
+                Marshal.ReleaseComObject(aev);
             } catch {
                 lines.Insert(0, "MASTER|Master Volume|1.0|0.0|0");
             }
+
             return string.Join("\\n", lines);
-        } catch (Exception ex) {
-            return "ERROR|" + ex.Message;
+        } finally {
+            if (sessionEnum != null) Marshal.ReleaseComObject(sessionEnum);
+            if (mgr != null) Marshal.ReleaseComObject(mgr);
+            if (device != null) Marshal.ReleaseComObject(device);
+            if (enumerator != null) Marshal.ReleaseComObject(enumerator);
         }
     }
+
     public static bool SetVolume(uint pid, float vol) {
+        IMMDeviceEnumerator enumerator = null;
+        IMMDevice device = null;
+        IAudioSessionManager2 mgr = null;
+        IAudioSessionEnumerator sessionEnum = null;
         try {
-            var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
-            IMMDevice device;
-            enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+            enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+            IMMDevice deviceOut;
+            enumerator.GetDefaultAudioEndpoint(0, 1, out deviceOut);
+            device = deviceOut;
             object o;
             device.Activate(ref IID_IAudioSessionManager2, 23, IntPtr.Zero, out o);
-            var mgr = (IAudioSessionManager2)o;
-            IAudioSessionEnumerator sessionEnum;
-            mgr.GetSessionEnumerator(out sessionEnum);
+            mgr = (IAudioSessionManager2)o;
+            IAudioSessionEnumerator se;
+            mgr.GetSessionEnumerator(out se);
+            sessionEnum = se;
+
             int count;
             sessionEnum.GetCount(out count);
-            Console.Error.WriteLine("DBG SetVolume: looking for pid=" + pid + " vol=" + vol + " count=" + count);
+
+            bool success = false;
             for (int i = 0; i < count; i++) {
+                IAudioSessionControl ctl = null;
                 try {
-                    IAudioSessionControl ctl;
-                    sessionEnum.GetSession(i, out ctl);
-                    var ctl2 = (IAudioSessionControl2)ctl;
+                    IAudioSessionControl c;
+                    sessionEnum.GetSession(i, out c);
+                    ctl = c;
+                    var ctl2 = ctl as IAudioSessionControl2;
+                    if (ctl2 == null) continue;
+
                     uint p = 0;
                     ctl2.GetProcessId(out p);
-                    Console.Error.WriteLine("DBG SetVolume: session[" + i + "] pid=" + p);
+
                     if (p == pid) {
-                        var sv = (ISimpleAudioVolume)ctl;
-                        int hr = sv.SetMasterVolume(vol, ref GUID_NULL);
-                        Console.Error.WriteLine("DBG SetVolume: MATCH! SetMasterVolume HR=" + hr);
-                        return true;
+                        var sv = ctl as ISimpleAudioVolume;
+                        if (sv != null) {
+                            int hr = sv.SetMasterVolume(vol, ref GUID_NULL);
+                            if (hr == S_OK) success = true;
+                        }
                     }
-                } catch (Exception ex) {
-                    Console.Error.WriteLine("DBG SetVolume: session[" + i + "] Exception: " + ex.Message);
+                } finally {
+                    if (ctl != null) Marshal.ReleaseComObject(ctl);
                 }
             }
-            Console.Error.WriteLine("DBG SetVolume: PID NOT FOUND");
-            return false;
-        } catch (Exception ex) {
-            Console.Error.WriteLine("DBG SetVolume: OUTER Exception: " + ex.Message);
-            return false;
+            return success;
+        } finally {
+            if (sessionEnum != null) Marshal.ReleaseComObject(sessionEnum);
+            if (mgr != null) Marshal.ReleaseComObject(mgr);
+            if (device != null) Marshal.ReleaseComObject(device);
+            if (enumerator != null) Marshal.ReleaseComObject(enumerator);
         }
     }
+
     public static bool SetMute(uint pid, bool mute) {
+        IMMDeviceEnumerator enumerator = null;
+        IMMDevice device = null;
+        IAudioSessionManager2 mgr = null;
+        IAudioSessionEnumerator sessionEnum = null;
         try {
-            var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
-            IMMDevice device;
-            enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+            enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+            IMMDevice deviceOut;
+            enumerator.GetDefaultAudioEndpoint(0, 1, out deviceOut);
+            device = deviceOut;
             object o;
             device.Activate(ref IID_IAudioSessionManager2, 23, IntPtr.Zero, out o);
-            var mgr = (IAudioSessionManager2)o;
-            IAudioSessionEnumerator sessionEnum;
-            mgr.GetSessionEnumerator(out sessionEnum);
+            mgr = (IAudioSessionManager2)o;
+            IAudioSessionEnumerator se;
+            mgr.GetSessionEnumerator(out se);
+            sessionEnum = se;
+
             int count;
             sessionEnum.GetCount(out count);
+
+            bool found = false;
             for (int i = 0; i < count; i++) {
+                IAudioSessionControl ctl = null;
                 try {
-                    IAudioSessionControl ctl;
-                    sessionEnum.GetSession(i, out ctl);
-                    var ctl2 = (IAudioSessionControl2)ctl;
+                    IAudioSessionControl c;
+                    sessionEnum.GetSession(i, out c);
+                    ctl = c;
+                    var ctl2 = ctl as IAudioSessionControl2;
+                    if (ctl2 == null) continue;
+
                     uint p = 0;
                     ctl2.GetProcessId(out p);
                     if (p == pid) {
-                        var sv = (ISimpleAudioVolume)ctl;
-                        sv.SetMute(mute, ref GUID_NULL);
-                        return true;
+                        var sv = ctl as ISimpleAudioVolume;
+                        if (sv != null) {
+                            sv.SetMute(mute, ref GUID_NULL);
+                            found = true;
+                        }
                     }
-                } catch {}
+                } finally {
+                    if (ctl != null) Marshal.ReleaseComObject(ctl);
+                }
             }
-            return false;
-        } catch { return false; }
+            return found;
+        } finally {
+            if (sessionEnum != null) Marshal.ReleaseComObject(sessionEnum);
+            if (mgr != null) Marshal.ReleaseComObject(mgr);
+            if (device != null) Marshal.ReleaseComObject(device);
+            if (enumerator != null) Marshal.ReleaseComObject(enumerator);
+        }
     }
+
     public static bool SetMaster(float vol) {
+        IMMDeviceEnumerator enumerator = null;
+        IMMDevice device = null;
         try {
-            var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
-            IMMDevice device;
-            enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+            enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+            IMMDevice deviceOut;
+            enumerator.GetDefaultAudioEndpoint(0, 1, out deviceOut);
+            device = deviceOut;
             object oAev;
             device.Activate(ref IID_IAudioEndpointVolume, 23, IntPtr.Zero, out oAev);
             var aev = (IAudioEndpointVolume)oAev;
             aev.SetMasterVolumeLevelScalar(vol, ref GUID_NULL);
+            Marshal.ReleaseComObject(aev);
             return true;
-        } catch { return false; }
+        } finally {
+            if (device != null) Marshal.ReleaseComObject(device);
+            if (enumerator != null) Marshal.ReleaseComObject(enumerator);
+        }
     }
 }
 "@
-# Command loop
+} catch {
+    [Console]::Error.WriteLine("FATAL: Add-Type failed: $_")
+    [Console]::Out.WriteLine("ERR:Add-Type compilation failed")
+    exit 1
+}
+# Verify the type loaded
+try {
+    $null = [AudioBridge].GetType()
+    [Console]::Error.WriteLine("DBG: AudioBridge type loaded OK")
+} catch {
+    [Console]::Error.WriteLine("FATAL: AudioBridge type not available: $_")
+    [Console]::Out.WriteLine("ERR:AudioBridge type missing")
+    exit 1
+}
+# Command loop — use [Console]::Out.WriteLine instead of Write-Host
+# because Write-Host goes to the Information stream, not stdout,
+# when PowerShell runs with -File or -Command mode.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Write-Host "READY"
+[Console]::Out.WriteLine("READY")
 while ($true) {
     $line = [Console]::In.ReadLine()
     if ($null -eq $line) { break }
     $line = $line.Trim()
     if ($line -eq "exit") { break }
     if ($line -eq "poll") {
-        $result = [AudioBridge]::Poll()
-        Write-Host "RESULT:$result"
+        try {
+            $result = [AudioBridge]::Poll()
+            [Console]::Out.WriteLine("RESULT:$result")
+        } catch {
+            [Console]::Error.WriteLine("ERR poll: $_")
+            [Console]::Out.WriteLine("RESULT:MASTER|Master Volume|1.0|0.0|0")
+        }
     }
     elseif ($line.StartsWith("set_volume ")) {
-        $parts = $line.Split(" ")
-        $pid = [uint32]$parts[1]
-        $vol = [float]::Parse($parts[2], [System.Globalization.CultureInfo]::InvariantCulture)
-        $ok = [AudioBridge]::SetVolume($pid, $vol)
-        Write-Host "OK:$ok"
+        try {
+            $parts = $line.Split(" ")
+            $targetPid = [uint32]$parts[1]
+            $vol = [float]::Parse($parts[2], [System.Globalization.CultureInfo]::InvariantCulture)
+            $ok = [AudioBridge]::SetVolume($targetPid, $vol)
+            [Console]::Out.WriteLine("OK:$ok")
+        } catch {
+            [Console]::Error.WriteLine("ERR set_volume: $_")
+            [Console]::Out.WriteLine("OK:False")
+        }
     }
     elseif ($line.StartsWith("set_mute ")) {
-        $parts = $line.Split(" ")
-        $pid = [uint32]$parts[1]
-        $mute = $parts[2] -eq "1"
-        $ok = [AudioBridge]::SetMute($pid, $mute)
-        Write-Host "OK:$ok"
+        try {
+            $parts = $line.Split(" ")
+            $targetPid = [uint32]$parts[1]
+            $mute = $parts[2] -eq "1"
+            $ok = [AudioBridge]::SetMute($targetPid, $mute)
+            [Console]::Out.WriteLine("OK:$ok")
+        } catch {
+            [Console]::Error.WriteLine("ERR set_mute: $_")
+            [Console]::Out.WriteLine("OK:False")
+        }
     }
     elseif ($line.StartsWith("set_master ")) {
-        $vol = [float]::Parse($line.Split(" ")[1], [System.Globalization.CultureInfo]::InvariantCulture)
-        $ok = [AudioBridge]::SetMaster($vol)
-        Write-Host "OK:$ok"
+        try {
+            $vol = [float]::Parse($line.Split(" ")[1], [System.Globalization.CultureInfo]::InvariantCulture)
+            $ok = [AudioBridge]::SetMaster($vol)
+            [Console]::Out.WriteLine("OK:$ok")
+        } catch {
+            [Console]::Error.WriteLine("ERR set_master: $_")
+            [Console]::Out.WriteLine("OK:False")
+        }
     }
     else {
-        Write-Host "ERR:Unknown command"
+        [Console]::Out.WriteLine("ERR:Unknown command")
     }
 }
 `
@@ -367,7 +491,7 @@ class SoundSplitBridge {
   private restoredApps = new Set<string>()
   /** Guard against overlapping poll commands */
   private pollInFlight = false
-  /** PIDs with recent volume/mute changes — skip overwriting from poll for 2s */
+  /** PIDs with recent volume/mute changes — skip overwriting from poll for 800ms */
   private recentlyChanged = new Map<number, number>()
   /** Accumulates multi-line RESULT data (C# joins with real newlines) */
   private resultLines: string[] | null = null
@@ -380,16 +504,24 @@ class SoundSplitBridge {
     this.spawnSidecar()
   }
 
+  /** Path to the temp .ps1 file so we can clean it up on destroy */
+  private scriptFile: string | null = null
+
   private spawnSidecar(): void {
     if (this.ps) return
 
-    // Use -EncodedCommand to avoid PowerShell -Command mangling C# // comments
-    const encoded = Buffer.from(PS_SIDECAR_SCRIPT, 'utf16le').toString('base64')
+    // Write script to a temp .ps1 file — the expanded C# COM code exceeds
+    // Windows' max command-line length (~32 KB) when base64-encoded.
+    const scriptPath = join(tmpdir(), `peakflow-soundsplit-${process.pid}.ps1`)
+    writeFileSync(scriptPath, PS_SIDECAR_SCRIPT, 'utf8')
+    this.scriptFile = scriptPath
+
     this.ps = spawn('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
-      '-EncodedCommand', encoded
+      '-STA',
+      '-File', scriptPath
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true
@@ -490,6 +622,9 @@ class SoundSplitBridge {
       // OK responses from set_volume/set_mute/set_master
       if (trimmed.startsWith('OK:')) {
         dbg(`Sidecar response: ${trimmed}`)
+        if (trimmed === 'OK:False') {
+          console.warn('[SoundSplit] Set failed:', trimmed)
+        }
         continue
       }
     }
@@ -548,13 +683,15 @@ class SoundSplitBridge {
   }
 
   private parsePollResult(raw: string): void {
-    const sessions: AudioSession[] = []
+    // Deduplicate sub-sessions by PID — Chromium apps spawn multiple WASAPI
+    // sessions under the same PID (ghost sessions). Merge them: take highest
+    // peak, highest volume, only muted if ALL sub-sessions are muted.
+    const sessionMap = new Map<number, AudioSession>()
 
     for (const line of raw.split('\n')) {
       const parts = line.split('|')
 
       if (parts[0] === 'MASTER' && parts.length >= 4) {
-        // Format: MASTER|Master Volume|vol|peak|muted
         this.masterVolume = parseFloat(parts[2]) || 1
         this.masterPeak = parseFloat(parts[3]) || 0
         continue
@@ -567,43 +704,51 @@ class SoundSplitBridge {
 
       if (parts.length < 5) continue
 
-      const pid = parseInt(parts[0])
+      const pid = parseInt(parts[0], 10)
       const name = parts[1]
       if (isNaN(pid) || pid === 0) continue
 
-      const session: AudioSession = {
-        pid,
-        name,
-        displayName: formatName(name),
-        volume: parseFloat(parts[2]) || 0,
-        peak: parseFloat(parts[3]) || 0,
-        muted: parts[4] === '1',
-        iconPath: null
-      }
+      const volume = parseFloat(parts[2]) || 0
+      const peak = parseFloat(parts[3]) || 0
+      const muted = parts[4] === '1'
 
+      if (sessionMap.has(pid)) {
+        const existing = sessionMap.get(pid)!
+        existing.peak = Math.max(existing.peak, peak)
+        existing.volume = Math.max(existing.volume, volume)
+        existing.muted = existing.muted && muted // only muted if ALL sub-sessions muted
+      } else {
+        sessionMap.set(pid, {
+          pid, name,
+          displayName: formatName(name),
+          volume, peak, muted,
+          iconPath: null
+        })
+      }
+    }
+
+    const sessions = Array.from(sessionMap.values())
+    const now = Date.now()
+
+    for (const session of sessions) {
       // Restore saved preferences for newly-detected apps
       this.restorePrefs(session)
 
       // Preserve optimistic volume/mute for recently-changed PIDs so the
       // poll doesn't overwrite user-initiated slider changes.
-      const changedAt = this.recentlyChanged.get(pid)
+      const changedAt = this.recentlyChanged.get(session.pid)
       if (changedAt) {
-        const existing = this.sessions.find((s) => s.pid === pid)
-        if (Date.now() - changedAt < 2000) {
-          if (existing) {
-            session.volume = existing.volume
-            session.muted = existing.muted
-          }
+        const existing = this.sessions.find((s) => s.pid === session.pid)
+        if (now - changedAt < 800 && existing) {
+          session.volume = existing.volume
+          session.muted = existing.muted
         }
       }
-
-      sessions.push(session)
     }
 
     // Clean up expired entries from recentlyChanged
-    const now = Date.now()
     for (const [pid, ts] of this.recentlyChanged) {
-      if (now - ts >= 2000) this.recentlyChanged.delete(pid)
+      if (now - ts >= 800) this.recentlyChanged.delete(pid)
     }
 
     // Clear restoredApps entries for apps that are no longer present,
@@ -665,6 +810,11 @@ class SoundSplitBridge {
       this.ps = null
     }
     this.ready = false
+    // Clean up temp script file
+    if (this.scriptFile) {
+      try { unlinkSync(this.scriptFile) } catch {}
+      this.scriptFile = null
+    }
     console.log('[SoundSplit] Bridge destroyed')
   }
 
@@ -698,6 +848,7 @@ class SoundSplitBridge {
     const clamped = Math.max(0, Math.min(1, volume))
     dbg(`setVolume pid=${pid} vol=${clamped.toFixed(3)} ready=${this.ready} ps=${!!this.ps}`)
     this.sendCommand(`set_volume ${pid} ${clamped.toFixed(4)}`)
+    this.poll() // instant refresh
 
     // Update local state immediately for responsive UI
     const session = this.sessions.find((s) => s.pid === pid)
@@ -707,13 +858,14 @@ class SoundSplitBridge {
       // Persist preference keyed by process name
       this.savePrefs(session.name, session.volume, session.muted)
     }
-    // Suppress poll overwrites for this PID for 2s
+    // Suppress poll overwrites for this PID for 800ms
     this.recentlyChanged.set(pid, Date.now())
     return true
   }
 
   setMute(pid: number, muted: boolean): boolean {
     this.sendCommand(`set_mute ${pid} ${muted ? '1' : '0'}`)
+    this.poll() // instant refresh
 
     const session = this.sessions.find((s) => s.pid === pid)
     if (session) {
@@ -721,7 +873,7 @@ class SoundSplitBridge {
       // Persist preference keyed by process name
       this.savePrefs(session.name, session.volume, session.muted)
     }
-    // Suppress poll overwrites for this PID for 2s
+    // Suppress poll overwrites for this PID for 800ms
     this.recentlyChanged.set(pid, Date.now())
     return true
   }
@@ -736,6 +888,7 @@ class SoundSplitBridge {
   setMaster(volume: number): boolean {
     const clamped = Math.max(0, Math.min(1, volume))
     this.sendCommand(`set_master ${clamped.toFixed(4)}`)
+    this.poll() // instant refresh
     this.masterVolume = clamped
     return true
   }
