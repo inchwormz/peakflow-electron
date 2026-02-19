@@ -15,7 +15,7 @@
  * State is persisted via config-store so settings survive app restarts.
  */
 
-import { BrowserWindow, screen } from 'electron'
+import { BrowserWindow, screen, powerMonitor } from 'electron'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
@@ -57,6 +57,8 @@ class FocusDimService {
   private trackingInterval: ReturnType<typeof setInterval> | null = null
   private _enabled = false
   private displayChangeHandler: (() => void) | null = null
+  private suspendHandler: (() => void) | null = null
+  private resumeHandler: (() => void) | null = null
 
   /** Read current config from the persistent store */
   private getConf(): FocusDimConfig {
@@ -185,15 +187,31 @@ class FocusDimService {
 
   private listenForDisplayChanges(): void {
     if (this.displayChangeHandler) return
+
     this.displayChangeHandler = (): void => {
       if (!this._enabled) return
       console.log('[FocusDim] Display configuration changed — rebuilding overlays')
       this.destroyAllOverlays()
       this.createOverlayWindows()
     }
+
+    this.suspendHandler = (): void => {
+      if (!this._enabled) return
+      console.log('[FocusDim] System suspend — destroying overlays')
+      this.destroyAllOverlays()
+    }
+
+    this.resumeHandler = (): void => {
+      if (!this._enabled) return
+      console.log('[FocusDim] System resume — rebuilding overlays')
+      this.createOverlayWindows()
+    }
+
     screen.on('display-added', this.displayChangeHandler)
     screen.on('display-removed', this.displayChangeHandler)
     screen.on('display-metrics-changed', this.displayChangeHandler)
+    powerMonitor.on('suspend', this.suspendHandler)
+    powerMonitor.on('resume', this.resumeHandler)
   }
 
   private stopListeningForDisplayChanges(): void {
@@ -201,7 +219,13 @@ class FocusDimService {
     screen.removeListener('display-added', this.displayChangeHandler)
     screen.removeListener('display-removed', this.displayChangeHandler)
     screen.removeListener('display-metrics-changed', this.displayChangeHandler)
+
+    if (this.suspendHandler) powerMonitor.removeListener('suspend', this.suspendHandler)
+    if (this.resumeHandler) powerMonitor.removeListener('resume', this.resumeHandler)
+
     this.displayChangeHandler = null
+    this.suspendHandler = null
+    this.resumeHandler = null
   }
 
   // ─── Overlay Window Management ───────────────────────────────────────────
