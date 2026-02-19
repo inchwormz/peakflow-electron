@@ -6,6 +6,7 @@
  */
 
 import { Tray, Menu, app, nativeImage } from 'electron'
+import { join } from 'path'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck } from './windows'
 import { checkForUpdates } from './services/auto-updater'
@@ -13,45 +14,22 @@ import { checkForUpdates } from './services/auto-updater'
 let tray: Tray | null = null
 
 /**
- * Build a 16x16 amber circle as a placeholder tray icon.
- * Uses raw RGBA pixel data to avoid needing an icon file at this stage.
+ * Load the PeakFlow tray icon from resources.
  */
-function createPlaceholderIcon(): Electron.NativeImage {
-  const size = 16
-  const buf = Buffer.alloc(size * size * 4) // RGBA
-
-  const cx = size / 2
-  const cy = size / 2
-  const r = size / 2 - 1 // 1px margin
-
-  // Amber: #f59e0b
-  const R = 0xf5
-  const G = 0x9e
-  const B = 0x0b
-  const A = 0xff
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const dx = x - cx + 0.5
-      const dy = y - cy + 0.5
-      const offset = (y * size + x) * 4
-
-      if (dx * dx + dy * dy <= r * r) {
-        buf[offset] = R
-        buf[offset + 1] = G
-        buf[offset + 2] = B
-        buf[offset + 3] = A
-      } else {
-        // Transparent
-        buf[offset] = 0
-        buf[offset + 1] = 0
-        buf[offset + 2] = 0
-        buf[offset + 3] = 0
-      }
-    }
+function getTrayIcon(): Electron.NativeImage {
+  const iconPath = join(app.getAppPath(), 'resources', 'tray-icon.png')
+  const icon = nativeImage.createFromPath(iconPath)
+  if (icon.isEmpty()) {
+    console.warn('[PeakFlow] Tray icon not found at', iconPath, '— using fallback')
+    // Fallback: try the full-size icon and resize it
+    const fallbackPath = join(app.getAppPath(), 'resources', 'icon.png')
+    const fallback = nativeImage.createFromPath(fallbackPath)
+    if (!fallback.isEmpty()) return fallback.resize({ width: 32, height: 32 })
+    // Last resort: try from process.resourcesPath (packaged app)
+    const pkgPath = join(process.resourcesPath, 'tray-icon.png')
+    return nativeImage.createFromPath(pkgPath)
   }
-
-  return nativeImage.createFromBuffer(buf, { width: size, height: size })
+  return icon
 }
 
 /**
@@ -140,7 +118,7 @@ export function createTray(): void {
     return
   }
 
-  const icon = createPlaceholderIcon()
+  const icon = getTrayIcon()
   tray = new Tray(icon)
 
   tray.setToolTip('PeakFlow \u2014 Mac-level productivity for Windows')

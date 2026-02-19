@@ -6,12 +6,26 @@
  * `-webkit-app-region: drag` CSS property.
  */
 
-import { app, BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { checkAccess } from './security/access-check'
 import { getConfig } from './services/config-store'
+
+/** Cached app icon shared across all windows */
+let _appIcon: Electron.NativeImage | undefined
+function getAppIcon(): Electron.NativeImage {
+  if (_appIcon) return _appIcon
+  // Try resources/icon.png first (dev), then process.resourcesPath (packaged)
+  const devPath = join(app.getAppPath(), 'resources', 'icon.png')
+  _appIcon = nativeImage.createFromPath(devPath)
+  if (_appIcon.isEmpty()) {
+    const pkgPath = join(process.resourcesPath, 'icon.png')
+    _appIcon = nativeImage.createFromPath(pkgPath)
+  }
+  return _appIcon
+}
 
 /** When true, the app is quitting and all windows should close for real */
 let appQuitting = false
@@ -150,6 +164,7 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
     fullscreen: overrides.fullscreen ?? false,
     transparent: overrides.transparent ?? false,
     focusable: overrides.focusable !== false,
+    icon: getAppIcon(),
     frame: false,
     show: false,
     backgroundColor: '#08080a',
