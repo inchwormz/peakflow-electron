@@ -25,10 +25,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
 extraResources:
-  - from: sidecar/dist/soundsplit_sidecar/
-    to: sidecar/
-    filter:
-      - '**/*'
   - from: resources/soundsplit-bridge.ps1
     to: soundsplit-bridge.ps1
   - from: resources/icon.png
@@ -41,4 +37,4 @@ asarUnpack:
 publish:
   provider: github
   owner: inchwormz
-  repo: Peakflow
+  repo: peakflow-releases
