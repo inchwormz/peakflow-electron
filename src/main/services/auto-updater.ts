@@ -1,154 +1,120 @@
 /**
- * Auto-updater service using electron-updater.
+ * Update checker using GitHub Releases API.
  *
- * Checks GitHub Releases for new versions and downloads/installs
- * updates silently. The user is notified via system tray dialog
- * when an update is ready to install.
+ * Compares app.getVersion() against the latest release tag
+ * on github.com/inchwormz/peakflow-releases. If a newer version exists,
+ * prompts the user to download it via their browser.
  *
- * Publish config comes from electron-builder.yml:
- *   provider: github, owner: inchwormz, repo: Peakflow
+ * This approach works with manually-uploaded releases (no latest.yml needed).
  */
 
-import { autoUpdater } from 'electron-updater'
-import { dialog, BrowserWindow } from 'electron'
+import { app, dialog, shell, net } from 'electron'
 
-// ─── Configuration ──────────────────────────────────────────────────────────
+// ─── Config ──────────────────────────────────────────────────────────────────
 
-/** Don't download automatically — let us control when */
-autoUpdater.autoDownload = false
+const GITHUB_OWNER = 'inchwormz'
+const GITHUB_REPO = 'peakflow-releases'
+const RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 
-/** Auto-install on quit so the update applies next launch */
-autoUpdater.autoInstallOnAppQuit = true
+// ─── State ───────────────────────────────────────────────────────────────────
 
-/** Suppress built-in Electron download progress dialog */
-autoUpdater.autoRunAppAfterInstall = true
-
-// ─── State ──────────────────────────────────────────────────────────────────
-
-let updateAvailable = false
-let updateDownloaded = false
 let checking = false
-/** Whether the current check was initiated silently (startup) vs user-triggered */
-let silentCheck = false
 
-// ─── Event handlers ─────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-autoUpdater.on('checking-for-update', () => {
-  console.log('[AutoUpdater] Checking for updates...')
-  checking = true
-})
+/**
+ * Parse a semver tag like "v1.2.3" or "1.2.3" into [major, minor, patch].
+ */
+function parseSemver(tag: string): [number, number, number] | null {
+  const match = tag.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) return null
+  return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])]
+}
 
-autoUpdater.on('update-available', (info) => {
-  console.log(`[AutoUpdater] Update available: v${info.version}`)
-  updateAvailable = true
-  checking = false
+/**
+ * Returns true if `remote` is newer than `local`.
+ */
+function isNewer(remote: string, local: string): boolean {
+  const r = parseSemver(remote)
+  const l = parseSemver(local)
+  if (!r || !l) return false
+  if (r[0] !== l[0]) return r[0] > l[0]
+  if (r[1] !== l[1]) return r[1] > l[1]
+  return r[2] > l[2]
+}
 
-  // Ask user if they want to download
-  dialog
-    .showMessageBox({
-      type: 'info',
-      title: 'Update Available',
-      message: `PeakFlow v${info.version} is available.`,
-      detail: 'Would you like to download and install it?',
-      buttons: ['Download', 'Later'],
-      defaultId: 0,
-      cancelId: 1
+/**
+ * Find the installer asset (.exe) from release assets.
+ * Matches patterns like "PeakFlow.Setup.1.0.0.exe" or "PeakFlowSetup-1.0.0.exe".
+ */
+function findInstallerUrl(assets: Array<{ name: string; browser_download_url: string }>): string | null {
+  const installer = assets.find(
+    (a) => a.name.toLowerCase().includes('peakflow') && a.name.toLowerCase().includes('setup') && a.name.endsWith('.exe')
+  )
+  return installer?.browser_download_url ?? null
+}
+
+/**
+ * Fetch the latest release info from GitHub.
+ */
+function fetchLatestRelease(): Promise<{
+  tag: string
+  name: string
+  htmlUrl: string
+  installerUrl: string | null
+}> {
+  return new Promise((resolve, reject) => {
+    const request = net.request({
+      url: RELEASES_API,
+      method: 'GET'
     })
-    .then((result) => {
-      if (result.response === 0) {
-        autoUpdater.downloadUpdate()
+
+    request.setHeader('Accept', 'application/vnd.github.v3+json')
+    request.setHeader('User-Agent', `PeakFlow/${app.getVersion()}`)
+
+    let body = ''
+
+    request.on('response', (response) => {
+      if (response.statusCode !== 200) {
+        reject(new Error(`GitHub API returned ${response.statusCode}`))
+        return
       }
+
+      response.on('data', (chunk) => {
+        body += chunk.toString()
+      })
+
+      response.on('end', () => {
+        try {
+          const data = JSON.parse(body)
+          if (!data.tag_name) throw new Error('No tag_name in GitHub response')
+          resolve({
+            tag: data.tag_name,
+            name: data.name || data.tag_name,
+            htmlUrl: data.html_url,
+            installerUrl: findInstallerUrl(data.assets || [])
+          })
+        } catch (err) {
+          reject(new Error('Failed to parse GitHub response'))
+        }
+      })
     })
-})
 
-autoUpdater.on('update-not-available', () => {
-  console.log('[AutoUpdater] No updates available')
-  const wasSilent = silentCheck
-  checking = false
-  // Show dialog only for user-initiated (non-silent) checks
-  if (!wasSilent) {
-    dialog.showMessageBox({
-      type: 'info',
-      title: 'No Updates',
-      message: 'You are running the latest version of PeakFlow.'
+    request.on('error', (err) => {
+      reject(err)
     })
-  }
-})
 
-autoUpdater.on('download-progress', (progress) => {
-  const pct = Math.round(progress.percent)
-  console.log(`[AutoUpdater] Download: ${pct}%`)
-
-  // Update a visible window's taskbar progress indicator
-  const focusedWin = BrowserWindow.getFocusedWindow()
-  const targetWin = focusedWin || BrowserWindow.getAllWindows().find((w) => w.isVisible())
-  if (targetWin) {
-    targetWin.setProgressBar(progress.percent / 100)
-  }
-})
-
-autoUpdater.on('update-downloaded', () => {
-  console.log('[AutoUpdater] Update downloaded — ready to install')
-  updateDownloaded = true
-
-  // Clear progress bar on all windows
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.setProgressBar(-1)
-    }
-  }
-
-  // Prompt user to restart
-  dialog
-    .showMessageBox({
-      type: 'info',
-      title: 'Update Ready',
-      message: 'PeakFlow update has been downloaded.',
-      detail: 'Restart now to apply the update?',
-      buttons: ['Restart Now', 'Later'],
-      defaultId: 0,
-      cancelId: 1
-    })
-    .then((result) => {
-      if (result.response === 0) {
-        autoUpdater.quitAndInstall()
-      }
-    })
-})
-
-autoUpdater.on('error', (err) => {
-  console.error('[AutoUpdater] Error:', err.message)
-  checking = false
-})
+    request.end()
+  })
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Manually trigger an update check.
- * Called from the tray "Check for Updates" menu item.
- *
- * If already checking or an update is downloaded, shows appropriate dialog.
+ * Check for updates. If `silent` is true (startup check), only shows a dialog
+ * when an update IS available.
  */
-export function checkForUpdates(silent = false): void {
-  if (updateDownloaded) {
-    dialog
-      .showMessageBox({
-        type: 'info',
-        title: 'Update Ready',
-        message: 'An update is already downloaded.',
-        detail: 'Restart now to apply the update?',
-        buttons: ['Restart Now', 'Later'],
-        defaultId: 0,
-        cancelId: 1
-      })
-      .then((result) => {
-        if (result.response === 0) {
-          autoUpdater.quitAndInstall()
-        }
-      })
-    return
-  }
-
+export async function checkForUpdates(silent = false): Promise<void> {
   if (checking) {
     if (!silent) {
       dialog.showMessageBox({
@@ -160,28 +126,63 @@ export function checkForUpdates(silent = false): void {
     return
   }
 
-  silentCheck = silent
-  autoUpdater
-    .checkForUpdates()
-    .catch((err) => {
-      console.error('[AutoUpdater] Check failed:', err.message)
+  checking = true
+  const currentVersion = app.getVersion()
+  console.log(`[AutoUpdater] Checking for updates... (current: v${currentVersion})`)
+
+  try {
+    const release = await fetchLatestRelease()
+    console.log(`[AutoUpdater] Latest release: ${release.tag}`)
+
+    if (isNewer(release.tag, currentVersion)) {
+      // Update available
+      console.log(`[AutoUpdater] Update available: ${release.tag}`)
+      const result = await dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Available',
+        message: `PeakFlow ${release.tag} is available (you have v${currentVersion}).`,
+        detail: 'Would you like to download the update?',
+        buttons: ['Download', 'Later'],
+        defaultId: 0,
+        cancelId: 1
+      })
+
+      if (result.response === 0) {
+        // Open installer download or release page
+        const url = release.installerUrl || release.htmlUrl
+        shell.openExternal(url)
+      }
+    } else {
+      // Up to date
+      console.log('[AutoUpdater] No updates available — you are on the latest version')
       if (!silent) {
         dialog.showMessageBox({
-          type: 'error',
-          title: 'Update Check Failed',
-          message: 'Could not check for updates.',
-          detail: err.message
+          type: 'info',
+          title: 'No Updates',
+          message: `You are running the latest version of PeakFlow (v${currentVersion}).`
         })
       }
-    })
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[AutoUpdater] Check failed:', message)
+    if (!silent) {
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'Update Check Failed',
+        message: 'Could not check for updates.',
+        detail: message
+      })
+    }
+  } finally {
+    checking = false
+  }
 }
 
 /**
- * Initialize the auto-updater. Runs a silent check on startup.
- * Subsequent checks can be triggered manually from the tray.
+ * Initialize the update checker. Runs a silent check on startup.
  */
 export function initAutoUpdater(): void {
-  // Check for updates silently 5 seconds after startup
   setTimeout(() => {
     checkForUpdates(true)
   }, 5000)
@@ -192,10 +193,6 @@ export function initAutoUpdater(): void {
 /**
  * Get the current update status for display purposes.
  */
-export function getUpdateStatus(): {
-  updateAvailable: boolean
-  updateDownloaded: boolean
-  checking: boolean
-} {
-  return { updateAvailable, updateDownloaded, checking }
+export function getUpdateStatus(): { checking: boolean } {
+  return { checking }
 }
