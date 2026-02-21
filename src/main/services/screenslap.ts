@@ -144,6 +144,11 @@ class ScreenSlapService {
    * Open the meeting link in the default browser and dismiss.
    */
   joinMeeting(url: string): void {
+    // Only allow https:// URLs to prevent protocol handler attacks (file://, ms-msdt:, etc.)
+    if (!url.startsWith('https://')) {
+      console.warn('[ScreenSlap] Blocked non-HTTPS meeting link:', url)
+      return
+    }
     shell.openExternal(url).catch((err) => {
       console.error('[ScreenSlap] Failed to open meeting link:', err)
     })
@@ -324,7 +329,7 @@ class ScreenSlapService {
         backgroundColor: '#08080a',
         webPreferences: {
           preload: preloadPath,
-          sandbox: false,
+          sandbox: true,
           contextIsolation: true,
           nodeIntegration: false
         }
