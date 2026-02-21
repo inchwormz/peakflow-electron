@@ -18,7 +18,6 @@ import { storeOAuthToken, getOAuthToken, deleteOAuthToken } from '../security/cr
 
 const GOOGLE_CLIENT_ID =
   '366059555078-cqgu209k7m9knq9qm9b2oftfk1cmbcn9.apps.googleusercontent.com'
-const GOOGLE_CLIENT_SECRET = 'REDACTED_GOOGLE_SECRET'
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const REDIRECT_PORT = 28755
@@ -64,6 +63,18 @@ interface GoogleTokens {
   scope?: string
   /** Epoch ms when access_token expires */
   expires_at?: number
+}
+
+// ─── PKCE Helpers ──────────────────────────────────────────────────────────
+
+/** Generate a cryptographically random code_verifier for PKCE (43–128 chars, base64url). */
+function generateCodeVerifier(): string {
+  return crypto.randomBytes(32).toString('base64url')
+}
+
+/** Derive the code_challenge from a code_verifier using SHA-256 + base64url. */
+function generateCodeChallenge(verifier: string): string {
+  return crypto.createHash('sha256').update(verifier).digest('base64url')
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -160,6 +171,8 @@ class GoogleCalendarService {
       let authWindow: BrowserWindow | null = null
       let resolved = false
       const oauthState = crypto.randomBytes(16).toString('hex')
+      const codeVerifier = generateCodeVerifier()
+      const codeChallenge = generateCodeChallenge(codeVerifier)
 
       const done = (status: CalendarStatus): void => {
         if (resolved) return
@@ -223,7 +236,7 @@ class GoogleCalendarService {
             body: new URLSearchParams({
               code,
               client_id: GOOGLE_CLIENT_ID,
-              client_secret: GOOGLE_CLIENT_SECRET,
+              code_verifier: codeVerifier,
               redirect_uri: REDIRECT_URI,
               grant_type: 'authorization_code'
             })
@@ -289,7 +302,9 @@ class GoogleCalendarService {
           `&scope=${encodeURIComponent(SCOPES)}` +
           `&access_type=offline` +
           `&prompt=consent` +
-          `&state=${oauthState}`
+          `&state=${oauthState}` +
+          `&code_challenge=${codeChallenge}` +
+          `&code_challenge_method=S256`
 
         authWindow = new BrowserWindow({
           width: 600,
@@ -543,7 +558,6 @@ class GoogleCalendarService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
           refresh_token: this.tokens.refresh_token,
           grant_type: 'refresh_token'
         })
