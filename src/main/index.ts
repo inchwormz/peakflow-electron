@@ -9,7 +9,7 @@
  */
 
 import { app, BrowserWindow, protocol, net, session } from 'electron'
-import { join } from 'path'
+import { join, sep, normalize } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
@@ -79,9 +79,26 @@ if (!gotLock) {
 
     // Custom protocol for serving QuickBoard images without IPC overhead
     protocol.handle('qboard', (request) => {
-      const filename = request.url.replace(/^qboard:\/\//, '')
-      const imagePath = join(app.getPath('userData'), 'quickboard-images', filename)
+      const filename = decodeURIComponent(request.url.replace(/^qboard:\/\//, ''))
+      const imagesDir = join(app.getPath('userData'), 'quickboard-images')
+      const imagePath = normalize(join(imagesDir, filename))
+      // Prevent path traversal — resolved path must stay inside imagesDir
+      if (!imagePath.startsWith(imagesDir + sep)) {
+        return new Response('Forbidden', { status: 403 })
+      }
       return net.fetch('file://' + imagePath)
+    })
+
+    // Content Security Policy — restrict renderer capabilities
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: qboard: file:; media-src 'self' mediastream:; connect-src 'self' https:;"
+          ]
+        }
+      })
     })
 
     // Initialize core systems

@@ -10,6 +10,7 @@
 
 import { BrowserWindow } from 'electron'
 import http from 'node:http'
+import crypto from 'node:crypto'
 import { IPC_SEND } from '@shared/ipc-types'
 import { storeOAuthToken, getOAuthToken, deleteOAuthToken } from '../security/credentials'
 
@@ -158,6 +159,7 @@ class GoogleCalendarService {
     return new Promise((resolve) => {
       let authWindow: BrowserWindow | null = null
       let resolved = false
+      const oauthState = crypto.randomBytes(16).toString('hex')
 
       const done = (status: CalendarStatus): void => {
         if (resolved) return
@@ -201,6 +203,15 @@ class GoogleCalendarService {
         if (!code) {
           res.writeHead(400)
           res.end('Missing authorization code')
+          return
+        }
+
+        // Validate state parameter (CSRF protection)
+        const returnedState = url.searchParams.get('state')
+        if (returnedState !== oauthState) {
+          res.writeHead(400, { 'Content-Type': 'text/html' })
+          res.end('<html><body><h2>Authentication failed</h2><p>State mismatch. Close this window and try again.</p></body></html>')
+          done({ connected: false, email: null, lastFetched: null, error: 'State mismatch' })
           return
         }
 
@@ -277,14 +288,33 @@ class GoogleCalendarService {
           `&response_type=code` +
           `&scope=${encodeURIComponent(SCOPES)}` +
           `&access_type=offline` +
-          `&prompt=consent`
+          `&prompt=consent` +
+          `&state=${oauthState}`
 
         authWindow = new BrowserWindow({
           width: 600,
           height: 700,
           title: 'Connect Google Calendar',
-          autoHideMenuBar: true
+          autoHideMenuBar: true,
+          webPreferences: {
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false
+          }
         })
+
+        // Restrict navigation to known OAuth domains
+        authWindow.webContents.on('will-navigate', (event, navUrl) => {
+          try {
+            const hostname = new URL(navUrl).hostname
+            const allowed = ['accounts.google.com', 'oauth2.googleapis.com', 'localhost', 'myaccount.google.com']
+            if (!allowed.includes(hostname)) {
+              console.warn('[Calendar] Blocked navigation to:', hostname)
+              event.preventDefault()
+            }
+          } catch { event.preventDefault() }
+        })
+
         authWindow.loadURL(authUrl)
 
         authWindow.on('closed', () => {

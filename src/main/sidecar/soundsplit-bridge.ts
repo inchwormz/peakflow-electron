@@ -24,8 +24,8 @@ import { ToolId } from '@shared/tool-ids'
 import { getConfig } from '../services/config-store'
 import type { SoundSplitConfig } from '@shared/config-schemas'
 
-// Temporary debug log to file (remove after fixing slider issue)
-const DEBUG_LOG = 'C:\\Users\\OEM\\soundsplit-debug.log'
+// Debug logging — writes to app's userData dir, not a hardcoded path
+const DEBUG_LOG = join(app.getPath('userData'), 'soundsplit-debug.log')
 function dbg(msg: string): void {
   const ts = new Date().toISOString().slice(11, 23)
   try { appendFileSync(DEBUG_LOG, `[${ts}] ${msg}\n`) } catch { }

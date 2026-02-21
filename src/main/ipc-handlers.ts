@@ -412,10 +412,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_VOLUME,
     (_event, pid: number, volume: number): boolean => {
-      // DEBUG: file-based logging to diagnose slider issue
-      try {
-        require('fs').appendFileSync('C:\\Users\\OEM\\soundsplit-debug.log', `[IPC] SET_VOLUME pid=${pid} vol=${volume}\n`)
-      } catch {}
       return getSoundSplitBridge().setVolume(pid, volume)
     }
   )

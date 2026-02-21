@@ -161,8 +161,26 @@ class TodoistService {
           width: 600,
           height: 700,
           title: 'Connect to Todoist',
-          autoHideMenuBar: true
+          autoHideMenuBar: true,
+          webPreferences: {
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false
+          }
         })
+
+        // Restrict navigation to known Todoist OAuth domains
+        authWindow.webContents.on('will-navigate', (event, navUrl) => {
+          try {
+            const hostname = new URL(navUrl).hostname
+            const allowed = ['todoist.com', 'api.todoist.com', 'localhost']
+            if (!allowed.some((d) => hostname === d || hostname.endsWith('.' + d))) {
+              console.warn('[Todoist] Blocked navigation to:', hostname)
+              event.preventDefault()
+            }
+          } catch { event.preventDefault() }
+        })
+
         authWindow.loadURL(authUrl)
 
         authWindow.on('closed', () => {

@@ -148,9 +148,13 @@ export async function checkForUpdates(silent = false): Promise<void> {
       })
 
       if (result.response === 0) {
-        // Open installer download or release page
+        // Open installer download or release page — only allow HTTPS
         const url = release.installerUrl || release.htmlUrl
-        shell.openExternal(url)
+        if (url.startsWith('https://')) {
+          shell.openExternal(url)
+        } else {
+          console.warn('[AutoUpdater] Blocked non-HTTPS URL:', url)
+        }
       }
     } else {
       // Up to date
