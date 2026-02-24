@@ -4,7 +4,27 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Site Blocked — PeakFlow Focus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --yellow: #ffe17c;
+      --charcoal: #171e19;
+      --sage: #b7c6c2;
+      --white: #ffffff;
+      --black: #000000;
+      --gray-bg: #f4f4f5;
+      --border: 2px solid #000000;
+      --shadow-sm: 4px 4px 0px 0px #000000;
+      --shadow-md: 8px 8px 0px 0px #000000;
+      --shadow-lg: 12px 12px 0px 0px #000000;
+      --radius: 0.75rem;
+      --font-heading: 'Space Grotesk', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+      --transition-bounce: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
@@ -12,104 +32,204 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f0f0f;
-      color: #e5e5e5;
+      font-family: var(--font-body);
+      background: var(--white);
+      color: var(--black);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Dot pattern background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(0,0,0,0.08) 1px, transparent 1px);
+      background-size: 24px 24px;
+      pointer-events: none;
+      z-index: 0;
     }
 
     .container {
       text-align: center;
-      max-width: 480px;
+      max-width: 520px;
       padding: 48px 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Neo-brutalist card */
+    .block-card {
+      background: var(--white);
+      border: var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      padding: 48px 40px 40px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Yellow accent bar at top */
+    .block-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 6px;
+      background: var(--yellow);
     }
 
     .icon {
-      font-size: 64px;
+      width: 72px;
+      height: 72px;
+      background: var(--yellow);
+      border: var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
       margin-bottom: 24px;
-      opacity: 0.8;
     }
 
     h1 {
-      font-size: 24px;
-      font-weight: 600;
+      font-family: var(--font-heading);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
       margin-bottom: 12px;
-      color: #fff;
+      color: var(--charcoal);
     }
 
     .site-name {
-      font-size: 16px;
-      color: #a3a3a3;
+      font-family: var(--font-body);
+      font-size: 15px;
+      color: #555;
       margin-bottom: 32px;
+      font-weight: 500;
     }
 
     .site-name strong {
-      color: #f87171;
+      color: var(--charcoal);
+      background: var(--yellow);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    /* Timer display */
+    .timer-block {
+      background: var(--charcoal);
+      border: var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 20px 32px;
+      margin-bottom: 8px;
+      display: inline-block;
     }
 
     .timer {
-      font-size: 40px;
+      font-family: var(--font-heading);
+      font-size: 48px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
-      color: #22c55e;
-      margin-bottom: 8px;
+      color: var(--yellow);
+      letter-spacing: 0.02em;
     }
 
     .timer-label {
-      font-size: 13px;
-      color: #737373;
+      font-family: var(--font-heading);
+      font-size: 11px;
+      color: var(--sage);
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 40px;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+      margin-bottom: 32px;
     }
 
     .back-btn {
-      display: inline-block;
-      padding: 12px 28px;
-      background: #262626;
-      color: #e5e5e5;
-      border: 1px solid #404040;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 32px;
+      background: var(--yellow);
+      color: var(--charcoal);
+      border: var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      font-family: var(--font-heading);
+      font-size: 15px;
+      font-weight: 600;
       cursor: pointer;
       text-decoration: none;
-      transition: background 0.15s;
+      transition: var(--transition-bounce);
     }
 
     .back-btn:hover {
-      background: #333;
+      transform: translate(-2px, -2px);
+      box-shadow: 6px 6px 0px 0px #000000;
+    }
+
+    .back-btn:active {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0px 0px #000000;
     }
 
     .brand {
-      margin-top: 48px;
+      margin-top: 32px;
+      font-family: var(--font-heading);
       font-size: 12px;
-      color: #525252;
+      font-weight: 600;
+      color: var(--sage);
+      letter-spacing: 0.05em;
+    }
+
+    /* Entrance animation */
+    .block-card {
+      animation: pop-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    }
+
+    @keyframes pop-in {
+      from {
+        opacity: 0;
+        transform: scale(0.92) translateY(16px);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="icon">&#128683;</div>
-    <h1>This site is blocked</h1>
-    <p class="site-name">
-      <strong id="blocked-domain">—</strong> is on your distraction list
-    </p>
-    <div class="timer" id="timer">--:--</div>
-    <div class="timer-label">remaining in focus session</div>
-    <a href="javascript:history.back()" class="back-btn">Back to work</a>
-    <p class="brand">PeakFlow Focus</p>
+    <div class="block-card">
+      <div class="icon">&#9995;</div>
+      <h1>Stay focused.</h1>
+      <p class="site-name">
+        <strong id="blocked-domain">—</strong> is on your block list
+      </p>
+      <div class="timer-block">
+        <div class="timer" id="timer">--:--</div>
+      </div>
+      <div class="timer-label">remaining in session</div>
+      <a href="javascript:history.back()" class="back-btn">&#8592; Back to work</a>
+      <p class="brand">PeakFlow Focus</p>
+    </div>
   </div>
 
   <script>
-    const params = new URLSearchParams(window.location.search);
-    const site = params.get('site') || 'this site';
-    let remaining = parseInt(params.get('remaining') || '0', 10);
+    var params = new URLSearchParams(window.location.search);
+    var site = params.get('site') || 'this site';
+    var remaining = parseInt(params.get('remaining') || '0', 10);
 
     document.getElementById('blocked-domain').textContent = site;
 
     function formatTime(secs) {
-      const m = Math.floor(secs / 60);
-      const s = secs % 60;
+      var m = Math.floor(secs / 60);
+      var s = secs % 60;
       return m + ':' + String(s).padStart(2, '0');
     }
 

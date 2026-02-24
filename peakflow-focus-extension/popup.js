@@ -17,18 +17,21 @@ function getModeText(state) {
 }
 
 function render(state, isConnected) {
-  var dot = document.getElementById('status-dot');
+  var pill = document.getElementById('status-pill');
+  var statusText = document.getElementById('status-text');
   var connView = document.getElementById('connected-view');
   var discView = document.getElementById('disconnected-view');
 
   if (!isConnected) {
-    dot.className = 'status-dot disconnected';
+    pill.className = 'status-pill disconnected';
+    statusText.textContent = 'Off';
     connView.style.display = 'none';
     discView.style.display = 'block';
     return;
   }
 
-  dot.className = 'status-dot connected';
+  pill.className = 'status-pill connected';
+  statusText.textContent = 'Live';
   connView.style.display = 'block';
   discView.style.display = 'none';
 
@@ -46,7 +49,11 @@ function render(state, isConnected) {
     emptyEl.style.display = 'none';
     state.sites.forEach(function (site) {
       var li = document.createElement('li');
-      li.textContent = site;
+      var icon = document.createElement('span');
+      icon.className = 'block-icon';
+      icon.textContent = '\u270B';
+      li.appendChild(icon);
+      li.appendChild(document.createTextNode(site));
       listEl.appendChild(li);
     });
   } else {

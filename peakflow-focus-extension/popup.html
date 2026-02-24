@@ -2,121 +2,281 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --yellow: #ffe17c;
+      --charcoal: #171e19;
+      --sage: #b7c6c2;
+      --white: #ffffff;
+      --black: #000000;
+      --gray-bg: #f4f4f5;
+      --border: 2px solid #000000;
+      --shadow-sm: 4px 4px 0px 0px #000000;
+      --radius: 0.75rem;
+      --font-heading: 'Space Grotesk', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+      --transition-bounce: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 280px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #141414;
-      color: #e5e5e5;
+      width: 300px;
+      font-family: var(--font-body);
+      background: var(--white);
+      color: var(--black);
+      position: relative;
+    }
+
+    /* Dot pattern bg */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(0,0,0,0.05) 1px, transparent 1px);
+      background-size: 20px 20px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .popup {
+      position: relative;
+      z-index: 1;
       padding: 16px;
     }
 
+    /* Header */
     .header {
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
       margin-bottom: 16px;
     }
 
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     .header h1 {
-      font-size: 14px;
+      font-family: var(--font-heading);
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--charcoal);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 100px;
+      font-family: var(--font-heading);
+      font-size: 10px;
       font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border: 1.5px solid;
+    }
+
+    .status-pill.connected {
+      background: #e8fde8;
+      color: #1a7a1a;
+      border-color: #1a7a1a;
+    }
+
+    .status-pill.disconnected {
+      background: #fde8e8;
+      color: #b91c1c;
+      border-color: #b91c1c;
     }
 
     .status-dot {
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
-      flex-shrink: 0;
     }
 
-    .status-dot.connected { background: #22c55e; }
-    .status-dot.disconnected { background: #ef4444; }
+    .connected .status-dot { background: #1a7a1a; }
+    .disconnected .status-dot { background: #b91c1c; }
 
-    .mode {
-      font-size: 12px;
-      color: #a3a3a3;
-      margin-bottom: 12px;
+    /* Timer card */
+    .timer-card {
+      background: var(--charcoal);
+      border: var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 16px 20px;
+      text-align: center;
+      margin-bottom: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Yellow top accent */
+    .timer-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--yellow);
+    }
+
+    .mode-label {
+      font-family: var(--font-heading);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--sage);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 4px;
     }
 
     .timer-display {
-      font-size: 32px;
+      font-family: var(--font-heading);
+      font-size: 36px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
-      text-align: center;
-      padding: 12px 0;
-      margin-bottom: 12px;
+      letter-spacing: 0.02em;
     }
 
-    .timer-display.work { color: #22c55e; }
-    .timer-display.break { color: #60a5fa; }
-    .timer-display.idle { color: #525252; }
+    .timer-display.work { color: var(--yellow); }
+    .timer-display.break { color: var(--sage); }
+    .timer-display.idle { color: #555; }
 
+    /* Divider */
     .divider {
       border: none;
-      border-top: 1px solid #262626;
-      margin: 12px 0;
+      border-top: 1.5px dashed rgba(0,0,0,0.15);
+      margin: 14px 0 12px;
     }
 
+    /* Section title */
     .section-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #737373;
+      font-family: var(--font-heading);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--charcoal);
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.1em;
       margin-bottom: 8px;
     }
 
+    /* Site list */
     .site-list {
       list-style: none;
-      max-height: 120px;
+      max-height: 130px;
       overflow-y: auto;
     }
 
     .site-list li {
-      font-size: 12px;
-      color: #a3a3a3;
-      padding: 3px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--charcoal);
+      padding: 5px 8px;
+      border-radius: 6px;
+      transition: background 0.15s;
+    }
+
+    .site-list li:hover {
+      background: var(--gray-bg);
+    }
+
+    .site-list li .block-icon {
+      width: 20px;
+      height: 20px;
+      background: var(--yellow);
+      border: 1.5px solid var(--black);
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
     }
 
     .empty-state {
       font-size: 12px;
-      color: #525252;
+      color: var(--sage);
       font-style: italic;
+      padding: 4px 0;
     }
 
+    /* Disconnected view */
     .disconnected-msg {
       text-align: center;
-      padding: 20px 0;
-      color: #a3a3a3;
-      font-size: 13px;
+      padding: 24px 12px;
     }
 
-    .disconnected-msg .icon { font-size: 24px; margin-bottom: 8px; }
+    .disc-icon {
+      width: 56px;
+      height: 56px;
+      background: var(--gray-bg);
+      border: var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 12px;
+    }
+
+    .disc-title {
+      font-family: var(--font-heading);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--charcoal);
+      margin-bottom: 4px;
+    }
+
+    .disc-sub {
+      font-size: 12px;
+      color: var(--sage);
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="status-dot" id="status-dot"></div>
-    <h1>PeakFlow Focus</h1>
-  </div>
+  <div class="popup">
+    <div class="header">
+      <div class="header-left">
+        <h1>PeakFlow Focus</h1>
+      </div>
+      <div class="status-pill" id="status-pill">
+        <span class="status-dot"></span>
+        <span id="status-text">—</span>
+      </div>
+    </div>
 
-  <div id="connected-view">
-    <div class="mode" id="mode-text">—</div>
-    <div class="timer-display idle" id="timer-display">--:--</div>
-    <hr class="divider">
-    <div class="section-title">Blocked sites</div>
-    <ul class="site-list" id="site-list"></ul>
-    <div class="empty-state" id="empty-state" style="display:none">No sites blocked right now</div>
-  </div>
+    <div id="connected-view">
+      <div class="timer-card">
+        <div class="mode-label" id="mode-text">—</div>
+        <div class="timer-display idle" id="timer-display">--:--</div>
+      </div>
 
-  <div id="disconnected-view" style="display:none">
-    <div class="disconnected-msg">
-      <div class="icon">&#128268;</div>
-      <div>PeakFlow is not running</div>
-      <div style="font-size:11px;color:#525252;margin-top:4px">Launch PeakFlow to enable site blocking</div>
+      <hr class="divider">
+      <div class="section-title">Blocked sites</div>
+      <ul class="site-list" id="site-list"></ul>
+      <div class="empty-state" id="empty-state" style="display:none">No sites blocked right now</div>
+    </div>
+
+    <div id="disconnected-view" style="display:none">
+      <div class="disconnected-msg">
+        <div class="disc-icon">&#128268;</div>
+        <div class="disc-title">PeakFlow is not running</div>
+        <div class="disc-sub">Launch PeakFlow to enable site blocking</div>
+      </div>
     </div>
   </div>
 
