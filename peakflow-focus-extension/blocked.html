@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Blocked — PeakFlow Focus</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e5e5e5;
+    }
+
+    .container {
+      text-align: center;
+      max-width: 480px;
+      padding: 48px 32px;
+    }
+
+    .icon {
+      font-size: 64px;
+      margin-bottom: 24px;
+      opacity: 0.8;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #fff;
+    }
+
+    .site-name {
+      font-size: 16px;
+      color: #a3a3a3;
+      margin-bottom: 32px;
+    }
+
+    .site-name strong {
+      color: #f87171;
+    }
+
+    .timer {
+      font-size: 40px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #22c55e;
+      margin-bottom: 8px;
+    }
+
+    .timer-label {
+      font-size: 13px;
+      color: #737373;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 40px;
+    }
+
+    .back-btn {
+      display: inline-block;
+      padding: 12px 28px;
+      background: #262626;
+      color: #e5e5e5;
+      border: 1px solid #404040;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+
+    .back-btn:hover {
+      background: #333;
+    }
+
+    .brand {
+      margin-top: 48px;
+      font-size: 12px;
+      color: #525252;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">&#128683;</div>
+    <h1>This site is blocked</h1>
+    <p class="site-name">
+      <strong id="blocked-domain">—</strong> is on your distraction list
+    </p>
+    <div class="timer" id="timer">--:--</div>
+    <div class="timer-label">remaining in focus session</div>
+    <a href="javascript:history.back()" class="back-btn">Back to work</a>
+    <p class="brand">PeakFlow Focus</p>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const site = params.get('site') || 'this site';
+    let remaining = parseInt(params.get('remaining') || '0', 10);
+
+    document.getElementById('blocked-domain').textContent = site;
+
+    function formatTime(secs) {
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      return m + ':' + String(s).padStart(2, '0');
+    }
+
+    function tick() {
+      document.getElementById('timer').textContent = formatTime(remaining);
+      if (remaining > 0) {
+        remaining--;
+        setTimeout(tick, 1000);
+      }
+    }
+
+    tick();
+  </script>
+</body>
+</html>
