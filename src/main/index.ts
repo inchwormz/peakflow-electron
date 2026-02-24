@@ -21,6 +21,7 @@ import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
 import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
 import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
+import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
 import { setAppQuitting } from './windows'
 
@@ -112,6 +113,7 @@ if (!gotLock) {
     initLiquidFocus()
     initSoundSplit()
     initTodoist()
+    initExtensionServer()
     initAutoUpdater()
 
     console.log('[PeakFlow] Core started — running in system tray')
@@ -128,6 +130,7 @@ if (!gotLock) {
   app.on('before-quit', () => {
     setAppQuitting(true)
     console.log('[PeakFlow] Shutting down...')
+    destroyExtensionServer()
     destroyTodoist()
     destroySoundSplit()
     destroyLiquidFocus()
