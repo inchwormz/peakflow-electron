@@ -139,14 +139,14 @@ export function SoundSplit(): React.JSX.Element {
   }, [])
 
   const handleToggleMute = useCallback((pid: number) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.pid === pid ? { ...s, muted: !s.muted } : s))
-    )
-    const session = sessions.find((s) => s.pid === pid)
-    if (session) {
-      window.peakflow.invoke(IPC_INVOKE.SOUNDSPLIT_SET_MUTE, pid, !session.muted)
-    }
-  }, [sessions])
+    setSessions((prev) => {
+      const session = prev.find((s) => s.pid === pid)
+      if (session) {
+        window.peakflow.invoke(IPC_INVOKE.SOUNDSPLIT_SET_MUTE, pid, !session.muted)
+      }
+      return prev.map((s) => (s.pid === pid ? { ...s, muted: !s.muted } : s))
+    })
+  }, [])
 
   // ── Render ──────────────────────────────────────────────────────────────
 

@@ -195,7 +195,6 @@ class ClipboardService {
         if (hash !== this.lastTextHash) {
           this.lastTextHash = hash
           this.handleNewText(text)
-          return
         }
       }
 
@@ -322,19 +321,28 @@ class ClipboardService {
     const conf = this.getConf()
     const maxEntries = conf.max_entries
 
-    const pinned = this.history.filter((h) => h.pinned)
-    const unpinned = this.history.filter((h) => !h.pinned)
+    let unpinnedCount = 0
+    for (const item of this.history) {
+      if (!item.pinned) unpinnedCount++
+    }
 
-    if (unpinned.length > maxEntries) {
-      const keptUnpinned = unpinned.slice(0, maxEntries)
-      const removedUnpinned = unpinned.slice(maxEntries)
+    if (unpinnedCount <= maxEntries) return
 
-      for (const item of removedUnpinned) {
+    // Keep all pinned + first maxEntries unpinned, preserving original order
+    let kept = 0
+    const result: ClipboardItem[] = []
+    for (const item of this.history) {
+      if (item.pinned) {
+        result.push(item)
+      } else if (kept < maxEntries) {
+        result.push(item)
+        kept++
+      } else {
         this.deleteImageFile(item)
       }
-
-      this.history = [...pinned, ...keptUnpinned]
     }
+
+    this.history = result
   }
 
   // ─── IPC broadcasting ──────────────────────────────────────────────────
