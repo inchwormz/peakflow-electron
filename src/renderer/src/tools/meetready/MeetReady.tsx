@@ -276,6 +276,16 @@ export function MeetReady(): React.JSX.Element {
     }
   }
 
+  const disconnectCalendar = async (): Promise<void> => {
+    try {
+      const result = (await api.invoke(IPC_INVOKE.CALENDAR_DISCONNECT)) as CalendarStatus
+      setCalStatus(result)
+      setEvents([])
+    } catch (err) {
+      console.error('[MeetReady] Disconnect failed:', err)
+    }
+  }
+
   const openSettings = (): void => {
     // Snapshot current device selections for pending edits
     setPendingCamId(config.default_camera)
@@ -529,9 +539,23 @@ export function MeetReady(): React.JSX.Element {
 
             {/* Calendar status */}
             {calStatus.connected ? (
-              <div style={styles.calStatus}>
-                &#10003; Google Calendar connected
-              </div>
+              <>
+                <div style={styles.calStatus}>
+                  &#10003; Connected{calStatus.email ? ` as ${calStatus.email}` : ''}
+                </div>
+                <button
+                  style={styles.disconnectBtn}
+                  onClick={disconnectCalendar}
+                  onMouseEnter={(e) => {
+                    ;(e.target as HTMLElement).style.background = 'rgba(240,88,88,0.12)'
+                  }}
+                  onMouseLeave={(e) => {
+                    ;(e.target as HTMLElement).style.background = 'transparent'
+                  }}
+                >
+                  Disconnect Calendar
+                </button>
+              </>
             ) : (
               <>
                 <div style={styles.calStatusOff}>Not connected</div>
@@ -907,6 +931,20 @@ const styles: Record<string, CSSProperties> = {
     transition: 'all 0.2s',
     outline: 'none',
     width: '100%'
+  },
+
+  disconnectBtn: {
+    padding: '8px 16px',
+    width: '100%',
+    border: `1px solid rgba(240,88,88,0.25)`,
+    borderRadius: 10,
+    background: 'transparent',
+    color: DS.error,
+    fontFamily: 'inherit',
+    fontSize: 11,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    outline: 'none'
   },
 
   // Drag region base style — left/right overridden per view
