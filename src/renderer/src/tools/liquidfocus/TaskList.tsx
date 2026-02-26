@@ -112,6 +112,7 @@ export function TaskList({
       // Import each task that isn't already imported
       for (const tt of todoistTasks) {
         if (existingTodoistIds.has(tt.id)) continue
+        existingTodoistIds.add(tt.id)
 
         await onAdd({
           name: tt.content,
@@ -125,8 +126,9 @@ export function TaskList({
       }
     } catch (err) {
       console.warn('[TaskList] Todoist import failed:', err)
+    } finally {
+      setImporting(false)
     }
-    setImporting(false)
   }, [tasks, onAdd])
 
   // ── Auto-import from Todoist on mount if connected and no Todoist tasks exist ──

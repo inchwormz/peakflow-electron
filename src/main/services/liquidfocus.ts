@@ -95,6 +95,11 @@ class LiquidFocusService {
     // Restore cycle state from persistent store
     this.pomodorosCompleted = (this.store.get('pomodorosCompleted', 0) as number) || 0
     this.activeTaskIndex = (this.store.get('activeTaskIndex', -1) as number) ?? -1
+    // Bounds-check against actual tasks
+    const tasks = this.getTasks()
+    if (this.activeTaskIndex >= tasks.length) {
+      this.activeTaskIndex = -1
+    }
   }
 
   private getConfigSafe(): LiquidFocusConfig {
@@ -205,11 +210,12 @@ class LiquidFocusService {
   }
 
   private tick(): void {
-    if (this.remaining > 0) {
-      this.remaining--
-      this.broadcastState()
-    } else {
+    this.remaining--
+    if (this.remaining <= 0) {
+      this.remaining = 0
       this.finishPhase()
+    } else {
+      this.broadcastState()
     }
   }
 
@@ -307,6 +313,7 @@ class LiquidFocusService {
     // Auto-select if first task
     if (tasks.filter((t) => !t.done).length === 1) {
       this.activeTaskIndex = tasks.length - 1
+      this.store.set('activeTaskIndex', this.activeTaskIndex)
     }
 
     return tasks
@@ -333,6 +340,7 @@ class LiquidFocusService {
       } else if (this.activeTaskIndex > idx) {
         this.activeTaskIndex--
       }
+      this.store.set('activeTaskIndex', this.activeTaskIndex)
       this.saveTasks(tasks)
     }
     return tasks
@@ -379,11 +387,16 @@ class LiquidFocusService {
 
     const checkDate = new Date(now)
     checkDate.setHours(0, 0, 0, 0)
+    // If no sessions today yet, start streak check from yesterday
+    const todayKey = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`
+    if (!daySet.has(todayKey)) {
+      checkDate.setDate(checkDate.getDate() - 1)
+    }
     for (let i = 0; i < 366; i++) {
       const key = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`
       if (daySet.has(key)) {
         streak++
-      } else if (streak > 0) {
+      } else {
         break
       }
       checkDate.setDate(checkDate.getDate() - 1)
@@ -415,6 +428,7 @@ class LiquidFocusService {
   private broadcastState(): void {
     this.broadcast(IPC_SEND.LIQUIDFOCUS_STATE_CHANGED, {
       timer: this.getTimerState(),
+      tasks: this.getTasks(),
       stats: this.getStats()
     })
   }

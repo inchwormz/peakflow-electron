@@ -165,8 +165,9 @@ export function LiquidFocus(): React.JSX.Element {
     const unsub = window.peakflow.on(
       IPC_SEND.LIQUIDFOCUS_STATE_CHANGED,
       (data: unknown) => {
-        const update = data as { timer: TimerState; stats: SessionStats }
+        const update = data as { timer: TimerState; tasks?: LiquidFocusTask[]; stats: SessionStats }
         if (update?.timer) setTimer(update.timer)
+        if (update?.tasks) setTasks(update.tasks)
         if (update?.stats) setStats(update.stats)
       }
     )
