@@ -51,6 +51,7 @@ export interface TodoistProject {
 class TodoistService {
   private status: TodoistStatus = { connected: false, error: null }
   private accessToken: string | null = null
+  private authInProgress = false
 
   constructor() {
     // Restore token from encrypted credential store
@@ -76,6 +77,11 @@ class TodoistService {
    * Opens Todoist consent page, catches redirect on loopback, exchanges code for token.
    */
   async authenticate(): Promise<TodoistStatus> {
+    if (this.authInProgress) {
+      return { connected: false, error: 'Authentication already in progress' }
+    }
+    this.authInProgress = true
+
     return new Promise((resolve) => {
       const state = crypto.randomBytes(16).toString('hex')
       let authWindow: BrowserWindow | null = null
@@ -84,6 +90,7 @@ class TodoistService {
       const done = (status: TodoistStatus): void => {
         if (resolved) return
         resolved = true
+        this.authInProgress = false
         this.status = status
         server.close()
         if (authWindow && !authWindow.isDestroyed()) authWindow.close()

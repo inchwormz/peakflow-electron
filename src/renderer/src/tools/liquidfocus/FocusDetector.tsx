@@ -208,6 +208,10 @@ export function FocusDetector({
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
       }
+      if (modelRef.current) {
+        modelRef.current.dispose()
+        modelRef.current = null
+      }
       awayStartRef.current = null
     }
   }, [active, updateStatus, recordInterruption])
