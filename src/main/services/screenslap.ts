@@ -73,18 +73,13 @@ class ScreenSlapService {
       return
     }
 
-    // Start calendar polling (fetches events periodically)
+    // Start calendar polling (includes initial fetch + periodic refresh)
     calendar.startPolling(config.fetch_interval_minutes)
 
     // Start the alert check loop (checks cached events frequently)
     this.checkInterval = setInterval(() => {
       this.checkForAlerts()
     }, config.alert_check_seconds * 1000)
-
-    // Do an initial fetch
-    calendar.fetchEvents().catch((err) => {
-      console.error('[ScreenSlap] Initial fetch error:', err)
-    })
 
     this.monitoring = true
     console.log(
@@ -250,9 +245,13 @@ class ScreenSlapService {
       }
     }
 
-    // Prune old alerted IDs to prevent memory leak
+    // Prune old alerted IDs to prevent memory leak.
+    // Keep IDs for currently cached events to avoid re-alerting ongoing meetings.
     if (this.alertedEvents.size > 200) {
-      this.alertedEvents.clear()
+      const activeIds = new Set(events.map((e) => e.id))
+      for (const id of this.alertedEvents) {
+        if (!activeIds.has(id)) this.alertedEvents.delete(id)
+      }
     }
   }
 

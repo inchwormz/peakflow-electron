@@ -72,6 +72,15 @@ interface TrialStatus {
   daysRemaining: number
 }
 
+/** Map AccessStatus from SECURITY_CHECK_ACCESS to our simpler TrialStatus. */
+function toTrialStatus(raw: Record<string, unknown>): TrialStatus | null {
+  if (typeof raw.daysRemaining !== 'number') return null
+  return {
+    isLicensed: raw.isLicensed === true,
+    daysRemaining: raw.daysRemaining as number
+  }
+}
+
 export function Dashboard(): React.JSX.Element {
   const [hoveredTool, setHoveredTool] = useState<string | null>(null)
   const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null)
@@ -82,10 +91,11 @@ export function Dashboard(): React.JSX.Element {
 
   useEffect(() => {
     window.peakflow
-      .invoke(IPC_INVOKE.SECURITY_GET_TRIAL_STATUS)
+      .invoke(IPC_INVOKE.SECURITY_CHECK_ACCESS)
       .then((status) => {
         if (status && typeof status === 'object') {
-          setTrialStatus(status as TrialStatus)
+          const ts = toTrialStatus(status as Record<string, unknown>)
+          if (ts) setTrialStatus(ts)
         }
       })
       .catch(() => {})

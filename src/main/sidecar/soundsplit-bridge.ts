@@ -15,7 +15,7 @@
 
 import { BrowserWindow, app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
-import { appendFileSync, writeFileSync, unlinkSync } from 'fs'
+import { appendFileSync, writeFileSync, unlinkSync, statSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import Store from 'electron-store'
@@ -26,9 +26,14 @@ import type { SoundSplitConfig } from '@shared/config-schemas'
 
 // Debug logging — writes to app's userData dir, not a hardcoded path
 const DEBUG_LOG = join(app.getPath('userData'), 'soundsplit-debug.log')
+const MAX_LOG_SIZE = 1024 * 1024 // 1 MB
 function dbg(msg: string): void {
   const ts = new Date().toISOString().slice(11, 23)
-  try { appendFileSync(DEBUG_LOG, `[${ts}] ${msg}\n`) } catch { }
+  try {
+    // Truncate log when it exceeds 1 MB to prevent unbounded disk growth
+    try { if (statSync(DEBUG_LOG).size > MAX_LOG_SIZE) writeFileSync(DEBUG_LOG, '') } catch { }
+    appendFileSync(DEBUG_LOG, `[${ts}] ${msg}\n`)
+  } catch { }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────

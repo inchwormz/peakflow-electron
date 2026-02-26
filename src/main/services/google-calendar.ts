@@ -135,6 +135,7 @@ class GoogleCalendarService {
   private tokens: GoogleTokens | null = null
   private events: CalendarEvent[] = []
   private fetchInterval: ReturnType<typeof setInterval> | null = null
+  private authInProgress = false
 
   constructor() {
     // Restore tokens from encrypted credential store
@@ -167,6 +168,11 @@ class GoogleCalendarService {
    * Opens BrowserWindow for consent, catches redirect on loopback port.
    */
   async authenticate(): Promise<CalendarStatus> {
+    if (this.authInProgress) {
+      return { connected: false, email: null, lastFetched: null, error: 'Authentication already in progress' }
+    }
+    this.authInProgress = true
+
     return new Promise((resolve) => {
       let authWindow: BrowserWindow | null = null
       let resolved = false
@@ -177,6 +183,7 @@ class GoogleCalendarService {
       const done = (status: CalendarStatus): void => {
         if (resolved) return
         resolved = true
+        this.authInProgress = false
         this.status = status
         server.close()
         if (authWindow && !authWindow.isDestroyed()) authWindow.destroy()
@@ -387,7 +394,7 @@ class GoogleCalendarService {
   /**
    * Fetch upcoming events from Google Calendar API.
    */
-  async fetchEvents(): Promise<CalendarEvent[]> {
+  async fetchEvents(retried = false): Promise<CalendarEvent[]> {
     if (!this.status.connected || !this.tokens) {
       return []
     }
@@ -423,6 +430,13 @@ class GoogleCalendarService {
       )
 
       if (res.status === 401 || res.status === 403) {
+        if (retried) {
+          // Already retried once — token is dead
+          this.status.connected = false
+          this.status.error = 'Token expired — reconnect Google Calendar'
+          this.broadcastStatusUpdate()
+          return []
+        }
         // Try one refresh
         const refreshed = await this.refreshAccessToken()
         if (!refreshed) {
@@ -431,8 +445,8 @@ class GoogleCalendarService {
           this.broadcastStatusUpdate()
           return []
         }
-        // Retry
-        return this.fetchEvents()
+        // Retry once
+        return this.fetchEvents(true)
       }
 
       if (!res.ok) {

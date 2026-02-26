@@ -168,13 +168,6 @@ class FocusDimService {
     this.broadcastState()
   }
 
-  /** Set fade duration in ms */
-  setFadeDuration(ms: number): void {
-    this.setConf('fade_duration', Math.max(0, Math.min(2000, ms)))
-    this.updateAllOverlays()
-    this.broadcastState()
-  }
-
   /** Clean up when app is quitting */
   destroy(): void {
     this.stopTracking()
@@ -270,14 +263,17 @@ class FocusDimService {
       win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml)}`)
 
       const sf = display.scaleFactor || 1
+      // DPI origin: screen.dipToScreenPoint handles multi-monitor offsets correctly.
+      // Simple `x * sf` only works for the primary monitor at (0,0).
+      const physOrigin = screen.dipToScreenPoint({ x, y })
       const entry: OverlayEntry = {
         window: win,
         displayId: display.id,
         bounds: { x, y, width, height },
         scaleFactor: sf,
         physicalBounds: {
-          x: x * sf,
-          y: y * sf,
+          x: physOrigin.x,
+          y: physOrigin.y,
           width: width * sf,
           height: height * sf
         }
