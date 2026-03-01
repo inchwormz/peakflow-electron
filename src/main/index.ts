@@ -23,7 +23,8 @@ import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
-import { setAppQuitting } from './windows'
+import { setAppQuitting, createToolWindow } from './windows'
+import { SystemWindowId } from '@shared/tool-ids'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
 
@@ -115,6 +116,9 @@ if (!gotLock) {
     initTodoist()
     initExtensionServer()
     initAutoUpdater()
+
+    // Open Dashboard on startup so new users aren't left hunting the tray icon
+    createToolWindow(SystemWindowId.Dashboard)
 
     console.log('[PeakFlow] Core started — running in system tray')
   })

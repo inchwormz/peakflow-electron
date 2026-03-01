@@ -63,6 +63,13 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_INVOKE.SECURITY_CHECK_TOOL_ACCESS,
+    async (_event, toolId: string): Promise<AccessStatus> => {
+      return checkAccess(toolId)
+    }
+  )
+
+  ipcMain.handle(
     IPC_INVOKE.SECURITY_ACTIVATE_LICENSE,
     async (_event, key: string): Promise<LicenseActivationResult> => {
       return activateLicense(key)

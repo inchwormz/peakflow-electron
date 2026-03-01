@@ -5,11 +5,12 @@
  * Displays trial/license status and version info.
  */
 
-import { useState, useCallback, useEffect, type CSSProperties } from 'react'
+import { useState, useCallback, useEffect, useRef, type CSSProperties, type FormEvent } from 'react'
 import { TitleBar } from '@renderer/components/layout/TitleBar'
 import { StatusBar } from '@renderer/components/layout/StatusBar'
 import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
 import { IPC_INVOKE } from '@shared/ipc-types'
+import type { LicenseActivationResult } from '@shared/ipc-types'
 
 // ─── Tool metadata ──────────────────────────────────────────────────────────
 
@@ -72,6 +73,10 @@ interface TrialStatus {
   daysRemaining: number
 }
 
+interface ToolAccessMap {
+  [toolId: string]: { allowed: boolean; isLicensed: boolean; daysRemaining: number }
+}
+
 /** Map AccessStatus from SECURITY_CHECK_ACCESS to our simpler TrialStatus. */
 function toTrialStatus(raw: Record<string, unknown>): TrialStatus | null {
   if (typeof raw.daysRemaining !== 'number') return null
@@ -84,10 +89,59 @@ function toTrialStatus(raw: Record<string, unknown>): TrialStatus | null {
 export function Dashboard(): React.JSX.Element {
   const [hoveredTool, setHoveredTool] = useState<string | null>(null)
   const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null)
+  const [toolAccess, setToolAccess] = useState<ToolAccessMap>({})
+  const [licenseKey, setLicenseKey] = useState('')
+  const [licenseStatus, setLicenseStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' })
+  const licenseInputRef = useRef<HTMLInputElement>(null)
 
   const openTool = useCallback((toolId: ToolId) => {
     window.peakflow.invoke(IPC_INVOKE.WINDOW_OPEN, { toolId })
   }, [])
+
+  /** Fetch per-tool access status for all tools */
+  const refreshToolAccess = useCallback(async () => {
+    const map: ToolAccessMap = {}
+    await Promise.all(
+      Object.values(ToolId).map(async (id) => {
+        try {
+          const status = await window.peakflow.invoke(IPC_INVOKE.SECURITY_CHECK_TOOL_ACCESS, id)
+          if (status && typeof status === 'object') {
+            const s = status as Record<string, unknown>
+            map[id] = {
+              allowed: s.allowed === true,
+              isLicensed: s.isLicensed === true,
+              daysRemaining: typeof s.daysRemaining === 'number' ? s.daysRemaining as number : -1
+            }
+          }
+        } catch { /* ignore */ }
+      })
+    )
+    setToolAccess(map)
+  }, [])
+
+  const handleActivate = useCallback(async (e: FormEvent) => {
+    e.preventDefault()
+    const key = licenseKey.trim()
+    if (!key) { licenseInputRef.current?.focus(); return }
+    setLicenseStatus({ type: 'loading', message: 'Validating...' })
+    try {
+      const result = (await window.peakflow.invoke(IPC_INVOKE.SECURITY_ACTIVATE_LICENSE, key)) as LicenseActivationResult
+      if (result.success) {
+        setLicenseStatus({ type: 'success', message: result.message || 'License activated!' })
+        // Re-query per-tool access so badges update correctly
+        const globalStatus = await window.peakflow.invoke(IPC_INVOKE.SECURITY_CHECK_ACCESS)
+        if (globalStatus && typeof globalStatus === 'object') {
+          const ts = toTrialStatus(globalStatus as Record<string, unknown>)
+          if (ts) setTrialStatus(ts)
+        }
+        await refreshToolAccess()
+      } else {
+        setLicenseStatus({ type: 'error', message: result.message || 'Invalid license key.' })
+      }
+    } catch (err) {
+      setLicenseStatus({ type: 'error', message: err instanceof Error ? err.message : 'Activation failed.' })
+    }
+  }, [licenseKey, refreshToolAccess])
 
   useEffect(() => {
     window.peakflow
@@ -99,7 +153,8 @@ export function Dashboard(): React.JSX.Element {
         }
       })
       .catch(() => {})
-  }, [])
+    refreshToolAccess()
+  }, [refreshToolAccess])
 
   // ── Styles ──────────────────────────────────────────────────────────────
 
@@ -159,12 +214,82 @@ export function Dashboard(): React.JSX.Element {
               tool={tool}
               isHovered={hoveredTool === tool.id}
               trialStatus={trialStatus}
+              toolAccess={toolAccess[tool.id]}
               onHover={() => setHoveredTool(tool.id)}
               onLeave={() => setHoveredTool(null)}
               onClick={() => openTool(tool.id)}
             />
           ))}
         </div>
+
+        {/* License key section — visible during trial */}
+        {trialStatus && !trialStatus.isLicensed && (
+          <div style={{ flexShrink: 0, marginTop: 12 }}>
+            <div
+              style={{
+                padding: '12px 14px',
+                borderRadius: 10,
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-surface)'
+              }}
+            >
+              <div style={{ fontSize: 12, color: 'var(--accent)', fontFamily: "'Outfit', sans-serif", fontWeight: 600, marginBottom: 8 }}>
+                Have a license key?
+              </div>
+              <form onSubmit={handleActivate} style={{ display: 'flex', gap: 6 }}>
+                <input
+                  ref={licenseInputRef}
+                  type="text"
+                  value={licenseKey}
+                  onChange={(e) => setLicenseKey(e.target.value)}
+                  placeholder="Enter license key..."
+                  disabled={licenseStatus.type === 'loading' || licenseStatus.type === 'success'}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    background: 'var(--bg-app)',
+                    border: '1px solid var(--border-surface)',
+                    color: 'var(--text-primary)',
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 11,
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    outline: 'none'
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={licenseStatus.type === 'loading' || licenseStatus.type === 'success'}
+                  style={{
+                    flexShrink: 0,
+                    background: 'var(--accent)',
+                    color: 'var(--bg-void)',
+                    border: 'none',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    fontFamily: "'Outfit', sans-serif",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: '8px 14px',
+                    borderRadius: 6,
+                    opacity: licenseStatus.type === 'loading' || licenseStatus.type === 'success' ? 0.5 : 1
+                  }}
+                >
+                  {licenseStatus.type === 'loading' ? 'Validating...' : 'Activate'}
+                </button>
+              </form>
+              {licenseStatus.type !== 'idle' && licenseStatus.type !== 'loading' && (
+                <div style={{
+                  fontSize: 10,
+                  marginTop: 6,
+                  color: licenseStatus.type === 'success' ? '#4ae08a' : '#f05858'
+                }}>
+                  {licenseStatus.message}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <StatusBar />
     </>
@@ -177,6 +302,7 @@ function ToolCard({
   tool,
   isHovered,
   trialStatus,
+  toolAccess,
   onHover,
   onLeave,
   onClick
@@ -184,10 +310,16 @@ function ToolCard({
   tool: ToolMeta
   isHovered: boolean
   trialStatus: TrialStatus | null
+  toolAccess?: { allowed: boolean; isLicensed: boolean; daysRemaining: number }
   onHover: () => void
   onLeave: () => void
   onClick: () => void
 }): React.JSX.Element {
+  // Determine badge state from per-tool access
+  const isToolAllowed = toolAccess?.allowed ?? true
+  const isToolLicensed = toolAccess?.isLicensed ?? false
+  const inTrial = trialStatus && !trialStatus.isLicensed && trialStatus.daysRemaining > 0
+
   const card: CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
@@ -227,41 +359,41 @@ function ToolCard({
     lineHeight: 1.4
   }
 
-  const badgeStyle: CSSProperties | null =
-    trialStatus && !trialStatus.isLicensed
-      ? {
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          fontSize: 8,
-          fontWeight: 600,
-          letterSpacing: 0.5,
-          padding: '2px 6px',
-          borderRadius: 6,
-          background:
-            trialStatus.daysRemaining > 7
-              ? 'rgba(74,224,138,0.15)'
-              : trialStatus.daysRemaining > 0
-                ? 'rgba(234,179,8,0.15)'
-                : 'rgba(240,88,88,0.15)',
-          color:
-            trialStatus.daysRemaining > 7
-              ? '#4ae08a'
-              : trialStatus.daysRemaining > 0
-                ? '#eab308'
-                : '#f05858'
-        }
-      : null
+  // Badge logic: licensed tool = green "Licensed", trial = yellow/green "Xd trial", locked = red "Locked"
+  let badgeLabel = ''
+  let badgeBg = ''
+  let badgeColor = ''
+
+  if (isToolLicensed && isToolAllowed) {
+    badgeLabel = 'Licensed'
+    badgeBg = 'rgba(74,224,138,0.15)'
+    badgeColor = '#4ae08a'
+  } else if (inTrial) {
+    badgeLabel = `${trialStatus!.daysRemaining}d trial`
+    badgeBg = trialStatus!.daysRemaining > 7 ? 'rgba(74,224,138,0.15)' : 'rgba(234,179,8,0.15)'
+    badgeColor = trialStatus!.daysRemaining > 7 ? '#4ae08a' : '#eab308'
+  } else if (!isToolAllowed) {
+    badgeLabel = 'Locked'
+    badgeBg = 'rgba(240,88,88,0.15)'
+    badgeColor = '#f05858'
+  }
+
+  const badgeStyle: CSSProperties | null = badgeLabel ? {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    fontSize: 8,
+    fontWeight: 600,
+    letterSpacing: 0.5,
+    padding: '2px 6px',
+    borderRadius: 6,
+    background: badgeBg,
+    color: badgeColor
+  } : null
 
   return (
     <div style={card} onMouseEnter={onHover} onMouseLeave={onLeave} onClick={onClick}>
-      {badgeStyle && (
-        <div style={badgeStyle}>
-          {trialStatus!.daysRemaining > 0
-            ? `${trialStatus!.daysRemaining}d trial`
-            : 'Trial ended'}
-        </div>
-      )}
+      {badgeStyle && <div style={badgeStyle}>{badgeLabel}</div>}
       <div style={iconWrap}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill={tool.accent}>
           <path d={tool.icon} />

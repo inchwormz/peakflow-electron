@@ -12,24 +12,33 @@
  */
 
 import type { AccessStatus } from '@shared/ipc-types'
-import { isLicensed } from './license'
+import { isLicensed, isToolLicensed } from './license'
 import { getTrialDaysRemaining, isTrialActive } from './trial'
 
 /**
  * Determine whether the user has access to a PeakFlow tool.
  *
- * @param _toolName - Reserved for future per-tool gating (currently unused)
+ * @param toolId - The tool being opened (used for per-tool license gating)
  * @returns An {@link AccessStatus} object describing the current access state
  */
-export async function checkAccess(_toolName = 'PeakFlow'): Promise<AccessStatus> {
+export async function checkAccess(toolId = 'PeakFlow'): Promise<AccessStatus> {
   try {
-    // 1. Licensed users get unconditional access
+    // 1. Licensed users — check if license covers this specific tool
     const licensed = await isLicensed()
     if (licensed) {
+      if (isToolLicensed(toolId)) {
+        return {
+          allowed: true,
+          message: 'Licensed',
+          daysRemaining: -1, // unlimited
+          isLicensed: true
+        }
+      }
+      // Licensed but for a different tool
       return {
-        allowed: true,
-        message: 'Licensed',
-        daysRemaining: -1, // unlimited
+        allowed: false,
+        message: 'tool_not_licensed',
+        daysRemaining: -1,
         isLicensed: true
       }
     }
