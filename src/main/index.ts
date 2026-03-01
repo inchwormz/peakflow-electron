@@ -23,9 +23,9 @@ import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
-import { migrateExistingInstalls } from './security/trial'
+import { migrateExistingInstalls, isToolInstalled } from './security/trial'
 import { setAppQuitting, createToolWindow } from './windows'
-import { SystemWindowId } from '@shared/tool-ids'
+import { ToolId, SystemWindowId } from '@shared/tool-ids'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
 
@@ -111,12 +111,16 @@ if (!gotLock) {
     createTray()
     registerHotkeys()
     registerIpcHandlers()
-    initFocusDim()
-    initClipboard()
-    initCalendar()
-    initScreenSlap()
-    initLiquidFocus()
-    initSoundSplit()
+
+    // Only start services for tools the user has installed via the Dashboard
+    if (isToolInstalled(ToolId.FocusDim))    initFocusDim()
+    if (isToolInstalled(ToolId.QuickBoard))  initClipboard()
+    if (isToolInstalled(ToolId.ScreenSlap) || isToolInstalled(ToolId.MeetReady)) initCalendar()
+    if (isToolInstalled(ToolId.ScreenSlap))  initScreenSlap()
+    if (isToolInstalled(ToolId.LiquidFocus)) initLiquidFocus()
+    if (isToolInstalled(ToolId.SoundSplit))  initSoundSplit()
+
+    // Lightweight / system-level — always safe to init
     initTodoist()
     initExtensionServer()
     initAutoUpdater()

@@ -14,24 +14,53 @@ import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck } from './windows'
 import { rebuildTray } from './tray'
+import { registerToolHotkey } from './hotkeys'
 import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
-import { getFocusDimService } from './services/focus-dim'
+import { getFocusDimService, initFocusDim } from './services/focus-dim'
 import type { FocusDimState } from './services/focus-dim'
-import { getClipboardService } from './services/clipboard'
+import { getClipboardService, initClipboard } from './services/clipboard'
 import type { ClipboardItem } from './services/clipboard'
-import { getCalendarService } from './services/google-calendar'
+import { getCalendarService, initCalendar } from './services/google-calendar'
 import type { CalendarEvent, CalendarStatus } from './services/google-calendar'
-import { getScreenSlapService } from './services/screenslap'
+import { getScreenSlapService, initScreenSlap } from './services/screenslap'
 import type { ScreenSlapState } from './services/screenslap'
-import { getLiquidFocusService } from './services/liquidfocus'
+import { getLiquidFocusService, initLiquidFocus } from './services/liquidfocus'
 import type { LiquidFocusFullState, LiquidFocusTask, TimerState, SessionStats } from './services/liquidfocus'
-import { getSoundSplitBridge } from './sidecar/soundsplit-bridge'
+import { getSoundSplitBridge, initSoundSplit } from './sidecar/soundsplit-bridge'
 import type { AudioSession, MasterAudio } from './sidecar/soundsplit-bridge'
 import { getTodoistService } from './services/todoist'
 import type { TodoistStatus, TodoistTask, TodoistProject } from './services/todoist'
+
+/**
+ * Start a tool's background service after install from the Dashboard.
+ * Singleton guards in each service prevent double-init.
+ */
+function startToolService(toolId: string): void {
+  switch (toolId) {
+    case ToolId.FocusDim:
+      initFocusDim()
+      break
+    case ToolId.QuickBoard:
+      initClipboard()
+      break
+    case ToolId.ScreenSlap:
+      initCalendar()
+      initScreenSlap()
+      break
+    case ToolId.MeetReady:
+      initCalendar()
+      break
+    case ToolId.LiquidFocus:
+      initLiquidFocus()
+      break
+    case ToolId.SoundSplit:
+      initSoundSplit()
+      break
+  }
+}
 
 /**
  * Extract the toolId query parameter from a BrowserWindow's loaded URL.
@@ -92,7 +121,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.TOOL_INSTALL,
     (_event, toolId: string): { installed: boolean; daysRemaining: number } => {
+      const wasInstalled = isToolInstalled(toolId)
       installTool(toolId)
+      if (!wasInstalled) {
+        startToolService(toolId)
+        registerToolHotkey(toolId as ToolId)
+      }
       rebuildTray()
       return {
         installed: true,
