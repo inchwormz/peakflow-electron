@@ -15,6 +15,8 @@ export interface AccessStatus {
   message: string
   daysRemaining: number
   isLicensed: boolean
+  /** True only when the license specifically covers THIS tool (not just "user has any license") */
+  isToolLicensed: boolean
 }
 
 export interface LicenseActivationResult {
@@ -49,6 +51,10 @@ export const IPC_INVOKE = {
   SECURITY_CHECK_TOOL_ACCESS: 'security:check-tool-access',
   SECURITY_ACTIVATE_LICENSE: 'security:activate-license',
   SECURITY_GET_TRIAL_STATUS: 'security:get-trial-status',
+
+  // Tool install (storefront)
+  TOOL_INSTALL: 'tool:install',
+  TOOL_GET_INSTALL_STATE: 'tool:get-install-state',
 
   // Config
   CONFIG_GET: 'config:get',

@@ -10,6 +10,7 @@ import { join } from 'path'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck } from './windows'
 import { checkForUpdates } from './services/auto-updater'
+import { isToolInstalled } from './security/trial'
 
 let tray: Tray | null = null
 
@@ -41,57 +42,46 @@ function formatHotkeyLabel(hotkey: string): string {
 }
 
 /**
- * Build the tray context menu with all tool entries.
+ * Ordered list of tools for tray menu (display order).
+ */
+const TRAY_TOOL_ORDER: ToolId[] = [
+  ToolId.ScreenSlap,
+  ToolId.FocusDim,
+  ToolId.QuickBoard,
+  ToolId.LiquidFocus,
+  ToolId.MeetReady,
+  ToolId.SoundSplit
+]
+
+/**
+ * Build the tray context menu — only shows installed tools.
  */
 function buildContextMenu(): Electron.Menu {
-  const hotkeyFocusDim = DEFAULT_HOTKEYS[ToolId.FocusDim]
-  const hotkeyQuickBoard = DEFAULT_HOTKEYS[ToolId.QuickBoard]
+  const toolItems: Electron.MenuItemConstructorOptions[] = []
 
-  return Menu.buildFromTemplate([
-    {
-      label: 'PeakFlow',
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: TOOL_DISPLAY_NAMES[ToolId.ScreenSlap],
+  for (const id of TRAY_TOOL_ORDER) {
+    if (!isToolInstalled(id)) continue
+    const hotkey = DEFAULT_HOTKEYS[id]
+    toolItems.push({
+      label: TOOL_DISPLAY_NAMES[id],
+      accelerator: hotkey ? formatHotkeyLabel(hotkey) : undefined,
       click: (): void => {
-        openToolWithAccessCheck(ToolId.ScreenSlap)
+        openToolWithAccessCheck(id)
       }
-    },
-    {
-      label: TOOL_DISPLAY_NAMES[ToolId.FocusDim],
-      accelerator: hotkeyFocusDim ? formatHotkeyLabel(hotkeyFocusDim) : undefined,
-      click: (): void => {
-        openToolWithAccessCheck(ToolId.FocusDim)
-      }
-    },
-    {
-      label: TOOL_DISPLAY_NAMES[ToolId.QuickBoard],
-      accelerator: hotkeyQuickBoard ? formatHotkeyLabel(hotkeyQuickBoard) : undefined,
-      click: (): void => {
-        openToolWithAccessCheck(ToolId.QuickBoard)
-      }
-    },
-    {
-      label: TOOL_DISPLAY_NAMES[ToolId.LiquidFocus],
-      click: (): void => {
-        openToolWithAccessCheck(ToolId.LiquidFocus)
-      }
-    },
-    {
-      label: TOOL_DISPLAY_NAMES[ToolId.MeetReady],
-      click: (): void => {
-        openToolWithAccessCheck(ToolId.MeetReady)
-      }
-    },
-    {
-      label: TOOL_DISPLAY_NAMES[ToolId.SoundSplit],
-      click: (): void => {
-        openToolWithAccessCheck(ToolId.SoundSplit)
-      }
-    },
-    { type: 'separator' },
+    })
+  }
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { label: 'PeakFlow', enabled: false },
+    { type: 'separator' }
+  ]
+
+  if (toolItems.length > 0) {
+    template.push(...toolItems)
+    template.push({ type: 'separator' })
+  }
+
+  template.push(
     {
       label: 'Check for Updates',
       click: (): void => {
@@ -105,7 +95,9 @@ function buildContextMenu(): Electron.Menu {
         app.quit()
       }
     }
-  ])
+  )
+
+  return Menu.buildFromTemplate(template)
 }
 
 /**
@@ -130,6 +122,16 @@ export function createTray(): void {
   })
 
   console.log('[PeakFlow] System tray created')
+}
+
+/**
+ * Rebuild the tray context menu (e.g. after a tool is installed).
+ */
+export function rebuildTray(): void {
+  if (tray && !tray.isDestroyed()) {
+    tray.setContextMenu(buildContextMenu())
+    console.log('[PeakFlow] Tray menu rebuilt')
+  }
 }
 
 /**

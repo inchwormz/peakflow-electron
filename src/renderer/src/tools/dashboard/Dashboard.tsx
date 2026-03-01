@@ -74,7 +74,7 @@ interface TrialStatus {
 }
 
 interface ToolAccessMap {
-  [toolId: string]: { allowed: boolean; isLicensed: boolean; daysRemaining: number }
+  [toolId: string]: { allowed: boolean; isLicensed: boolean; isToolLicensed: boolean; daysRemaining: number; installed: boolean }
 }
 
 /** Map AccessStatus from SECURITY_CHECK_ACCESS to our simpler TrialStatus. */
@@ -98,26 +98,36 @@ export function Dashboard(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.WINDOW_OPEN, { toolId })
   }, [])
 
-  /** Fetch per-tool access status for all tools */
+  /** Fetch per-tool access + install state for all tools */
   const refreshToolAccess = useCallback(async () => {
     const map: ToolAccessMap = {}
     await Promise.all(
       Object.values(ToolId).map(async (id) => {
         try {
-          const status = await window.peakflow.invoke(IPC_INVOKE.SECURITY_CHECK_TOOL_ACCESS, id)
-          if (status && typeof status === 'object') {
-            const s = status as Record<string, unknown>
-            map[id] = {
-              allowed: s.allowed === true,
-              isLicensed: s.isLicensed === true,
-              daysRemaining: typeof s.daysRemaining === 'number' ? s.daysRemaining as number : -1
-            }
+          const [status, installState] = await Promise.all([
+            window.peakflow.invoke(IPC_INVOKE.SECURITY_CHECK_TOOL_ACCESS, id),
+            window.peakflow.invoke(IPC_INVOKE.TOOL_GET_INSTALL_STATE, id)
+          ])
+          const s = (status && typeof status === 'object') ? status as Record<string, unknown> : {}
+          const inst = (installState && typeof installState === 'object') ? installState as Record<string, unknown> : {}
+          map[id] = {
+            allowed: s.allowed === true,
+            isLicensed: s.isLicensed === true,
+            isToolLicensed: s.isToolLicensed === true,
+            daysRemaining: typeof s.daysRemaining === 'number' ? s.daysRemaining as number : -1,
+            installed: inst.installed === true
           }
         } catch { /* ignore */ }
       })
     )
     setToolAccess(map)
   }, [])
+
+  const installAndOpen = useCallback(async (toolId: ToolId) => {
+    await window.peakflow.invoke(IPC_INVOKE.TOOL_INSTALL, toolId)
+    await refreshToolAccess()
+    window.peakflow.invoke(IPC_INVOKE.WINDOW_OPEN, { toolId })
+  }, [refreshToolAccess])
 
   const handleActivate = useCallback(async (e: FormEvent) => {
     e.preventDefault()
@@ -218,6 +228,7 @@ export function Dashboard(): React.JSX.Element {
               onHover={() => setHoveredTool(tool.id)}
               onLeave={() => setHoveredTool(null)}
               onClick={() => openTool(tool.id)}
+              onInstall={() => installAndOpen(tool.id)}
             />
           ))}
         </div>
@@ -305,20 +316,22 @@ function ToolCard({
   toolAccess,
   onHover,
   onLeave,
-  onClick
+  onClick,
+  onInstall
 }: {
   tool: ToolMeta
   isHovered: boolean
   trialStatus: TrialStatus | null
-  toolAccess?: { allowed: boolean; isLicensed: boolean; daysRemaining: number }
+  toolAccess?: { allowed: boolean; isLicensed: boolean; isToolLicensed: boolean; daysRemaining: number; installed: boolean }
   onHover: () => void
   onLeave: () => void
   onClick: () => void
+  onInstall: () => void
 }): React.JSX.Element {
-  // Determine badge state from per-tool access
+  const installed = toolAccess?.installed ?? false
   const isToolAllowed = toolAccess?.allowed ?? true
-  const isToolLicensed = toolAccess?.isLicensed ?? false
-  const inTrial = trialStatus && !trialStatus.isLicensed && trialStatus.daysRemaining > 0
+  const toolLicensed = toolAccess?.isToolLicensed ?? false
+  const daysRemaining = toolAccess?.daysRemaining ?? -1
 
   const card: CSSProperties = {
     display: 'flex',
@@ -328,7 +341,7 @@ function ToolCard({
     borderRadius: 12,
     background: isHovered ? 'var(--bg-elevated)' : 'var(--bg-surface)',
     border: `1px solid ${isHovered ? tool.accent + '40' : 'var(--border-surface)'}`,
-    cursor: 'pointer',
+    cursor: installed ? 'pointer' : 'default',
     transition: 'all 0.2s ease',
     position: 'relative',
     overflow: 'hidden'
@@ -359,23 +372,25 @@ function ToolCard({
     lineHeight: 1.4
   }
 
-  // Badge logic: licensed tool = green "Licensed", trial = yellow/green "Xd trial", locked = red "Locked"
+  // Badge logic — only shown for installed tools
   let badgeLabel = ''
   let badgeBg = ''
   let badgeColor = ''
 
-  if (isToolLicensed && isToolAllowed) {
-    badgeLabel = 'Licensed'
-    badgeBg = 'rgba(74,224,138,0.15)'
-    badgeColor = '#4ae08a'
-  } else if (inTrial) {
-    badgeLabel = `${trialStatus!.daysRemaining}d trial`
-    badgeBg = trialStatus!.daysRemaining > 7 ? 'rgba(74,224,138,0.15)' : 'rgba(234,179,8,0.15)'
-    badgeColor = trialStatus!.daysRemaining > 7 ? '#4ae08a' : '#eab308'
-  } else if (!isToolAllowed) {
-    badgeLabel = 'Locked'
-    badgeBg = 'rgba(240,88,88,0.15)'
-    badgeColor = '#f05858'
+  if (installed) {
+    if (toolLicensed && isToolAllowed) {
+      badgeLabel = 'Licensed'
+      badgeBg = 'rgba(74,224,138,0.15)'
+      badgeColor = '#4ae08a'
+    } else if (daysRemaining > 0) {
+      badgeLabel = `${daysRemaining}d trial`
+      badgeBg = daysRemaining > 7 ? 'rgba(74,224,138,0.15)' : 'rgba(234,179,8,0.15)'
+      badgeColor = daysRemaining > 7 ? '#4ae08a' : '#eab308'
+    } else if (!isToolAllowed) {
+      badgeLabel = 'Locked'
+      badgeBg = 'rgba(240,88,88,0.15)'
+      badgeColor = '#f05858'
+    }
   }
 
   const badgeStyle: CSSProperties | null = badgeLabel ? {
@@ -391,8 +406,25 @@ function ToolCard({
     color: badgeColor
   } : null
 
+  const installBtnStyle: CSSProperties = {
+    marginTop: 4,
+    padding: '6px 12px',
+    borderRadius: 8,
+    border: 'none',
+    outline: 'none',
+    cursor: 'pointer',
+    fontSize: 11,
+    fontWeight: 600,
+    fontFamily: "'Outfit', sans-serif",
+    background: tool.accent + '20',
+    color: tool.accent,
+    transition: 'background 0.2s'
+  }
+
+  const handleCardClick = installed ? onClick : undefined
+
   return (
-    <div style={card} onMouseEnter={onHover} onMouseLeave={onLeave} onClick={onClick}>
+    <div style={card} onMouseEnter={onHover} onMouseLeave={onLeave} onClick={handleCardClick}>
       {badgeStyle && <div style={badgeStyle}>{badgeLabel}</div>}
       <div style={iconWrap}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill={tool.accent}>
@@ -401,6 +433,19 @@ function ToolCard({
       </div>
       <div style={name}>{TOOL_DISPLAY_NAMES[tool.id]}</div>
       <div style={desc}>{tool.description}</div>
+      {!installed && (
+        <button
+          style={installBtnStyle}
+          onClick={(e) => {
+            e.stopPropagation()
+            onInstall()
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = tool.accent + '35' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = tool.accent + '20' }}
+        >
+          Try Free — 14 days
+        </button>
+      )}
     </div>
   )
 }

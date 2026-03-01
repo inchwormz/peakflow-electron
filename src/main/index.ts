@@ -23,6 +23,7 @@ import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
+import { migrateExistingInstalls } from './security/trial'
 import { setAppQuitting, createToolWindow } from './windows'
 import { SystemWindowId } from '@shared/tool-ids'
 
@@ -102,6 +103,9 @@ if (!gotLock) {
         }
       })
     })
+
+    // Migrate existing users: auto-install all tools for users upgrading from pre-storefront
+    migrateExistingInstalls()
 
     // Initialize core systems
     createTray()

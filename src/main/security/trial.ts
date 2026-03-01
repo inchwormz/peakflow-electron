@@ -9,6 +9,7 @@
  */
 
 import Store from 'electron-store'
+import { ToolId } from '@shared/tool-ids'
 import { encryptString, decryptString, isAvailable } from './safe-storage'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -100,4 +101,110 @@ export function getTrialDaysRemaining(): number {
  */
 export function isTrialActive(): boolean {
   return getTrialDaysRemaining() > 0
+}
+
+// ─── Per-Tool Install (Storefront Model) ─────────────────────────────────
+
+/**
+ * Run once on startup to handle backwards compatibility.
+ *
+ * Existing users (who have a global `install_date` from before the storefront
+ * feature) get all tools auto-installed with the global trial date.
+ * New users start with no tools installed.
+ */
+export function migrateExistingInstalls(): void {
+  try {
+    if (licenseStore.get('storefront_migrated')) return
+
+    const hasGlobalInstall = licenseStore.has('install_date')
+    if (hasGlobalInstall) {
+      // Existing user — stamp all tools with global install date
+      const globalDate = licenseStore.get('install_date') as string
+      for (const id of Object.values(ToolId) as string[]) {
+        const key = `tool_install_${id}`
+        if (!licenseStore.has(key)) {
+          licenseStore.set(key, globalDate)
+        }
+      }
+      console.log('[PeakFlow:Trial] Migrated existing user — all tools auto-installed')
+    }
+    // else: new user, no tools installed by default
+
+    licenseStore.set('storefront_migrated', true)
+  } catch (error) {
+    console.warn('[PeakFlow:Trial] migrateExistingInstalls failed:', error)
+  }
+}
+
+/**
+ * Check whether a tool has been "installed" (enabled by the user).
+ */
+export function isToolInstalled(toolId: ToolId | string): boolean {
+  return licenseStore.has(`tool_install_${toolId}`)
+}
+
+/**
+ * "Install" a tool — stamps the per-tool trial start date.
+ * If the tool is already installed, this is a no-op.
+ */
+export function installTool(toolId: ToolId | string): void {
+  const key = `tool_install_${toolId}`
+  if (licenseStore.has(key)) return // already installed
+
+  const now = new Date()
+  const isoString = now.toISOString()
+
+  if (isAvailable()) {
+    const encrypted = encryptString(isoString)
+    if (encrypted !== null) {
+      licenseStore.set(key, encrypted)
+      console.log(`[PeakFlow:Trial] Tool installed: ${toolId}`)
+      return
+    }
+  }
+
+  // safeStorage not ready — store plaintext
+  licenseStore.set(key, isoString)
+  console.log(`[PeakFlow:Trial] Tool installed (plaintext): ${toolId}`)
+}
+
+/**
+ * Get the install date for a specific tool, or null if not installed.
+ */
+export function getToolTrialStart(toolId: ToolId | string): Date | null {
+  try {
+    const stored = licenseStore.get(`tool_install_${toolId}`) as string | undefined
+    if (!stored) return null
+
+    // Try decrypting
+    if (isAvailable()) {
+      const decrypted = decryptString(stored)
+      if (decrypted !== null) {
+        const parsed = new Date(decrypted)
+        if (!isNaN(parsed.getTime())) return parsed
+      }
+    }
+
+    // Fallback: try parsing as raw ISO string
+    const raw = new Date(stored)
+    if (!isNaN(raw.getTime())) return raw
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Calculate how many per-tool trial days remain for a specific tool.
+ * Returns 0 if the tool isn't installed or the trial has expired.
+ */
+export function getToolTrialDaysRemaining(toolId: ToolId | string): number {
+  const installDate = getToolTrialStart(toolId)
+  if (!installDate) return 0
+
+  const now = new Date()
+  const elapsedMs = now.getTime() - installDate.getTime()
+  const elapsedDays = Math.max(0, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)))
+  return Math.max(TRIAL_DAYS - elapsedDays, 0)
 }
