@@ -13,6 +13,7 @@ import { globalShortcut } from 'electron'
 import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
+import { isToolInstalled } from './security/trial'
 
 /**
  * Toggle a tool window: close it if open, create it if not.
@@ -38,24 +39,44 @@ function toggleTool(toolId: ToolId): void {
 export function registerHotkeys(): void {
   for (const [toolId, accelerator] of Object.entries(DEFAULT_HOTKEYS)) {
     if (!accelerator) continue
+    if (!isToolInstalled(toolId)) continue
 
-    const registered = globalShortcut.register(accelerator, () => {
-      if (toolId === ToolId.FocusDim) {
-        // FocusDim hotkey toggles the dim effect, not the settings window
-        getFocusDimService().toggle()
-      } else {
-        toggleTool(toolId as ToolId)
-      }
-    })
+    registerSingleHotkey(toolId as ToolId, accelerator)
+  }
+}
 
-    if (registered) {
-      console.log(`[PeakFlow] Hotkey registered: ${accelerator} -> ${toolId}`)
+/**
+ * Register a single tool's hotkey. Called after install from Dashboard
+ * so the hotkey works immediately without restarting the app.
+ */
+export function registerToolHotkey(toolId: ToolId): void {
+  const accelerator = DEFAULT_HOTKEYS[toolId]
+  if (!accelerator) return
+
+  // Don't double-register if already active
+  if (globalShortcut.isRegistered(accelerator)) return
+
+  registerSingleHotkey(toolId, accelerator)
+}
+
+/** Internal: register a single accelerator → tool binding. */
+function registerSingleHotkey(toolId: ToolId, accelerator: string): void {
+  const registered = globalShortcut.register(accelerator, () => {
+    if (toolId === ToolId.FocusDim) {
+      // FocusDim hotkey toggles the dim effect, not the settings window
+      getFocusDimService().toggle()
     } else {
-      console.warn(
-        `[PeakFlow] Failed to register hotkey ${accelerator} for ${toolId}. ` +
-          'Another application may be using this shortcut.'
-      )
+      toggleTool(toolId)
     }
+  })
+
+  if (registered) {
+    console.log(`[PeakFlow] Hotkey registered: ${accelerator} -> ${toolId}`)
+  } else {
+    console.warn(
+      `[PeakFlow] Failed to register hotkey ${accelerator} for ${toolId}. ` +
+        'Another application may be using this shortcut.'
+    )
   }
 }
 
