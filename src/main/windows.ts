@@ -279,6 +279,8 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
   const access = await checkAccess(toolId)
   if (!access.allowed) {
     console.log(`[PeakFlow] Access denied for ${toolId}: ${access.message}`)
+    // Tool not installed → Dashboard handles install UX, don't show TrialExpired
+    if (access.message === 'tool_not_installed') return null
     // Pass denied tool + reason as query params so TrialExpired UI shows context
     createToolWindow(SystemWindowId.TrialExpired, {
       deniedTool: toolId,

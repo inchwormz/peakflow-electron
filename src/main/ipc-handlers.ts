@@ -13,9 +13,10 @@ import type { ToolConfig } from '@shared/config-schemas'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck } from './windows'
+import { rebuildTray } from './tray'
 import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
-import { getTrialDaysRemaining, TRIAL_DAYS } from './security/trial'
+import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService } from './services/focus-dim'
 import type { FocusDimState } from './services/focus-dim'
@@ -82,6 +83,30 @@ export function registerIpcHandlers(): void {
       return {
         daysRemaining: getTrialDaysRemaining(),
         trialDays: TRIAL_DAYS
+      }
+    }
+  )
+
+  // ─── Tool Install (Storefront) ──────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.TOOL_INSTALL,
+    (_event, toolId: string): { installed: boolean; daysRemaining: number } => {
+      installTool(toolId)
+      rebuildTray()
+      return {
+        installed: true,
+        daysRemaining: getToolTrialDaysRemaining(toolId)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.TOOL_GET_INSTALL_STATE,
+    (_event, toolId: string): { installed: boolean; daysRemaining: number } => {
+      return {
+        installed: isToolInstalled(toolId),
+        daysRemaining: getToolTrialDaysRemaining(toolId)
       }
     }
   )

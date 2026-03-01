@@ -29,7 +29,8 @@ export const LICENSE_CACHE_DAYS = 30
  */
 const PRODUCT_TOOL_MAP: Record<number, ToolId | 'all'> = {
   // Individual perpetual licenses ($9.99 one-time)
-  861329: ToolId.FocusDim,
+  861329: ToolId.FocusDim, // live
+  861493: ToolId.FocusDim, // test mode
   // All other product IDs (subscriptions, etc.) default to 'all' via getToolsForProduct()
 }
 
@@ -266,9 +267,11 @@ export async function activateLicense(
  */
 export function isToolLicensed(toolId: string): boolean {
   const stored = getCredential('license', 'product_id')
+  console.log(`[PeakFlow:License] isToolLicensed(${toolId}) — stored product_id raw: "${stored}"`)
   if (!stored) return true // No product_id = legacy key, allow all
 
   const productId = parseInt(stored, 10)
+  console.log(`[PeakFlow:License] parsed productId: ${productId}, map lookup: ${PRODUCT_TOOL_MAP[productId] ?? 'NOT IN MAP → defaults to all'}`)
   if (isNaN(productId)) return true // Corrupt data, fail open
 
   const covers = getToolsForProduct(productId)
