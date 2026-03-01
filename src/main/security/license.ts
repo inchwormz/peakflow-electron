@@ -13,12 +13,25 @@
 
 import os from 'node:os'
 import Store from 'electron-store'
+import { ToolId } from '@shared/tool-ids'
 import { storeCredential, getCredential, deleteCredential } from './credentials'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 /** Number of days a successful online validation is cached locally. */
 export const LICENSE_CACHE_DAYS = 30
+
+/**
+ * Map LemonSqueezy product_id → which tool(s) the license covers.
+ * 'all' = subscription or bundle (every tool).
+ * Individual tool IDs = perpetual single-tool license.
+ * Unknown product_ids default to 'all' for backwards compatibility.
+ */
+const PRODUCT_TOOL_MAP: Record<number, ToolId | 'all'> = {
+  // Individual perpetual licenses ($9.99 one-time)
+  861329: ToolId.FocusDim,
+  // All other product IDs (subscriptions, etc.) default to 'all' via getToolsForProduct()
+}
 
 /** Pricing page URL shown when the trial expires. */
 export const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
@@ -69,6 +82,33 @@ function isCacheValid(): boolean {
 function cacheValidation(status: string): void {
   licenseStore.set('validation_timestamp', new Date().toISOString())
   licenseStore.set('license_status', status)
+}
+
+/**
+ * Store the product_id from a LemonSqueezy response.
+ */
+function storeProductId(productId: number): void {
+  storeCredential('license', 'product_id', String(productId))
+  console.log(`[PeakFlow:License] Stored product_id: ${productId}`)
+}
+
+/**
+ * Look up which tool(s) a product_id grants access to.
+ * Unknown IDs default to 'all' (backwards compat for subscription keys).
+ */
+function getToolsForProduct(productId: number): ToolId | 'all' {
+  return PRODUCT_TOOL_MAP[productId] ?? 'all'
+}
+
+/**
+ * Extract meta.product_id from a LemonSqueezy API response.
+ */
+function extractProductId(result: Record<string, unknown>): number | null {
+  const meta = result.meta as Record<string, unknown> | undefined
+  if (meta && typeof meta.product_id === 'number') {
+    return meta.product_id
+  }
+  return null
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -135,6 +175,11 @@ export async function validateLicenseOnline(licenseKey: string): Promise<boolean
 
     if (isValid) {
       cacheValidation('active')
+      // Store product_id for per-tool gating
+      const productId = extractProductId(result)
+      if (productId !== null) {
+        storeProductId(productId)
+      }
     }
 
     return isValid
@@ -188,6 +233,11 @@ export async function activateLicense(
       // Store key + cache validation
       storeCredential('license', 'key', licenseKey)
       cacheValidation('active')
+      // Store product_id for per-tool gating
+      const productId = extractProductId(result)
+      if (productId !== null) {
+        storeProductId(productId)
+      }
       return { success: true, message: 'License activated successfully!' }
     }
 
@@ -210,6 +260,23 @@ export async function activateLicense(
 }
 
 /**
+ * Check whether the stored license covers a specific tool.
+ * Returns true if: no product_id stored (legacy/backwards compat), product maps to 'all',
+ * or product maps to the requested tool.
+ */
+export function isToolLicensed(toolId: string): boolean {
+  const stored = getCredential('license', 'product_id')
+  if (!stored) return true // No product_id = legacy key, allow all
+
+  const productId = parseInt(stored, 10)
+  if (isNaN(productId)) return true // Corrupt data, fail open
+
+  const covers = getToolsForProduct(productId)
+  if (covers === 'all') return true
+  return covers === toolId
+}
+
+/**
  * Deactivate the current license and clear stored credentials.
  *
  * @returns `true` if credentials were cleared (does NOT call the deactivate API).
@@ -217,6 +284,7 @@ export async function activateLicense(
 export function deactivateLicense(): boolean {
   try {
     deleteCredential('license', 'key')
+    deleteCredential('license', 'product_id')
     licenseStore.delete('validation_timestamp')
     licenseStore.delete('license_status')
     console.log('[PeakFlow:License] License deactivated locally')

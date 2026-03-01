@@ -46,6 +46,7 @@ export interface WindowInfo {
 export const IPC_INVOKE = {
   // Security
   SECURITY_CHECK_ACCESS: 'security:check-access',
+  SECURITY_CHECK_TOOL_ACCESS: 'security:check-tool-access',
   SECURITY_ACTIVATE_LICENSE: 'security:activate-license',
   SECURITY_GET_TRIAL_STATUS: 'security:get-trial-status',
 

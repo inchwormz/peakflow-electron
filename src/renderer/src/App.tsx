@@ -141,9 +141,12 @@ export default function App(): React.JSX.Element {
       return <AlertOverlay />
     }
 
-    // Trial expired lock screen
+    // Trial expired / tool not licensed lock screen
     if (systemId === SystemWindowId.TrialExpired) {
-      return <TrialExpired />
+      const params = new URLSearchParams(window.location.search)
+      const deniedTool = params.get('deniedTool') ?? undefined
+      const reason = params.get('reason') ?? undefined
+      return <TrialExpired deniedTool={deniedTool} reason={reason} />
     }
 
     // Dashboard hub

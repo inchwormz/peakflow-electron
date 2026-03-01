@@ -90,7 +90,7 @@ const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
  * If a window with the same `toolId` already exists it is focused and
  * returned immediately — no duplicate windows are created.
  */
-export function createToolWindow(toolId: WindowId): BrowserWindow {
+export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, string>): BrowserWindow {
   // Re-use existing window if one is open for this tool
   const existing = windowMap.get(toolId)
   if (existing && !existing.isDestroyed()) {
@@ -193,6 +193,15 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
     }
   })
 
+  // Dashboard: hide to tray instead of closing (app stays resident)
+  if (toolId === SystemWindowId.Dashboard) {
+    win.on('close', (e) => {
+      if (appQuitting) return
+      e.preventDefault()
+      win.hide()
+    })
+  }
+
   // LiquidFocus: hide instead of close when timer is running so the
   // renderer (FocusDetector webcam + phase sounds) stays alive
   if (toolId === ToolId.LiquidFocus) {
@@ -219,14 +228,16 @@ export function createToolWindow(toolId: WindowId): BrowserWindow {
   })
 
   // Load the renderer
+  const query: Record<string, string> = { toolId, ...extraQuery }
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    const devUrl = `${process.env['ELECTRON_RENDERER_URL']}?toolId=${toolId}`
+    const params = new URLSearchParams(query).toString()
+    const devUrl = `${process.env['ELECTRON_RENDERER_URL']}?${params}`
     win.loadURL(devUrl).catch((err) => {
       console.error(`[PeakFlow] Failed to load dev URL for ${toolId}:`, err)
     })
   } else {
     const prodPath = join(__dirname, '../renderer/index.html')
-    win.loadFile(prodPath, { query: { toolId } }).catch((err) => {
+    win.loadFile(prodPath, { query }).catch((err) => {
       console.error(`[PeakFlow] Failed to load production file for ${toolId}:`, err)
     })
   }
@@ -264,11 +275,15 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
     return createToolWindow(toolId)
   }
 
-  // Check trial/license status
-  const access = await checkAccess()
+  // Check trial/license status (pass toolId for per-tool gating)
+  const access = await checkAccess(toolId)
   if (!access.allowed) {
     console.log(`[PeakFlow] Access denied for ${toolId}: ${access.message}`)
-    createToolWindow(SystemWindowId.TrialExpired)
+    // Pass denied tool + reason as query params so TrialExpired UI shows context
+    createToolWindow(SystemWindowId.TrialExpired, {
+      deniedTool: toolId,
+      reason: access.message
+    })
     return null
   }
 
