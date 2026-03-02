@@ -15,21 +15,23 @@
  * State is persisted via config-store so settings survive app restarts.
  */
 
-import { BrowserWindow, screen, powerMonitor } from 'electron'
+import { BrowserWindow, screen, powerMonitor, globalShortcut } from 'electron'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
 import { getActiveWindow } from '../native/active-window'
 
-// ─── Dim color presets (must match Python + renderer) ────────────────────────
+// ─── Legacy color key → hex migration map ────────────────────────────────────
 
-const DIM_COLORS: Record<string, string> = {
+const LEGACY_COLOR_MAP: Record<string, string> = {
   black: '#000000',
   dark_purple: '#1a0a2e',
   dark_blue: '#0a1628',
   dark_gray: '#151515'
 }
+
+const HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +41,17 @@ export interface FocusDimState {
   dimColor: string
   showBorder: boolean
   fadeDuration: number
+  peekDuration: number
+  peeking: boolean
+  hotkey: string
+  autoRevealDesktop: boolean
+}
+
+export interface DisplayInfo {
+  id: number
+  label: string
+  bounds: Electron.Rectangle
+  disabled: boolean
 }
 
 interface OverlayEntry {
@@ -56,13 +69,22 @@ class FocusDimService {
   private overlays: OverlayEntry[] = []
   private trackingInterval: ReturnType<typeof setInterval> | null = null
   private _enabled = false
+  private _peeking = false
+  private _desktopRevealed = false
+  private peekTimer: ReturnType<typeof setTimeout> | null = null
   private displayChangeHandler: (() => void) | null = null
   private suspendHandler: (() => void) | null = null
   private resumeHandler: (() => void) | null = null
 
-  /** Read current config from the persistent store */
+  /** Read current config from the persistent store, migrating legacy color keys */
   private getConf(): FocusDimConfig {
-    return getConfig(ToolId.FocusDim) as FocusDimConfig
+    const conf = getConfig(ToolId.FocusDim) as FocusDimConfig
+    // One-time migration: legacy color key → hex
+    if (conf.dim_color in LEGACY_COLOR_MAP) {
+      conf.dim_color = LEGACY_COLOR_MAP[conf.dim_color]
+      setConfig(ToolId.FocusDim, 'dim_color', conf.dim_color)
+    }
+    return conf
   }
 
   /** Persist a single config key */
@@ -70,7 +92,7 @@ class FocusDimService {
     setConfig(ToolId.FocusDim, key, value)
   }
 
-  /** Broadcast state change to all renderer windows */
+  /** Broadcast state change to all renderer windows + sync tray */
   private broadcastState(): void {
     const state = this.getState()
     const overlayIds = new Set(this.overlays.map((o) => o.window.id))
@@ -79,6 +101,11 @@ class FocusDimService {
         win.webContents.send(IPC_SEND.FOCUSDIM_STATE_CHANGED, state)
       }
     })
+    // Lazy-import to avoid circular dep (tray imports from windows, which imports services)
+    try {
+      const { rebuildTray } = require('../tray')
+      rebuildTray()
+    } catch { /* tray not ready yet during init */ }
   }
 
   // ─── Public API ──────────────────────────────────────────────────────────
@@ -100,7 +127,11 @@ class FocusDimService {
       opacity: conf.opacity,
       dimColor: conf.dim_color,
       showBorder: conf.show_border,
-      fadeDuration: conf.fade_duration
+      fadeDuration: conf.fade_duration,
+      peekDuration: conf.peek_duration,
+      peeking: this._peeking,
+      hotkey: conf.hotkey,
+      autoRevealDesktop: conf.auto_reveal_desktop
     }
   }
 
@@ -133,6 +164,7 @@ class FocusDimService {
 
   /** Disable the dim overlay */
   disable(): void {
+    this.cancelPeek()
     this._enabled = false
     this.setConf('enabled', false)
     this.stopTracking()
@@ -150,14 +182,147 @@ class FocusDimService {
     this.broadcastState()
   }
 
-  /** Set the dim color by key name */
-  setColor(colorKey: string): void {
-    if (!(colorKey in DIM_COLORS)) {
-      console.warn(`[FocusDim] Unknown color key: ${colorKey}`)
+  /** Set the dim color by hex value */
+  setColor(hex: string): void {
+    if (!HEX_RE.test(hex)) {
+      console.warn(`[FocusDim] Invalid hex color: ${hex}`)
       return
     }
-    this.setConf('dim_color', colorKey)
+    this.setConf('dim_color', hex)
     this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  /** Set fade duration in ms (0-5000) */
+  setFadeDuration(ms: number): void {
+    const clamped = Math.max(0, Math.min(5000, Math.round(ms)))
+    this.setConf('fade_duration', clamped)
+    // Rebuild overlays since fade is baked into CSS
+    if (this._enabled) {
+      this.destroyAllOverlays()
+      this.createOverlayWindows()
+    }
+    this.broadcastState()
+  }
+
+  /** Temporarily hide dim overlays, then auto-restore */
+  peek(): void {
+    if (!this._enabled) return
+
+    if (this._peeking) {
+      // Already peeking — cancel and restore immediately
+      this.cancelPeek()
+      return
+    }
+
+    this._peeking = true
+    // Hide all overlay divs
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var ids = ['dim-top','dim-left','dim-right','dim-bottom'];
+          for (var i = 0; i < ids.length; i++) {
+            var el = document.getElementById(ids[i]);
+            if (el) el.style.opacity = '0';
+          }
+          var border = document.getElementById('border-frame');
+          if (border) border.style.display = 'none';
+        })();
+      `).catch(() => {})
+    }
+    this.broadcastState()
+
+    const conf = this.getConf()
+    this.peekTimer = setTimeout(() => {
+      this.cancelPeek()
+    }, conf.peek_duration * 1000)
+  }
+
+  /** Cancel active peek and restore overlays */
+  private cancelPeek(): void {
+    if (this.peekTimer) {
+      clearTimeout(this.peekTimer)
+      this.peekTimer = null
+    }
+    this._peeking = false
+    this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  /** Set peek duration in seconds (1-10) */
+  setPeekDuration(seconds: number): void {
+    const clamped = Math.max(1, Math.min(10, Math.round(seconds)))
+    this.setConf('peek_duration', clamped)
+    this.broadcastState()
+  }
+
+  /** Set auto-reveal on desktop focus */
+  setAutoRevealDesktop(enabled: boolean): void {
+    this.setConf('auto_reveal_desktop', enabled)
+    this.broadcastState()
+  }
+
+  /**
+   * Change the toggle hotkey. Returns true on success.
+   * On failure, re-registers the old hotkey and returns false.
+   */
+  setHotkey(newAccelerator: string): boolean {
+    const conf = this.getConf()
+    const oldAccelerator = this.configToElectronAccelerator(conf.hotkey)
+    const newElectronAccel = this.configToElectronAccelerator(newAccelerator)
+
+    // Unregister old
+    try { globalShortcut.unregister(oldAccelerator) } catch { /* may not be registered */ }
+
+    // Try registering new
+    const ok = globalShortcut.register(newElectronAccel, () => this.toggle())
+    if (!ok) {
+      // Re-register old
+      globalShortcut.register(oldAccelerator, () => this.toggle())
+      console.warn(`[FocusDim] Failed to register hotkey: ${newElectronAccel}`)
+      return false
+    }
+
+    this.setConf('hotkey', newAccelerator)
+    console.log(`[FocusDim] Hotkey changed: ${oldAccelerator} → ${newElectronAccel}`)
+    this.broadcastState()
+    return true
+  }
+
+  /** Convert config format (ctrl+shift+d) to Electron accelerator (CommandOrControl+Shift+D) */
+  private configToElectronAccelerator(hotkey: string): string {
+    return hotkey
+      .split('+')
+      .map((part) => {
+        const lower = part.trim().toLowerCase()
+        if (lower === 'ctrl' || lower === 'control') return 'CommandOrControl'
+        if (lower === 'cmd' || lower === 'command') return 'CommandOrControl'
+        // Capitalize first letter for Electron format
+        return lower.charAt(0).toUpperCase() + lower.slice(1)
+      })
+      .join('+')
+  }
+
+  /** Get all displays with disabled state */
+  getDisplays(): DisplayInfo[] {
+    const conf = this.getConf()
+    const disabledSet = new Set(conf.disabled_displays)
+    return screen.getAllDisplays().map((d, i) => ({
+      id: d.id,
+      label: `Display ${i + 1} (${d.bounds.width}x${d.bounds.height})`,
+      bounds: d.bounds,
+      disabled: disabledSet.has(d.id)
+    }))
+  }
+
+  /** Set which displays are disabled, then rebuild overlays */
+  setDisabledDisplays(ids: number[]): void {
+    this.setConf('disabled_displays', ids)
+    if (this._enabled) {
+      this.destroyAllOverlays()
+      this.createOverlayWindows()
+    }
     this.broadcastState()
   }
 
@@ -170,6 +335,7 @@ class FocusDimService {
 
   /** Clean up when app is quitting */
   destroy(): void {
+    this.cancelPeek()
     this.stopTracking()
     this.stopListeningForDisplayChanges()
     this.destroyAllOverlays()
@@ -226,9 +392,11 @@ class FocusDimService {
   private createOverlayWindows(): void {
     this.destroyAllOverlays()
 
-    const displays = screen.getAllDisplays()
+    const allDisplays = screen.getAllDisplays()
     const conf = this.getConf()
-    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+    const hex = conf.dim_color
+    const disabledSet = new Set(conf.disabled_displays)
+    const displays = allDisplays.filter((d) => !disabledSet.has(d.id))
 
     for (const display of displays) {
       const { x, y, width, height } = display.bounds
@@ -368,10 +536,10 @@ class FocusDimService {
    * All other overlays get a full dim (no cutout).
    */
   private sendOverlayUpdate(rect: { x: number; y: number; w: number; h: number }): void {
-    if (this.overlays.length === 0) return
+    if (this.overlays.length === 0 || this._peeking) return
 
     const conf = this.getConf()
-    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+    const hex = conf.dim_color
     const activeOverlay = this.findOverlayForRect(rect)
 
     for (const entry of this.overlays) {
@@ -453,7 +621,7 @@ class FocusDimService {
   /** Push style-only updates to all overlays (no position change) */
   private updateAllOverlays(): void {
     const conf = this.getConf()
-    const hex = DIM_COLORS[conf.dim_color] || '#000000'
+    const hex = conf.dim_color
 
     for (const entry of this.overlays) {
       if (entry.window.isDestroyed()) continue
@@ -507,6 +675,7 @@ class FocusDimService {
     const activeWin = getActiveWindow()
 
     if (activeWin) {
+      this._desktopRevealed = false
       this.sendOverlayUpdate({
         x: activeWin.x,
         y: activeWin.y,
@@ -516,7 +685,29 @@ class FocusDimService {
       return
     }
 
-    // No valid foreground window (e.g., desktop is focused) — dim everything
+    // Desktop focused — auto-reveal hides overlays, otherwise dim everything
+    const conf = this.getConf()
+    if (conf.auto_reveal_desktop) {
+      if (!this._desktopRevealed) {
+        this._desktopRevealed = true
+        for (const entry of this.overlays) {
+          if (entry.window.isDestroyed()) continue
+          entry.window.webContents.executeJavaScript(`
+            (function() {
+              var ids = ['dim-top','dim-left','dim-right','dim-bottom'];
+              for (var i = 0; i < ids.length; i++) {
+                var el = document.getElementById(ids[i]);
+                if (el) el.style.opacity = '0';
+              }
+              var border = document.getElementById('border-frame');
+              if (border) border.style.display = 'none';
+            })();
+          `).catch(() => {})
+        }
+      }
+      return
+    }
+
     this.sendOverlayUpdate({ x: -10000, y: -10000, w: 1, h: 1 })
   }
 }

@@ -37,5 +37,6 @@ export const TOOL_DISPLAY_NAMES: Record<ToolId, string> = {
 /** Default hotkeys (matching Python app hotkeys) */
 export const DEFAULT_HOTKEYS: Partial<Record<ToolId, string>> = {
   [ToolId.FocusDim]: 'CommandOrControl+Shift+D',
-  [ToolId.QuickBoard]: 'CommandOrControl+Shift+V'
+  [ToolId.QuickBoard]: 'CommandOrControl+Shift+V',
+  [ToolId.MeetReady]: 'CommandOrControl+Shift+M'
 }

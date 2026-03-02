@@ -72,7 +72,13 @@ export const IPC_INVOKE = {
   FOCUSDIM_SET_OPACITY: 'focusdim:set-opacity',
   FOCUSDIM_SET_COLOR: 'focusdim:set-color',
   FOCUSDIM_SET_BORDER: 'focusdim:set-border',
+  FOCUSDIM_SET_FADE_DURATION: 'focusdim:set-fade-duration',
+  FOCUSDIM_PEEK: 'focusdim:peek',
+  FOCUSDIM_SET_PEEK_DURATION: 'focusdim:set-peek-duration',
   FOCUSDIM_GET_STATE: 'focusdim:get-state',
+  FOCUSDIM_SET_HOTKEY: 'focusdim:set-hotkey',
+  FOCUSDIM_GET_DISPLAYS: 'focusdim:get-displays',
+  FOCUSDIM_SET_DISABLED_DISPLAYS: 'focusdim:set-disabled-displays',
 
   // QuickBoard
   CLIPBOARD_GET_HISTORY: 'clipboard:get-history',
@@ -128,7 +134,17 @@ export const IPC_INVOKE = {
   TODOIST_GET_STATUS: 'todoist:get-status',
   TODOIST_GET_TASKS: 'todoist:get-tasks',
   TODOIST_COMPLETE_TASK: 'todoist:complete-task',
-  TODOIST_GET_PROJECTS: 'todoist:get-projects'
+  TODOIST_GET_PROJECTS: 'todoist:get-projects',
+
+  // Mic Mute (system-level, used by MeetReady hotkey)
+  MIC_GET_MUTE: 'mic:get-mute',
+  MIC_SET_MUTE: 'mic:set-mute',
+  MIC_TOGGLE_MUTE: 'mic:toggle-mute',
+
+  // Bug Report
+  BUGREPORT_SEND_EMAIL: 'bugreport:send-email',
+  BUGREPORT_COPY_TO_CLIPBOARD: 'bugreport:copy-to-clipboard',
+  BUGREPORT_REVEAL_LOG: 'bugreport:reveal-log'
 } as const
 
 /** Send channels (main → renderer, push notifications) */
@@ -148,5 +164,8 @@ export const IPC_SEND = {
   LIQUIDFOCUS_PHASE_COMPLETE: 'liquidfocus:phase-complete',
 
   // Todoist
-  TODOIST_STATUS_CHANGED: 'todoist:status-changed'
+  TODOIST_STATUS_CHANGED: 'todoist:status-changed',
+
+  // Mic Mute
+  MIC_MUTE_CHANGED: 'mic:mute-changed'
 } as const

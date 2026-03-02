@@ -20,7 +20,7 @@ import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService, initFocusDim } from './services/focus-dim'
-import type { FocusDimState } from './services/focus-dim'
+import type { FocusDimState, DisplayInfo } from './services/focus-dim'
 import { getClipboardService, initClipboard } from './services/clipboard'
 import type { ClipboardItem } from './services/clipboard'
 import { getCalendarService, initCalendar } from './services/google-calendar'
@@ -33,6 +33,8 @@ import { getSoundSplitBridge, initSoundSplit } from './sidecar/soundsplit-bridge
 import type { AudioSession, MasterAudio } from './sidecar/soundsplit-bridge'
 import { getTodoistService } from './services/todoist'
 import type { TodoistStatus, TodoistTask, TodoistProject } from './services/todoist'
+import { getMicMuteState, setMicMute, toggleMicMute } from './services/mic-mute'
+import type { MicMuteResult } from './services/mic-mute'
 
 /**
  * Start a tool's background service after install from the Dashboard.
@@ -248,9 +250,51 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_FADE_DURATION,
+    (_event, ms: number): void => {
+      getFocusDimService().setFadeDuration(ms)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_PEEK,
+    (): void => {
+      getFocusDimService().peek()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_PEEK_DURATION,
+    (_event, seconds: number): void => {
+      getFocusDimService().setPeekDuration(seconds)
+    }
+  )
+
+  ipcMain.handle(
     IPC_INVOKE.FOCUSDIM_GET_STATE,
     (): FocusDimState => {
       return getFocusDimService().getState()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_HOTKEY,
+    (_event, accelerator: string): boolean => {
+      return getFocusDimService().setHotkey(accelerator)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_GET_DISPLAYS,
+    (): DisplayInfo[] => {
+      return getFocusDimService().getDisplays()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_DISABLED_DISPLAYS,
+    (_event, ids: number[]): void => {
+      getFocusDimService().setDisabledDisplays(ids)
     }
   )
 
@@ -553,12 +597,63 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ─── Mic Mute ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.MIC_GET_MUTE,
+    async (): Promise<MicMuteResult> => {
+      return getMicMuteState()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.MIC_SET_MUTE,
+    async (_event, muted: boolean): Promise<MicMuteResult> => {
+      return setMicMute(muted)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.MIC_TOGGLE_MUTE,
+    async (): Promise<MicMuteResult> => {
+      return toggleMicMute()
+    }
+  )
+
   // ─── Window Management (open tool from Dashboard) ─────────────────────────
 
   ipcMain.handle(
     IPC_INVOKE.WINDOW_OPEN,
     async (_event, payload: { toolId: string }): Promise<void> => {
       await openToolWithAccessCheck(payload.toolId as WindowId)
+    }
+  )
+
+  // ─── Bug Report ─────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.BUGREPORT_SEND_EMAIL,
+    async (event): Promise<void> => {
+      const toolId = getToolIdFromSender(event) || undefined
+      const { sendViaEmail } = await import('./services/bug-report')
+      await sendViaEmail(toolId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.BUGREPORT_COPY_TO_CLIPBOARD,
+    async (event): Promise<void> => {
+      const toolId = getToolIdFromSender(event) || undefined
+      const { copyToClipboard } = await import('./services/bug-report')
+      await copyToClipboard(toolId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.BUGREPORT_REVEAL_LOG,
+    async (): Promise<void> => {
+      const { revealLogFile } = await import('./services/bug-report')
+      revealLogFile()
     }
   )
 

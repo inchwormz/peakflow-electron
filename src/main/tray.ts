@@ -11,6 +11,10 @@ import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@sh
 import { createToolWindow, openToolWithAccessCheck } from './windows'
 import { checkForUpdates } from './services/auto-updater'
 import { isToolInstalled } from './security/trial'
+import { sendViaEmail, revealLogFile } from './services/bug-report'
+import { getFocusDimService } from './services/focus-dim'
+import { getConfig } from './services/config-store'
+import type { FocusDimConfig } from '@shared/config-schemas'
 
 let tray: Tray | null = null
 
@@ -61,6 +65,52 @@ function buildContextMenu(): Electron.Menu {
 
   for (const id of TRAY_TOOL_ORDER) {
     if (!isToolInstalled(id)) continue
+
+    if (id === ToolId.FocusDim) {
+      // FocusDim gets a submenu with toggle + intensity presets + settings
+      const svc = getFocusDimService()
+      const fdState = svc.getState()
+      const conf = getConfig(ToolId.FocusDim) as FocusDimConfig
+      const hotkeyLabel = formatHotkeyLabel(
+        conf.hotkey.split('+').map(p => {
+          const l = p.trim().toLowerCase()
+          if (l === 'ctrl' || l === 'control') return 'Ctrl'
+          return l.charAt(0).toUpperCase() + l.slice(1)
+        }).join('+')
+      )
+
+      const intensityPresets = [
+        { label: 'Light (30%)', value: 0.3 },
+        { label: 'Medium (50%)', value: 0.5 },
+        { label: 'Heavy (70%)', value: 0.7 },
+        { label: 'Max (85%)', value: 0.85 }
+      ]
+
+      toolItems.push({
+        label: 'FocusDim',
+        submenu: [
+          {
+            label: fdState.enabled ? 'Disable' : 'Enable',
+            accelerator: hotkeyLabel,
+            click: (): void => { svc.toggle() }
+          },
+          { type: 'separator' },
+          ...intensityPresets.map((p) => ({
+            label: p.label,
+            type: 'radio' as const,
+            checked: Math.abs(p.value - fdState.opacity) < 0.02,
+            click: (): void => { svc.setOpacity(p.value) }
+          })),
+          { type: 'separator' as const },
+          {
+            label: 'Settings...',
+            click: (): void => { openToolWithAccessCheck(ToolId.FocusDim) }
+          }
+        ]
+      })
+      continue
+    }
+
     const hotkey = DEFAULT_HOTKEYS[id]
     toolItems.push({
       label: TOOL_DISPLAY_NAMES[id],
@@ -87,6 +137,13 @@ function buildContextMenu(): Electron.Menu {
       click: (): void => {
         checkForUpdates()
       }
+    },
+    {
+      label: 'Report a Bug',
+      submenu: [
+        { label: 'Send via Email', click: (): void => { sendViaEmail() } },
+        { label: 'Open Log File', click: (): void => { revealLogFile() } }
+      ]
     },
     { type: 'separator' },
     {
