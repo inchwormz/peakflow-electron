@@ -12,6 +12,9 @@ export interface FocusDimConfig {
   dim_color: string
   show_border: boolean
   fade_duration: number
+  peek_duration: number
+  auto_reveal_desktop: boolean
+  disabled_displays: number[]
 }
 
 export interface QuickBoardConfig {
@@ -74,9 +77,12 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     opacity: 0.6,
     enabled: false,
     hotkey: 'ctrl+shift+d',
-    dim_color: 'black',
+    dim_color: '#000000',
     show_border: true,
-    fade_duration: 200
+    fade_duration: 200,
+    peek_duration: 3,
+    auto_reveal_desktop: true,
+    disabled_displays: []
   },
   [ToolId.QuickBoard]: {
     max_entries: 100,

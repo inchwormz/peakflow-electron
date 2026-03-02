@@ -13,7 +13,10 @@ import { globalShortcut } from 'electron'
 import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
+import { toggleMicMute } from './services/mic-mute'
 import { isToolInstalled } from './security/trial'
+import { getConfig } from './services/config-store'
+import type { FocusDimConfig } from '@shared/config-schemas'
 
 /**
  * Toggle a tool window: close it if open, create it if not.
@@ -36,12 +39,37 @@ function toggleTool(toolId: ToolId): void {
  * FocusDim has special handling: Ctrl+Shift+D toggles the dim overlay
  * (not the settings window). The settings window is opened from the tray.
  */
+/** Convert config format (ctrl+shift+d) to Electron accelerator (CommandOrControl+Shift+D) */
+function configToElectronAccelerator(hotkey: string): string {
+  return hotkey
+    .split('+')
+    .map((part) => {
+      const lower = part.trim().toLowerCase()
+      if (lower === 'ctrl' || lower === 'control') return 'CommandOrControl'
+      if (lower === 'cmd' || lower === 'command') return 'CommandOrControl'
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    })
+    .join('+')
+}
+
 export function registerHotkeys(): void {
   for (const [toolId, accelerator] of Object.entries(DEFAULT_HOTKEYS)) {
     if (!accelerator) continue
     if (!isToolInstalled(toolId)) continue
 
+    // For FocusDim, use the config hotkey instead of default
+    if (toolId === ToolId.FocusDim) {
+      const conf = getConfig(ToolId.FocusDim) as FocusDimConfig
+      registerSingleHotkey(ToolId.FocusDim, configToElectronAccelerator(conf.hotkey))
+      continue
+    }
+
     registerSingleHotkey(toolId as ToolId, accelerator)
+  }
+
+  // FocusDim feature hotkeys (intensity + peek)
+  if (isToolInstalled(ToolId.FocusDim)) {
+    registerFocusDimFeatureHotkeys()
   }
 }
 
@@ -50,13 +78,24 @@ export function registerHotkeys(): void {
  * so the hotkey works immediately without restarting the app.
  */
 export function registerToolHotkey(toolId: ToolId): void {
-  const accelerator = DEFAULT_HOTKEYS[toolId]
+  let accelerator: string | undefined
+  if (toolId === ToolId.FocusDim) {
+    const conf = getConfig(ToolId.FocusDim) as FocusDimConfig
+    accelerator = configToElectronAccelerator(conf.hotkey)
+  } else {
+    accelerator = DEFAULT_HOTKEYS[toolId]
+  }
   if (!accelerator) return
 
   // Don't double-register if already active
   if (globalShortcut.isRegistered(accelerator)) return
 
   registerSingleHotkey(toolId, accelerator)
+
+  // Also register FocusDim feature hotkeys on install
+  if (toolId === ToolId.FocusDim) {
+    registerFocusDimFeatureHotkeys()
+  }
 }
 
 /** Internal: register a single accelerator → tool binding. */
@@ -65,6 +104,9 @@ function registerSingleHotkey(toolId: ToolId, accelerator: string): void {
     if (toolId === ToolId.FocusDim) {
       // FocusDim hotkey toggles the dim effect, not the settings window
       getFocusDimService().toggle()
+    } else if (toolId === ToolId.MeetReady) {
+      // MeetReady hotkey toggles mic mute, not the window
+      toggleMicMute()
     } else {
       toggleTool(toolId)
     }
@@ -77,6 +119,44 @@ function registerSingleHotkey(toolId: ToolId, accelerator: string): void {
       `[PeakFlow] Failed to register hotkey ${accelerator} for ${toolId}. ` +
         'Another application may be using this shortcut.'
     )
+  }
+}
+
+/**
+ * Register FocusDim feature hotkeys: intensity up/down + peek.
+ */
+function registerFocusDimFeatureHotkeys(): void {
+  const svc = getFocusDimService()
+
+  const featureKeys: Array<{ accel: string; label: string; action: () => void }> = [
+    {
+      accel: 'Ctrl+Alt+Up',
+      label: 'intensity up',
+      action: () => {
+        const st = svc.getState()
+        svc.setOpacity(Math.round(Math.min(1, st.opacity + 0.1) * 100) / 100)
+      }
+    },
+    {
+      accel: 'Ctrl+Alt+Down',
+      label: 'intensity down',
+      action: () => {
+        const st = svc.getState()
+        svc.setOpacity(Math.round(Math.max(0, st.opacity - 0.1) * 100) / 100)
+      }
+    },
+    {
+      accel: 'Ctrl+Alt+`',
+      label: 'peek',
+      action: () => svc.peek()
+    }
+  ]
+
+  for (const fk of featureKeys) {
+    if (globalShortcut.isRegistered(fk.accel)) continue
+    const ok = globalShortcut.register(fk.accel, fk.action)
+    if (ok) console.log(`[PeakFlow] Hotkey registered: ${fk.accel} -> FocusDim ${fk.label}`)
+    else console.warn(`[PeakFlow] Failed to register ${fk.accel}`)
   }
 }
 

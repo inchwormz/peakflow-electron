@@ -45,11 +45,11 @@ const PRESETS = [
   { value: 0.85, pct: '85%', label: 'Max' }
 ]
 
-const DIM_COLORS = [
-  { key: 'black', hex: '#000000', label: 'Black' },
-  { key: 'dark_purple', hex: '#1a0a2e', label: 'Purple' },
-  { key: 'dark_blue', hex: '#0a1628', label: 'Blue' },
-  { key: 'dark_gray', hex: '#151515', label: 'Gray' }
+const DIM_COLOR_PRESETS = [
+  { hex: '#000000', label: 'Black' },
+  { hex: '#1a0a2e', label: 'Purple' },
+  { hex: '#0a1628', label: 'Blue' },
+  { hex: '#151515', label: 'Gray' }
 ]
 
 interface FocusDimState {
@@ -58,6 +58,17 @@ interface FocusDimState {
   dimColor: string
   showBorder: boolean
   fadeDuration: number
+  peekDuration: number
+  peeking: boolean
+  hotkey: string
+  autoRevealDesktop: boolean
+}
+
+interface DisplayInfo {
+  id: number
+  label: string
+  bounds: Electron.Rectangle
+  disabled: boolean
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -66,10 +77,19 @@ export function FocusDim(): React.JSX.Element {
   const [state, setState] = useState<FocusDimState>({
     enabled: false,
     opacity: 0.6,
-    dimColor: 'black',
+    dimColor: '#000000',
     showBorder: true,
-    fadeDuration: 200
+    fadeDuration: 200,
+    peekDuration: 3,
+    peeking: false,
+    hotkey: 'ctrl+shift+d',
+    autoRevealDesktop: true
   })
+
+  const [displays, setDisplays] = useState<DisplayInfo[]>([])
+  const [recording, setRecording] = useState(false)
+
+  const [hexInput, setHexInput] = useState('#000000')
 
   const sliderRef = useRef<HTMLInputElement>(null)
 
@@ -78,8 +98,13 @@ export function FocusDim(): React.JSX.Element {
   useEffect(() => {
     window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_GET_STATE).then((s) => {
       if (s && typeof s === 'object') {
-        setState(s as FocusDimState)
+        const st = s as FocusDimState
+        setState(st)
+        setHexInput(st.dimColor)
       }
+    })
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_GET_DISPLAYS).then((d) => {
+      if (Array.isArray(d)) setDisplays(d as DisplayInfo[])
     })
   }, [])
 
@@ -88,7 +113,9 @@ export function FocusDim(): React.JSX.Element {
   useEffect(() => {
     const unsub = window.peakflow.on(IPC_SEND.FOCUSDIM_STATE_CHANGED, (s: unknown) => {
       if (s && typeof s === 'object') {
-        setState(s as FocusDimState)
+        const st = s as FocusDimState
+        setState(st)
+        setHexInput(st.dimColor)
       }
     })
     return unsub
@@ -107,15 +134,52 @@ export function FocusDim(): React.JSX.Element {
     setState((prev) => ({ ...prev, opacity }))
   }, [])
 
-  const handleSetColor = useCallback((colorKey: string) => {
-    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_COLOR, colorKey)
-    setState((prev) => ({ ...prev, dimColor: colorKey }))
+  const handleSetColor = useCallback((hex: string) => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_COLOR, hex)
+    setState((prev) => ({ ...prev, dimColor: hex }))
+    setHexInput(hex)
+  }, [])
+
+  const handleSetFadeDuration = useCallback((ms: number) => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_FADE_DURATION, ms)
+    setState((prev) => ({ ...prev, fadeDuration: ms }))
+  }, [])
+
+  const handleSetPeekDuration = useCallback((seconds: number) => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_PEEK_DURATION, seconds)
+    setState((prev) => ({ ...prev, peekDuration: seconds }))
   }, [])
 
   const handleSetBorder = useCallback((show: boolean) => {
     window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_BORDER, show)
     setState((prev) => ({ ...prev, showBorder: show }))
   }, [])
+
+  const handleSetAutoRevealDesktop = useCallback((enabled: boolean) => {
+    window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
+      tool: 'focusdim',
+      key: 'auto_reveal_desktop',
+      value: enabled
+    })
+    setState((prev) => ({ ...prev, autoRevealDesktop: enabled }))
+  }, [])
+
+  const handleSetHotkey = useCallback((hotkey: string) => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_HOTKEY, hotkey).then((ok) => {
+      if (ok) {
+        setState((prev) => ({ ...prev, hotkey }))
+      }
+    })
+  }, [])
+
+  const handleToggleDisplay = useCallback((displayId: number, currentlyDisabled: boolean) => {
+    const newDisplays = displays.map((d) =>
+      d.id === displayId ? { ...d, disabled: !currentlyDisabled } : d
+    )
+    setDisplays(newDisplays)
+    const disabledIds = newDisplays.filter((d) => d.disabled).map((d) => d.id)
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_DISABLED_DISPLAYS, disabledIds)
+  }, [displays])
 
   const handlePresetClick = useCallback(
     (value: number) => {
@@ -138,8 +202,7 @@ export function FocusDim(): React.JSX.Element {
   // ── Derived values ─────────────────────────────────────────────────────
 
   const sliderPct = Math.round(state.opacity * 100)
-  const dimColorHex =
-    DIM_COLORS.find((c) => c.key === state.dimColor)?.hex ?? '#000000'
+  const dimColorHex = state.dimColor
 
   // Preview opacity: show a muted preview when disabled, full when enabled
   const previewOpacity = state.enabled ? state.opacity : 0.15
@@ -257,15 +320,65 @@ export function FocusDim(): React.JSX.Element {
         <SectionLabel>Dim Color</SectionLabel>
 
         <div style={{ display: 'flex', gap: 10, padding: '4px 0' }}>
-          {DIM_COLORS.map((c) => (
+          {DIM_COLOR_PRESETS.map((c) => (
             <ColorSwatch
-              key={c.key}
+              key={c.hex}
               hex={c.hex}
               label={c.label}
-              active={c.key === state.dimColor}
-              onClick={() => handleSetColor(c.key)}
+              active={c.hex === state.dimColor}
+              onClick={() => handleSetColor(c.hex)}
             />
           ))}
+        </div>
+
+        {/* Custom hex input */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 0'
+          }}
+        >
+          <div
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: '50%',
+              background: dimColorHex,
+              border: `2px solid ${DS.borderActive}`,
+              flexShrink: 0
+            }}
+          />
+          <input
+            type="text"
+            value={hexInput}
+            onChange={(e) => setHexInput(e.target.value)}
+            onBlur={() => {
+              if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hexInput)) {
+                handleSetColor(hexInput)
+              } else {
+                setHexInput(state.dimColor)
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                (e.target as HTMLInputElement).blur()
+              }
+            }}
+            style={{
+              width: 80,
+              padding: '4px 8px',
+              background: DS.surface,
+              border: `1px solid ${DS.border}`,
+              borderRadius: 6,
+              color: DS.textSecondary,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              outline: 'none'
+            }}
+          />
+          <span style={{ fontSize: 10, color: DS.textLabel }}>Custom</span>
         </div>
 
         {/* ── Options Section ── */}
@@ -289,30 +402,286 @@ export function FocusDim(): React.JSX.Element {
           />
         </div>
 
+        {/* Fade speed slider */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px 0'
+            padding: '12px 0',
+            borderBottom: `1px solid ${DS.surface}`
           }}
         >
           <span style={{ fontSize: 13, color: DS.textSecondary }}>
-            Keyboard shortcut
+            Fade speed
           </span>
-          <span
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="range"
+              min={0}
+              max={5000}
+              step={100}
+              value={state.fadeDuration}
+              onChange={(e) => handleSetFadeDuration(parseInt(e.target.value))}
+              style={{ ...sliderStyle, width: 100 }}
+            />
+            <span
+              style={{
+                fontSize: 11,
+                color: DS.textDim,
+                width: 48,
+                textAlign: 'right'
+              }}
+            >
+              {state.fadeDuration === 0 ? 'Instant' : `${state.fadeDuration}ms`}
+            </span>
+          </div>
+        </div>
+
+        {/* Peek duration slider */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '12px 0',
+            borderBottom: `1px solid ${DS.surface}`
+          }}
+        >
+          <span style={{ fontSize: 13, color: DS.textSecondary }}>
+            Peek duration
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={1}
+              value={state.peekDuration}
+              onChange={(e) => handleSetPeekDuration(parseInt(e.target.value))}
+              style={{ ...sliderStyle, width: 100 }}
+            />
+            <span
+              style={{
+                fontSize: 11,
+                color: DS.textDim,
+                width: 24,
+                textAlign: 'right'
+              }}
+            >
+              {state.peekDuration}s
+            </span>
+          </div>
+        </div>
+
+        {/* Hide on desktop focus */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '12px 0',
+            borderBottom: `1px solid ${DS.surface}`
+          }}
+        >
+          <span style={{ fontSize: 13, color: DS.textSecondary }}>
+            Hide on desktop focus
+          </span>
+          <Toggle
+            checked={state.autoRevealDesktop}
+            onChange={() => handleSetAutoRevealDesktop(!state.autoRevealDesktop)}
+          />
+        </div>
+
+        {/* Keyboard shortcuts */}
+        <SectionLabel>Shortcuts</SectionLabel>
+
+        {/* Toggle dim — editable hotkey */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '6px 0'
+          }}
+        >
+          <span style={{ fontSize: 12, color: DS.textSecondary }}>
+            Toggle dim
+          </span>
+          {recording ? (
+            <HotkeyRecorder
+              onRecord={(combo) => {
+                setRecording(false)
+                handleSetHotkey(combo)
+              }}
+              onCancel={() => setRecording(false)}
+            />
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span
+                style={{
+                  fontSize: 11,
+                  color: DS.textDim,
+                  fontWeight: 500,
+                  letterSpacing: '0.5px'
+                }}
+              >
+                {formatHotkeyDisplay(state.hotkey)}
+              </span>
+              <button
+                onClick={() => setRecording(true)}
+                style={{
+                  fontSize: 9,
+                  color: DS.textMuted,
+                  background: DS.surface,
+                  border: `1px solid ${DS.border}`,
+                  borderRadius: 4,
+                  padding: '2px 6px',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit'
+                }}
+              >
+                Change
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Static shortcuts */}
+        {[
+          { label: 'Intensity up', shortcut: 'Ctrl+Alt+Up' },
+          { label: 'Intensity down', shortcut: 'Ctrl+Alt+Down' },
+          { label: 'Peek', shortcut: 'Ctrl+Alt+`' }
+        ].map((s) => (
+          <div
+            key={s.shortcut}
             style={{
-              fontSize: 13,
-              color: DS.textDim,
-              fontWeight: 500,
-              letterSpacing: '1px'
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '6px 0'
             }}
           >
-            Ctrl+Shift+D
-          </span>
-        </div>
+            <span style={{ fontSize: 12, color: DS.textSecondary }}>
+              {s.label}
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                color: DS.textDim,
+                fontWeight: 500,
+                letterSpacing: '0.5px'
+              }}
+            >
+              {s.shortcut}
+            </span>
+          </div>
+        ))}
+
+        {/* Displays section — only if 2+ displays */}
+        {displays.length >= 2 && (
+          <>
+            <SectionLabel>Displays</SectionLabel>
+            {displays.map((d) => (
+              <div
+                key={d.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 0',
+                  borderBottom: `1px solid ${DS.surface}`
+                }}
+              >
+                <span style={{ fontSize: 13, color: DS.textSecondary }}>
+                  {d.label}
+                </span>
+                <Toggle
+                  checked={!d.disabled}
+                  onChange={() => handleToggleDisplay(d.id, d.disabled)}
+                />
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </>
+  )
+}
+
+// ─── Hotkey helpers ──────────────────────────────────────────────────────────
+
+/** Format config hotkey (ctrl+shift+d) for display (Ctrl+Shift+D) */
+function formatHotkeyDisplay(hotkey: string): string {
+  return hotkey
+    .split('+')
+    .map((p) => {
+      const l = p.trim().toLowerCase()
+      if (l === 'ctrl' || l === 'control') return 'Ctrl'
+      if (l === 'cmd' || l === 'command') return 'Cmd'
+      if (l === 'commandorcontrol') return 'Ctrl'
+      return l.charAt(0).toUpperCase() + l.slice(1)
+    })
+    .join('+')
+}
+
+/** Map DOM key event to combo string for config format */
+function HotkeyRecorder({
+  onRecord,
+  onCancel
+}: {
+  onRecord: (combo: string) => void
+  onCancel: () => void
+}): React.JSX.Element {
+  const [keys, setKeys] = useState<string[]>([])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (e.key === 'Escape') {
+        onCancel()
+        return
+      }
+
+      // Only capture when a non-modifier key is pressed
+      const modifiers: string[] = []
+      if (e.ctrlKey) modifiers.push('ctrl')
+      if (e.altKey) modifiers.push('alt')
+      if (e.shiftKey) modifiers.push('shift')
+      if (e.metaKey) modifiers.push('meta')
+
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+
+      // Ignore lone modifier presses
+      if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+        setKeys(modifiers)
+        return
+      }
+
+      if (modifiers.length === 0) return // Need at least one modifier
+
+      const combo = [...modifiers, key].join('+')
+      onRecord(combo)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onRecord, onCancel])
+
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        color: DS.green,
+        fontWeight: 500,
+        letterSpacing: '0.5px',
+        animation: 'pulse 1.5s infinite'
+      }}
+    >
+      {keys.length > 0 ? formatHotkeyDisplay(keys.join('+')) + '+...' : 'Press keys...'}
+    </span>
   )
 }
 

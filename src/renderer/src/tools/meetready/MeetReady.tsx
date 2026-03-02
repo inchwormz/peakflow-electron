@@ -156,6 +156,10 @@ export function MeetReady(): React.JSX.Element {
   const [lightStatus, setLightStatus] = useState<LightingStatus>('Unknown')
   const [micStatus, setMicStatus] = useState<MicStatus>('Silent')
 
+  // System mic mute state
+  const [micMuted, setMicMuted] = useState(false)
+  const [micMuteError, setMicMuteError] = useState<string | null>(null)
+
   // Pending setting changes (camera/mic index to apply on save)
   const [pendingCamId, setPendingCamId] = useState<string>('')
   const [pendingMicId, setPendingMicId] = useState<string>('')
@@ -168,14 +172,17 @@ export function MeetReady(): React.JSX.Element {
 
   const loadData = useCallback(async () => {
     try {
-      const [statusRes, eventsRes, configRes] = await Promise.all([
+      const [statusRes, eventsRes, configRes, micRes] = await Promise.all([
         api.invoke(IPC_INVOKE.CALENDAR_GET_STATUS) as Promise<CalendarStatus>,
         api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS) as Promise<CalendarEvent[]>,
-        api.invoke(IPC_INVOKE.CONFIG_GET, { tool: ToolId.MeetReady }) as Promise<MeetReadyConfig | null>
+        api.invoke(IPC_INVOKE.CONFIG_GET, { tool: ToolId.MeetReady }) as Promise<MeetReadyConfig | null>,
+        api.invoke(IPC_INVOKE.MIC_GET_MUTE) as Promise<{ muted: boolean; error: string | null }>
       ])
       setCalStatus(statusRes)
       setEvents(eventsRes ?? [])
       if (configRes) setConfig(configRes)
+      setMicMuted(micRes.muted)
+      setMicMuteError(micRes.error)
     } catch (err) {
       console.error('[MeetReady] Failed to load data:', err)
     }
@@ -227,9 +234,14 @@ export function MeetReady(): React.JSX.Element {
     const unsubStatus = api.on(IPC_SEND.CALENDAR_STATUS_CHANGED, (st: unknown) => {
       setCalStatus(st as CalendarStatus)
     })
+    const unsubMicMute = api.on(IPC_SEND.MIC_MUTE_CHANGED, (muted: unknown) => {
+      setMicMuted(muted as boolean)
+      setMicMuteError(null)
+    })
     return () => {
       unsubEvents()
       unsubStatus()
+      unsubMicMute()
     }
   }, [])
 
@@ -251,6 +263,19 @@ export function MeetReady(): React.JSX.Element {
   const onMicLevel = useCallback((result: MicResult) => {
     setMicStatus(result.status)
   }, [])
+
+  const handleMicMuteToggle = async (): Promise<void> => {
+    try {
+      const res = (await api.invoke(IPC_INVOKE.MIC_TOGGLE_MUTE)) as {
+        muted: boolean
+        error: string | null
+      }
+      setMicMuted(res.muted)
+      setMicMuteError(res.error)
+    } catch (err) {
+      console.error('[MeetReady] Mic mute toggle failed:', err)
+    }
+  }
 
   const updateConfig = async (key: string, value: unknown): Promise<void> => {
     try {
@@ -319,7 +344,7 @@ export function MeetReady(): React.JSX.Element {
 
   // Readiness assessment
   const lightOk = lightStatus === 'Good'
-  const micOk = micStatus === 'Active'
+  const micOk = micStatus === 'Active' && !micMuted
   const allGood = lightOk && micOk
 
   const lightDotColor = getLightingDotColor(lightStatus)
@@ -404,15 +429,20 @@ export function MeetReady(): React.JSX.Element {
 
               {/* Microphone card */}
               <div style={styles.statusCard}>
-                <div style={styles.statusLabel}>Microphone</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={styles.statusLabel}>Microphone</div>
+                  <MicMuteBtn muted={micMuted} error={micMuteError} onClick={handleMicMuteToggle} />
+                </div>
                 <div style={styles.statusInfo}>
                   <div
                     style={{
                       ...styles.statusDot,
-                      background: dotColors[micDotColor]
+                      background: micMuted ? dotColors.red : dotColors[micDotColor]
                     }}
                   />
-                  <span style={styles.statusText}>{micStatus}</span>
+                  <span style={styles.statusText}>
+                    {micMuted ? 'Muted' : micStatus}
+                  </span>
                 </div>
                 <AudioMeter stream={audioStream} onLevel={onMicLevel} />
               </div>
@@ -433,7 +463,7 @@ export function MeetReady(): React.JSX.Element {
                   &#9888; Check{' '}
                   {[
                     !lightOk ? 'lighting' : null,
-                    !micOk ? 'microphone' : null
+                    !micOk ? (micMuted ? 'microphone (muted)' : 'microphone') : null
                   ]
                     .filter(Boolean)
                     .join(' & ')}
@@ -651,6 +681,62 @@ function ToggleSwitch({
         }}
       />
     </div>
+  )
+}
+
+function MicMuteBtn({
+  muted,
+  error,
+  onClick
+}: {
+  muted: boolean
+  error: string | null
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: '50%',
+        border: 'none',
+        background: muted ? 'rgba(240,88,88,0.2)' : 'rgba(255,255,255,0.06)',
+        color: muted ? DS.error : DS.textDim,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        transition: 'all 0.2s',
+        outline: 'none',
+        flexShrink: 0
+      }}
+      title={error ? error : muted ? 'Unmute mic (Ctrl+Shift+M)' : 'Mute mic (Ctrl+Shift+M)'}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = muted ? 'rgba(240,88,88,0.3)' : 'rgba(255,255,255,0.12)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = muted ? 'rgba(240,88,88,0.2)' : 'rgba(255,255,255,0.06)'
+      }}
+    >
+      {muted ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="1" y1="1" x2="23" y2="23" />
+          <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+          <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.48-.35 2.17" />
+          <line x1="12" y1="19" x2="12" y2="23" />
+          <line x1="8" y1="23" x2="16" y2="23" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+          <line x1="12" y1="19" x2="12" y2="23" />
+          <line x1="8" y1="23" x2="16" y2="23" />
+        </svg>
+      )}
+    </button>
   )
 }
 
