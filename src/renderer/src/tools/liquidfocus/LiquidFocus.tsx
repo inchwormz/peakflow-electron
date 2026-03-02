@@ -269,7 +269,11 @@ export function LiquidFocus(): React.JSX.Element {
   const handleSelectTask = useCallback(async (index: number) => {
     await window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_SET_ACTIVE_TASK, index)
     setTimer((prev) => ({ ...prev, activeTaskIndex: index }))
-  }, [])
+    // Auto-start timer (no-op if already running)
+    handleStart()
+    // Navigate to timer view so user sees countdown with task name
+    setView('timer')
+  }, [handleStart])
 
   // ── Render ────────────────────────────────────────────────────────────
 
