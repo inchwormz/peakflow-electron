@@ -5,7 +5,7 @@
  * Config handlers use persistent electron-store.
  */
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, shell } from 'electron'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
@@ -192,6 +192,12 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (win && !win.isDestroyed()) {
       win.close()
+    }
+  })
+
+  ipcMain.handle(IPC_INVOKE.SHELL_OPEN_EXTERNAL, async (_event, url: string): Promise<void> => {
+    if (typeof url === 'string' && url.startsWith('https://')) {
+      await shell.openExternal(url)
     }
   })
 
