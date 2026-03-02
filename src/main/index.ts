@@ -23,9 +23,12 @@ import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
+import { initLogger, flushLogger, crashWrite } from './services/logger'
+import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
 import { migrateExistingInstalls, isToolInstalled } from './security/trial'
 import { setAppQuitting, createToolWindow } from './windows'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { existsSync, readFileSync, unlinkSync } from 'fs'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
 
@@ -33,9 +36,59 @@ import { ToolId, SystemWindowId } from '@shared/tool-ids'
 // (happens when the parent shell/pipe that launched electron is closed)
 process.on('uncaughtException', (err) => {
   if ((err as NodeJS.ErrnoException).code === 'EPIPE') return // harmless
-  // For real errors, log to stderr (less likely to EPIPE) and continue
+  // Sync write to log file — guaranteed on disk even if process dies next
+  crashWrite('FATAL', `Uncaught exception: ${err.message}\n${err.stack}`)
   process.stderr.write(`[PeakFlow] Uncaught exception: ${err.message}\n${err.stack}\n`)
 })
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason)
+  crashWrite('FATAL', `Unhandled rejection: ${msg}`)
+  process.stderr.write(`[PeakFlow] Unhandled rejection: ${msg}\n`)
+})
+
+// ─── Crash Recovery ─────────────────────────────────────────────────────────
+
+/**
+ * If the previous session wrote a crash marker (watchdog kill or renderer freeze),
+ * show a recovery dialog offering to send a crash report.
+ */
+function checkCrashMarker(): void {
+  const markerPath = getCrashMarkerPath()
+  if (!existsSync(markerPath)) return
+
+  let marker: { timestamp?: string; reason?: string; elapsed?: number } = {}
+  try {
+    marker = JSON.parse(readFileSync(markerPath, 'utf-8'))
+    unlinkSync(markerPath) // consume the marker so it doesn't trigger again
+  } catch {
+    // Corrupt marker — just delete it
+    try { unlinkSync(markerPath) } catch { /* ignore */ }
+    return
+  }
+
+  const frozenFor = marker.elapsed ? `${Math.round(marker.elapsed / 1000)}s` : 'unknown'
+  const when = marker.timestamp ?? 'unknown time'
+
+  // Delay so the app finishes initializing before showing a modal
+  setTimeout(async () => {
+    const { dialog: d } = require('electron')
+    const result = await d.showMessageBox({
+      type: 'error',
+      title: 'PeakFlow Crashed',
+      message: 'PeakFlow stopped responding and had to restart.',
+      detail: `Frozen for ${frozenFor} at ${when}.\n\nSending a crash report helps us fix this.`,
+      buttons: ['Send Crash Report', 'Dismiss'],
+      defaultId: 0,
+      noLink: true
+    })
+
+    if (result.response === 0) {
+      const { sendViaEmail } = require('./services/bug-report')
+      sendViaEmail()
+    }
+  }, 2000)
+}
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 
@@ -58,7 +111,16 @@ if (!gotLock) {
 
   // ─── App Ready ───────────────────────────────────────────────────────────────
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    // Initialize persistent logger FIRST so all subsequent console.* calls are captured
+    await initLogger()
+
+    // Start watchdog heartbeat monitor (detects main process freezes)
+    initWatchdog()
+
+    // If the previous session crashed, show a recovery dialog after a short delay
+    checkCrashMarker()
+
     // Set app user model id for Windows (used for taskbar grouping & notifications)
     electronApp.setAppUserModelId('pro.getpeakflow.core')
 
@@ -76,8 +138,12 @@ if (!gotLock) {
     })
 
     // Optimize window creation in dev — attach devtools on F12, etc.
+    // Also log renderer crashes so they survive in the log file
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
+      window.webContents.on('render-process-gone', (_event, details) => {
+        crashWrite('FATAL', `Renderer crashed: ${window.getTitle()} — reason=${details.reason}, exitCode=${details.exitCode}`)
+      })
     })
 
     // Custom protocol for serving QuickBoard images without IPC overhead
@@ -146,6 +212,7 @@ if (!gotLock) {
 
   // Cleanup before quitting
   app.on('before-quit', () => {
+    destroyWatchdog() // FIRST — stop watchdog before teardown to prevent false positives
     setAppQuitting(true)
     console.log('[PeakFlow] Shutting down...')
     destroyExtensionServer()
@@ -158,5 +225,6 @@ if (!gotLock) {
     destroyFocusDim()
     unregisterHotkeys()
     destroyTray()
+    flushLogger()
   })
 }
