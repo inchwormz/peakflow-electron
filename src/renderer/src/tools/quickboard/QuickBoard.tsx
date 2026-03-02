@@ -323,7 +323,8 @@ export function QuickBoard(): React.JSX.Element {
                 {filteredHistory.length} items
               </span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* @ts-expect-error -- Electron-specific CSS */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' }}>
               <NavButton icon="&#9881;" onClick={switchToSettings} />
               <NavButton icon="&#8212;" onClick={handleMinimize} />
               <NavButton icon="&#10005;" onClick={handleClose} isClose />
@@ -398,7 +399,8 @@ export function QuickBoard(): React.JSX.Element {
         >
           {/* Settings nav bar */}
           <div style={navBarStyle}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+            {/* @ts-expect-error -- Electron-specific CSS */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, WebkitAppRegion: 'no-drag' }}>
               <NavButton icon="&#9664;" onClick={switchToMain} />
               <span style={{ fontSize: 16, fontWeight: 600, color: DS.textPrimary }}>
                 Settings
@@ -790,7 +792,9 @@ const navBarStyle: CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   padding: '20px 24px 0',
-  flexShrink: 0
+  flexShrink: 0,
+  // @ts-expect-error -- Electron-specific CSS property for window dragging
+  WebkitAppRegion: 'drag'
 }
 
 const searchBoxStyle: CSSProperties = {

@@ -119,6 +119,9 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats',
   LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
 
+  // Shell
+  SHELL_OPEN_EXTERNAL: 'shell:open-external',
+
   // Todoist
   TODOIST_AUTHENTICATE: 'todoist:authenticate',
   TODOIST_DISCONNECT: 'todoist:disconnect',
