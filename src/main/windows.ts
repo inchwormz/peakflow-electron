@@ -6,7 +6,7 @@
  * `-webkit-app-region: drag` CSS property.
  */
 
-import { app, BrowserWindow, nativeImage, screen } from 'electron'
+import { app, BrowserWindow, dialog, nativeImage, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
@@ -243,6 +243,50 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
   }
 
   windowMap.set(toolId, win)
+
+  // ─── Renderer freeze detection ──────────────────────────────────────────
+  // Electron fires 'unresponsive' when the renderer stops processing messages.
+  // We give it 30s to recover before offering to kill it.
+  let freezeTimer: ReturnType<typeof setTimeout> | null = null
+
+  win.on('unresponsive', () => {
+    console.warn(`[PeakFlow] Renderer unresponsive: ${toolId}`)
+    if (freezeTimer) return // already timing
+
+    freezeTimer = setTimeout(() => {
+      if (win.isDestroyed()) return
+
+      // Sync-write the freeze event to the log file
+      const { crashWrite } = require('./services/logger')
+      crashWrite('FATAL', `Renderer frozen for 30s: ${toolId} — prompting user`)
+
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'Tool Not Responding',
+        message: `${toolId} has stopped responding.`,
+        detail: 'You can close it and send a crash report, or wait for it to recover.',
+        buttons: ['Close Tool', 'Wait'],
+        defaultId: 0,
+        noLink: true
+      }).then((result) => {
+        if (result.response === 0 && !win.isDestroyed()) {
+          // win.destroy() bypasses close interceptors (Dashboard hide, LiquidFocus hide)
+          win.destroy()
+          const { sendViaEmail } = require('./services/bug-report')
+          sendViaEmail(toolId)
+        }
+      })
+    }, 30_000)
+  })
+
+  win.on('responsive', () => {
+    if (freezeTimer) {
+      clearTimeout(freezeTimer)
+      freezeTimer = null
+      console.log(`[PeakFlow] Renderer recovered: ${toolId}`)
+    }
+  })
+
   console.log(`[PeakFlow] Window created: ${toolId}`)
 
   return win
