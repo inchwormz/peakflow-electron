@@ -10,7 +10,7 @@
 
 import { app, BrowserWindow, protocol, net, session } from 'electron'
 import { join, sep, normalize } from 'path'
-import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 import { registerIpcHandlers } from './ipc-handlers'
@@ -93,13 +93,19 @@ if (!gotLock) {
     })
 
     // Content Security Policy — restrict renderer capabilities
+    // Dev mode needs 'unsafe-inline' + 'unsafe-eval' for Vite HMR + React preamble
+    const scriptSrc = is.dev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self'"
+    const styleSrc = "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"
+    const fontSrc = "font-src 'self' https://fonts.gstatic.com"
+    const csp = `default-src 'self'; ${scriptSrc}; ${styleSrc}; ${fontSrc}; img-src 'self' data: qboard: file:; media-src 'self' mediastream:; connect-src 'self' https: ws:;`
+
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: qboard: file:; media-src 'self' mediastream:; connect-src 'self' https:;"
-          ]
+          'Content-Security-Policy': [csp]
         }
       })
     })
