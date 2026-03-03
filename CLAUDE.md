@@ -21,7 +21,7 @@
 4. **Validate ALL URLs passed to `shell.openExternal()`** — parse with `new URL()`, whitelist protocols (https/http/mailto), block localhost
 5. **Validate ALL user-facing IPC inputs** — PIDs must be integers, URLs must parse, paths must not traverse
 6. **Use `-ExecutionPolicy RemoteSigned`** for PowerShell, not `Bypass`
-7. **Before ANY commit:** run `git diff --cached | grep -iE "secret|password|token|key|AKIA|sk-|eyJ|ghp_"` — if anything matches, DO NOT commit
+7. **Before ANY commit:** run `git diff --cached | grep -iE "secret|password|token|key|AKIA|sk-|eyJ|ghp_|private-[0-9a-f]{32}|19ce20487fd08c6797e1f6358c5a88fd"` — if anything matches, DO NOT commit
 8. **`.env` files are gitignored** — never commit them. Never create `.env.example` with real values
 
 ### Gotchas

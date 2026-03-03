@@ -19,7 +19,7 @@ const TODOIST_CLIENT_ID = 'c69c55b9691e401aad7738af4eae5709'
 // The secret MUST be rotated after being exposed in git history.
 // Set MAIN_VITE_TODOIST_CLIENT_SECRET in .env (gitignored) for dev/build.
 const TODOIST_CLIENT_SECRET = import.meta.env.MAIN_VITE_TODOIST_CLIENT_SECRET || ''
-const TODOIST_AUTH_URL = 'https://api.todoist.com/oauth/authorize'
+const TODOIST_AUTH_URL = 'https://app.todoist.com/oauth/authorize'
 const TODOIST_TOKEN_URL = 'https://api.todoist.com/oauth/access_token'
 const REDIRECT_PORT = 28754
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`
@@ -38,10 +38,10 @@ export interface TodoistTask {
   id: string
   content: string
   description: string
-  project_id: string
-  due: { date: string; string: string } | null
-  priority: number
-  is_completed: boolean
+  projectId: string
+  dueDate: string | null
+  priority: string
+  checked: boolean
 }
 
 export interface TodoistProject {
@@ -184,7 +184,7 @@ class TodoistService {
         authWindow.webContents.on('will-navigate', (event, navUrl) => {
           try {
             const hostname = new URL(navUrl).hostname
-            const allowed = ['todoist.com', 'api.todoist.com', 'localhost']
+            const allowed = ['todoist.com', 'app.todoist.com', 'api.todoist.com', 'localhost']
             if (!allowed.some((d) => hostname === d || hostname.endsWith('.' + d))) {
               console.warn('[Todoist] Blocked navigation to:', hostname)
               event.preventDefault()
@@ -221,7 +221,7 @@ class TodoistService {
   }
 
   /**
-   * Fetch active tasks from Todoist REST API v2.
+   * Fetch active tasks from Todoist API v1.
    * Optionally filtered by project ID.
    */
   async getTasks(projectFilter?: string): Promise<TodoistTask[]> {
@@ -257,9 +257,10 @@ class TodoistService {
 
       const raw = await res.json()
       console.log('[Todoist] getTasks: raw response:', JSON.stringify(raw).slice(0, 500))
-      const tasks = Array.isArray(raw) ? raw : (raw as { results?: TodoistTask[] }).results ?? []
-      console.log('[Todoist] getTasks: got', tasks.length, 'tasks')
-      return tasks as TodoistTask[]
+      const tasks = Array.isArray(raw) ? raw : (raw as Record<string, unknown>).tasks ?? (raw as Record<string, unknown>).results ?? []
+      const taskList = Array.isArray(tasks) ? tasks : []
+      console.log('[Todoist] getTasks: got', taskList.length, 'tasks')
+      return taskList as TodoistTask[]
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Fetch failed'
       this.status.error = msg
@@ -315,9 +316,10 @@ class TodoistService {
       }
       const raw = await res.json()
       console.log('[Todoist] getProjects: raw response:', JSON.stringify(raw).slice(0, 500))
-      const projects = Array.isArray(raw) ? raw : (raw as { results?: TodoistProject[] }).results ?? []
-      console.log('[Todoist] getProjects: got', projects.length, 'projects')
-      return projects as TodoistProject[]
+      const projects = Array.isArray(raw) ? raw : (raw as Record<string, unknown>).projects ?? (raw as Record<string, unknown>).results ?? []
+      const projectList = Array.isArray(projects) ? projects : []
+      console.log('[Todoist] getProjects: got', projectList.length, 'projects')
+      return projectList as TodoistProject[]
     } catch (err) {
       console.warn('[Todoist] getProjects error:', err)
       return []

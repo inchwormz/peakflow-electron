@@ -102,8 +102,8 @@ export function TaskList({
       )) as {
         id: string
         content: string
-        due: { date: string; string: string } | null
-        priority: number
+        dueDate: string | null
+        priority: string
       }[]
 
       // Get existing todoist IDs to avoid duplicates
@@ -119,7 +119,7 @@ export function TaskList({
           category: 'Todoist',
           estimated: 1,
           actual: 0,
-          due: tt.due?.date || null,
+          due: tt.dueDate || null,
           done: false,
           todoistId: tt.id
         })
