@@ -95,12 +95,10 @@ If you're adding a new tool, follow the existing pattern: service in `src/main/s
 
 GPL v3. See [LICENSE](LICENSE).
 
-14-day free trial, no credit card required.
+Free to build and run from source. The code is open because PeakFlow touches your screen, mic, and clipboard. You should be able to read what it does.
+
+If you want to support the developer, grab the installer at [getpeakflow.pro](https://getpeakflow.pro):
 
 - **$6.99/month** ... all 7 tools, cancel anytime
 - **$9.99** ... one tool, yours forever (v1)
 - **$49.99** ... all 7 tools, yours forever (v1)
-
-Purchase at [getpeakflow.pro](https://getpeakflow.pro).
-
-The code is open because PeakFlow touches your screen, mic, and clipboard. You should be able to read what it does.
