@@ -4,15 +4,15 @@ Mac-level productivity tools for Windows. Seven tools that run from the system t
 
 [Download](https://github.com/inchwormz/peakflow-releases/releases/latest) · [Website](https://getpeakflow.pro) · [Blog](https://getpeakflow.pro/blog/)
 
-**FocusDim** — dims everything except the active window
+**FocusDim** ... dims everything except the active window
 
 ![FocusDim](screenshots/focusdim.png)
 
-**Liquid Focus** — Pomodoro timer with webcam focus detection
+**Liquid Focus** ... Pomodoro timer with webcam focus detection
 
 ![Liquid Focus](screenshots/liquidfocus.png)
 
-**ScreenSlap** — full-screen meeting alert with one-click join
+**ScreenSlap** ... full-screen meeting alert with one-click join
 
 ![ScreenSlap](screenshots/screenslap.png)
 
@@ -28,7 +28,7 @@ Mac-level productivity tools for Windows. Seven tools that run from the system t
 | **MeetReady** | Camera and mic check before meetings. Shows video preview, mic levels, lighting quality. |
 | **Dashboard** | Hub that launches everything else. Install only the tools you want. |
 
-FocusDim and SoundSplit use Win32 APIs directly through FFI (koffi), not Electron overlays. The webcam focus tracker runs TensorFlow.js face detection on-device — nothing leaves your machine.
+FocusDim and SoundSplit use Win32 APIs directly through FFI (koffi), not Electron overlays. The webcam focus tracker runs TensorFlow.js face detection on-device. Nothing leaves your machine.
 
 ## Tech stack
 
@@ -53,7 +53,7 @@ Copy the env template and add your own API credentials:
 cp .env.example .env
 ```
 
-You need a Todoist app and Google OAuth client if you want calendar/task integrations. Both use PKCE — no client secret is needed for Google. The Todoist secret goes in `.env`.
+You need a Todoist app and Google OAuth client if you want calendar/task integrations. Both use PKCE, so no client secret is needed for Google. The Todoist secret goes in `.env`.
 
 Start the dev server:
 
@@ -97,9 +97,9 @@ GPL v3. See [LICENSE](LICENSE).
 
 14-day free trial, no credit card required.
 
-- **$6.99/month** — all 7 tools, cancel anytime
-- **$9.99** — one tool, yours forever (v1)
-- **$49.99** — all 7 tools, yours forever (v1)
+- **$6.99/month** ... all 7 tools, cancel anytime
+- **$9.99** ... one tool, yours forever (v1)
+- **$49.99** ... all 7 tools, yours forever (v1)
 
 Purchase at [getpeakflow.pro](https://getpeakflow.pro).
 
