@@ -175,7 +175,7 @@ export function Dashboard(): React.JSX.Element {
     display: 'flex',
     flexDirection: 'column',
     padding: '20px 24px',
-    overflow: 'hidden'
+    overflow: 'hidden auto'
   }
 
   const header: CSSProperties = {

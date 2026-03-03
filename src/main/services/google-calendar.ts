@@ -10,7 +10,7 @@
  * Tokens/URLs stored encrypted via credentials.ts (safeStorage / DPAPI).
  */
 
-import { BrowserWindow } from 'electron'
+import { shell, BrowserWindow } from 'electron'
 import http from 'node:http'
 import crypto from 'node:crypto'
 import { IPC_SEND } from '@shared/ipc-types'
@@ -21,6 +21,9 @@ import * as ical from 'node-ical'
 
 const GOOGLE_CLIENT_ID =
   '366059555078-cqgu209k7m9knq9qm9b2oftfk1cmbcn9.apps.googleusercontent.com'
+// Google requires client_secret for Desktop app token exchange, even with PKCE.
+// Store in .env as MAIN_VITE_GOOGLE_CLIENT_SECRET (gitignored).
+const GOOGLE_CLIENT_SECRET = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_SECRET || ''
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const REDIRECT_PORT = 28755
@@ -408,7 +411,6 @@ class GoogleCalendarService {
     this.authInProgress = true
 
     return new Promise((resolve) => {
-      let authWindow: BrowserWindow | null = null
       let resolved = false
       const oauthState = crypto.randomBytes(16).toString('hex')
       const codeVerifier = generateCodeVerifier()
@@ -420,7 +422,6 @@ class GoogleCalendarService {
         this.authInProgress = false
         this.status = status
         server.close()
-        if (authWindow && !authWindow.isDestroyed()) authWindow.destroy()
         resolve(status)
       }
 
@@ -472,6 +473,7 @@ class GoogleCalendarService {
             body: new URLSearchParams({
               code,
               client_id: GOOGLE_CLIENT_ID,
+              client_secret: GOOGLE_CLIENT_SECRET,
               code_verifier: codeVerifier,
               redirect_uri: REDIRECT_URI,
               grant_type: 'authorization_code'
@@ -515,11 +517,12 @@ class GoogleCalendarService {
             error: null
           }
           this.status = status
-
-          // Perform initial fetch
-          await this.fetchEvents()
-
           done(this.status)
+
+          // Fetch events in the background — don't block auth
+          this.fetchEvents().catch((fetchErr) => {
+            console.error('[Calendar] Initial event fetch failed:', fetchErr)
+          })
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Token exchange failed'
           console.error('[Calendar] Auth error:', msg)
@@ -549,51 +552,22 @@ class GoogleCalendarService {
           `&code_challenge=${codeChallenge}` +
           `&code_challenge_method=S256`
 
-        authWindow = new BrowserWindow({
-          width: 600,
-          height: 700,
-          title: 'Connect Google Calendar',
-          autoHideMenuBar: true,
-          webPreferences: {
-            sandbox: true,
-            contextIsolation: true,
-            nodeIntegration: false
-          }
-        })
+        // Open in system browser (Chrome) — Google blocks embedded Electron browsers
+        shell.openExternal(authUrl)
+        console.log('[Calendar] Opened system browser for Google OAuth')
 
-        // Strip "Electron/X.X.X" from user agent so Google doesn't block the embedded browser
-        const cleanUA = authWindow.webContents.getUserAgent()
-          .replace(/\s*Electron\/\S+/, '')
-          .replace(/\s*peakflow\/\S+/i, '')
-        authWindow.webContents.setUserAgent(cleanUA)
-        console.log('[Calendar] Auth window user agent:', cleanUA)
-
-        // Restrict navigation to known OAuth domains
-        authWindow.webContents.on('will-navigate', (event, navUrl) => {
-          try {
-            const hostname = new URL(navUrl).hostname
-            const allowed = ['accounts.google.com', 'oauth2.googleapis.com', 'localhost', 'myaccount.google.com']
-            if (!allowed.includes(hostname)) {
-              console.warn('[Calendar] Blocked navigation to:', hostname)
-              event.preventDefault()
-            }
-          } catch { event.preventDefault() }
-        })
-
-        authWindow.loadURL(authUrl)
-
-        authWindow.on('closed', () => {
-          authWindow = null
+        // Timeout if user doesn't complete auth within 5 minutes
+        setTimeout(() => {
           if (!resolved) {
             done({
               connected: false,
               source: null,
               email: null,
               lastFetched: null,
-              error: 'Window closed before auth completed'
+              error: 'Authentication timed out — please try again'
             })
           }
-        })
+        }, 5 * 60 * 1000)
       })
 
       server.on('error', (err) => {
@@ -854,6 +828,7 @@ class GoogleCalendarService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
           refresh_token: this.tokens.refresh_token,
           grant_type: 'refresh_token'
         })

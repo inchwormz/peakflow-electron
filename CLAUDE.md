@@ -14,6 +14,16 @@
 - **Active window tracking:** `src/main/native/active-window.ts` — koffi FFI for Win32 `GetForegroundWindow`/`DwmGetWindowAttribute`
 - **Trial/licensing:** `src/main/security/trial.ts` — safeStorage encrypted, 14-day trial
 
+### Security Rules (NEVER VIOLATE)
+1. **NEVER hardcode API keys, OAuth secrets, or tokens in source code** — use `import.meta.env.MAIN_VITE_*` variables loaded from `.env` (gitignored)
+2. **Todoist client secret lives in `.env` as `MAIN_VITE_TODOIST_CLIENT_SECRET`** — never inline it. Todoist doesn't support PKCE, so client_secret is required
+3. **Google Calendar uses PKCE + client_secret** — Google requires both for Desktop app token exchange. Secret lives in `.env` as `MAIN_VITE_GOOGLE_CLIENT_SECRET` (gitignored)
+4. **Validate ALL URLs passed to `shell.openExternal()`** — parse with `new URL()`, whitelist protocols (https/http/mailto), block localhost
+5. **Validate ALL user-facing IPC inputs** — PIDs must be integers, URLs must parse, paths must not traverse
+6. **Use `-ExecutionPolicy RemoteSigned`** for PowerShell, not `Bypass`
+7. **Before ANY commit:** run `git diff --cached | grep -iE "secret|password|token|key|AKIA|sk-|eyJ|ghp_"` — if anything matches, DO NOT commit
+8. **`.env` files are gitignored** — never commit them. Never create `.env.example` with real values
+
 ### Gotchas
 - **audio-sessions.ts vs soundsplit-bridge.ts:** Legacy file is fallback, not primary. But it DOES get triggered (sidecar fail, permissions, AV blocks) — don't ignore bugs in it.
 - **koffi out-params work on plain objects:** `koffi.out(koffi.pointer(STRUCT))` mutates JS objects in place — this is correct behavior.

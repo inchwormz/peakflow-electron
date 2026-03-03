@@ -71,6 +71,7 @@ class FocusDimService {
   private _enabled = false
   private _peeking = false
   private _desktopRevealed = false
+  private _lastRect = { x: 0, y: 0, w: 0, h: 0 }
   private peekTimer: ReturnType<typeof setTimeout> | null = null
   private displayChangeHandler: (() => void) | null = null
   private suspendHandler: (() => void) | null = null
@@ -166,6 +167,7 @@ class FocusDimService {
   disable(): void {
     this.cancelPeek()
     this._enabled = false
+    this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
     this.setConf('enabled', false)
     this.stopTracking()
     this.stopListeningForDisplayChanges()
@@ -419,6 +421,7 @@ class FocusDimService {
         maximizable: false,
         closable: false,
         show: false,
+        enableLargerThanScreen: true,
         webPreferences: {
           contextIsolation: true,
           nodeIntegration: false
@@ -450,6 +453,14 @@ class FocusDimService {
       win.once('ready-to-show', () => {
         if (!win.isDestroyed()) {
           win.showInactive()
+          // Correct size mismatch on portrait/scaled monitors where Electron
+          // may clamp the window dimensions below the requested DIP size.
+          // Must run AFTER showInactive — Windows ignores setBounds on hidden windows.
+          const actual = win.getBounds()
+          if (actual.width !== width || actual.height !== height) {
+            console.warn(`[FocusDim] Overlay size mismatch on display ${display.id}: requested ${width}x${height}, got ${actual.width}x${actual.height} — correcting`)
+            win.setBounds({ x, y, width, height })
+          }
         }
       })
 
@@ -484,7 +495,7 @@ class FocusDimService {
   ): string {
     // Use 4 separate divs (top/left/right/bottom) instead of clip-path polygon.
     // This avoids sub-pixel rounding, evenodd quirks, and percentage math errors.
-    const dimStyle = `position:fixed; background:${color}; opacity:${opacity}; pointer-events:none; z-index:1; transition:all 0.05s linear, opacity ${fadeDuration}ms ease;`
+    const dimStyle = `position:fixed; background:${color}; opacity:${opacity}; pointer-events:none; z-index:1; transition:opacity ${fadeDuration}ms ease;`
     return `<!DOCTYPE html>
 <html><head><style>
   * { margin: 0; padding: 0; }
@@ -655,7 +666,7 @@ class FocusDimService {
 
     // Update immediately then poll
     this.trackActiveWindow()
-    this.trackingInterval = setInterval(() => this.trackActiveWindow(), 50)
+    this.trackingInterval = setInterval(() => this.trackActiveWindow(), 16)
   }
 
   private stopTracking(): void {
@@ -676,12 +687,12 @@ class FocusDimService {
 
     if (activeWin) {
       this._desktopRevealed = false
-      this.sendOverlayUpdate({
-        x: activeWin.x,
-        y: activeWin.y,
-        w: activeWin.w,
-        h: activeWin.h
-      })
+      const rect = { x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h }
+      // Skip update if the window hasn't moved or resized
+      const lr = this._lastRect
+      if (rect.x === lr.x && rect.y === lr.y && rect.w === lr.w && rect.h === lr.h) return
+      this._lastRect = rect
+      this.sendOverlayUpdate(rect)
       return
     }
 

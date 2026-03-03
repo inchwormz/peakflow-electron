@@ -343,6 +343,23 @@ class ScreenSlapService {
 
       win.once('ready-to-show', () => {
         win.show()
+        // Correct size mismatch on portrait/scaled monitors where Electron
+        // may clamp the window dimensions or fail to enter fullscreen.
+        // Must run AFTER show — Windows ignores setBounds on hidden windows.
+        if (!win.isDestroyed()) {
+          const actual = win.getBounds()
+          if (actual.width !== width || actual.height !== height) {
+            console.warn(
+              `[ScreenSlap] Alert size mismatch: requested ${width}x${height}, ` +
+                `got ${actual.width}x${actual.height} — correcting`
+            )
+            win.setBounds({ x, y, width, height })
+          }
+          if (!win.isFullScreen()) {
+            console.warn(`[ScreenSlap] Window not fullscreen after show — re-applying`)
+            win.setFullScreen(true)
+          }
+        }
         // 'screen-saver' level keeps alerts above Chrome, Claude, fullscreen apps.
         // Re-assert on blur/show/restore — Windows silently drops alwaysOnTop.
         const pinAbove = (): void => {

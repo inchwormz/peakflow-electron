@@ -78,6 +78,15 @@ type ViewMode = 'main' | 'settings'
 
 const api = window.peakflow
 
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  const h = d.getHours()
+  const m = d.getMinutes()
+  const suffix = h >= 12 ? 'pm' : 'am'
+  const h12 = h % 12 || 12
+  return m === 0 ? `${h12}${suffix}` : `${h12}:${m.toString().padStart(2, '0')}${suffix}`
+}
+
 function formatRelativeShort(ms: number): string {
   if (ms < 60_000) return 'now'
   const min = Math.ceil(ms / 60_000)
@@ -476,6 +485,24 @@ export function MeetReady(): React.JSX.Element {
                 <AudioMeter stream={audioStream} onLevel={onMicLevel} />
               </div>
             </div>
+
+            {/* Upcoming events */}
+            {calStatus.connected && futureEvents.length > 0 && (
+              <div style={styles.eventsSection}>
+                <div style={styles.eventsSectionLabel}>Upcoming</div>
+                {futureEvents.slice(0, 3).map((ev) => (
+                  <div key={ev.id} style={styles.eventRow}>
+                    <span style={styles.eventTime}>
+                      {formatTime(ev.startTime)}
+                    </span>
+                    <span style={styles.eventName}>
+                      {ev.summary.length > 28 ? ev.summary.slice(0, 25) + '...' : ev.summary}
+                    </span>
+                    <span style={styles.eventDur}>{ev.durationMinutes}m</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Readiness banner — pushed to bottom */}
             <div
@@ -937,6 +964,47 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 500,
     color: DS.text
   },
+
+  // Upcoming events
+  eventsSection: {
+    marginTop: 8,
+    padding: '8px 0'
+  } as CSSProperties,
+  eventsSectionLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase' as const,
+    color: DS.secLabel,
+    marginBottom: 6,
+    paddingLeft: 2
+  } as CSSProperties,
+  eventRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '5px 8px',
+    borderRadius: 8,
+    fontSize: 12,
+    color: DS.text
+  } as CSSProperties,
+  eventTime: {
+    color: DS.textGray,
+    fontSize: 11,
+    minWidth: 48,
+    flexShrink: 0
+  } as CSSProperties,
+  eventName: {
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const
+  } as CSSProperties,
+  eventDur: {
+    color: DS.textDim,
+    fontSize: 11,
+    flexShrink: 0
+  } as CSSProperties,
 
   // Readiness banner
   readiness: {

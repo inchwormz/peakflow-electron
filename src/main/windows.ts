@@ -54,7 +54,7 @@ interface WindowOverrides {
 }
 
 const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
-  [SystemWindowId.Dashboard]: { width: 420, height: 560, resizable: false },
+  [SystemWindowId.Dashboard]: { width: 420, height: 640, minWidth: 380, minHeight: 560 },
   [ToolId.FocusDim]: { width: 340, height: 680, resizable: false },
   [ToolId.QuickBoard]: { width: 340, height: 540, alwaysOnTop: true, skipTaskbar: true },
   [ToolId.MeetReady]: { width: 340, height: 540 },
