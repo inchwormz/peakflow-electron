@@ -83,4 +83,4 @@ If you're adding a new tool, follow the existing pattern: service in `src/main/s
 
 GPL v3. See [LICENSE](LICENSE).
 
-PeakFlow is free to use during the 14-day trial. After that it's $5/month through [getpeakflow.pro](https://getpeakflow.pro). The source code is open so you can see exactly what runs on your machine — this is a tray app with screen, mic, and clipboard access, and you should be able to verify what it does.
+14-day free trial, then $5/month through [getpeakflow.pro](https://getpeakflow.pro). The code is open because PeakFlow touches your screen, mic, and clipboard. You should be able to read what it does.
