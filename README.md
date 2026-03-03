@@ -2,7 +2,13 @@
 
 Mac-level productivity tools for Windows. Seven tools that run from the system tray.
 
-**Website:** [getpeakflow.pro](https://getpeakflow.pro)
+[Download](https://github.com/inchwormz/peakflow-releases/releases/latest) · [Website](https://getpeakflow.pro) · [Blog](https://getpeakflow.pro/blog/)
+
+![FocusDim — dims everything except the active window](screenshots/focusdim.png)
+
+![Liquid Focus — Pomodoro timer floating over Google Docs](screenshots/liquidfocus.png)
+
+![ScreenSlap — full-screen meeting alert with one-click join](screenshots/screenslap.png)
 
 ## What's in it
 
@@ -83,4 +89,12 @@ If you're adding a new tool, follow the existing pattern: service in `src/main/s
 
 GPL v3. See [LICENSE](LICENSE).
 
-14-day free trial, then $5/month through [getpeakflow.pro](https://getpeakflow.pro). The code is open because PeakFlow touches your screen, mic, and clipboard. You should be able to read what it does.
+14-day free trial, no credit card required.
+
+- **$6.99/month** — all 7 tools, cancel anytime
+- **$9.99** — one tool, yours forever (v1)
+- **$49.99** — all 7 tools, yours forever (v1)
+
+Purchase at [getpeakflow.pro](https://getpeakflow.pro).
+
+The code is open because PeakFlow touches your screen, mic, and clipboard. You should be able to read what it does.
