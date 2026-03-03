@@ -4,6 +4,7 @@ release/
 dist/
 .env
 .env.*
+!.env.example
 *.local
 *.key
 *.pem
