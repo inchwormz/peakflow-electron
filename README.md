@@ -4,11 +4,17 @@ Mac-level productivity tools for Windows. Seven tools that run from the system t
 
 [Download](https://github.com/inchwormz/peakflow-releases/releases/latest) · [Website](https://getpeakflow.pro) · [Blog](https://getpeakflow.pro/blog/)
 
-![FocusDim — dims everything except the active window](screenshots/focusdim.png)
+**FocusDim** — dims everything except the active window
 
-![Liquid Focus — Pomodoro timer floating over Google Docs](screenshots/liquidfocus.png)
+![FocusDim](screenshots/focusdim.png)
 
-![ScreenSlap — full-screen meeting alert with one-click join](screenshots/screenslap.png)
+**Liquid Focus** — Pomodoro timer with webcam focus detection
+
+![Liquid Focus](screenshots/liquidfocus.png)
+
+**ScreenSlap** — full-screen meeting alert with one-click join
+
+![ScreenSlap](screenshots/screenslap.png)
 
 ## What's in it
 
