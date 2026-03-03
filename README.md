@@ -1,6 +1,6 @@
 # PeakFlow
 
-Mac-level productivity tools for Windows. Seven tools that run from the system tray.
+Mac-level productivity tools for Windows. six tools that run from the system tray.
 
 [Download](https://github.com/inchwormz/peakflow-releases/releases/latest) · [Website](https://getpeakflow.pro) · [Blog](https://getpeakflow.pro/blog/)
 
