@@ -101,6 +101,8 @@ export const IPC_INVOKE = {
   CALENDAR_GET_STATUS: 'calendar:get-status',
   CALENDAR_DISCONNECT: 'calendar:disconnect',
   CALENDAR_FETCH_NOW: 'calendar:fetch-now',
+  CALENDAR_SET_ICAL_URL: 'calendar:set-ical-url',
+  CALENDAR_GET_ICAL_URL: 'calendar:get-ical-url',
 
   // ScreenSlap
   SCREENSLAP_GET_STATE: 'screenslap:get-state',

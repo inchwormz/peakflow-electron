@@ -59,6 +59,7 @@ interface CalendarEvent {
 
 interface CalendarStatus {
   connected: boolean
+  source: 'google' | 'ical' | null
   email: string | null
   lastFetched: string | null
   error: string | null
@@ -133,10 +134,13 @@ export function MeetReady(): React.JSX.Element {
   })
   const [calStatus, setCalStatus] = useState<CalendarStatus>({
     connected: false,
+    source: null,
     email: null,
     lastFetched: null,
     error: null
   })
+  const [icalInput, setIcalInput] = useState('')
+  const [icalConnecting, setIcalConnecting] = useState(false)
   const [events, setEvents] = useState<CalendarEvent[]>([])
 
   // Media devices
@@ -298,6 +302,31 @@ export function MeetReady(): React.JSX.Element {
       setEvents(evts ?? [])
     } catch (err) {
       console.error('[MeetReady] Auth failed:', err)
+    }
+  }
+
+  const connectIcal = async (): Promise<void> => {
+    const url = icalInput.trim()
+    if (!url) return
+    try {
+      const normalized = url.replace(/^webcal:\/\//i, 'https://')
+      new URL(normalized)
+    } catch {
+      return
+    }
+    setIcalConnecting(true)
+    try {
+      const result = (await api.invoke(IPC_INVOKE.CALENDAR_SET_ICAL_URL, url)) as CalendarStatus
+      setCalStatus(result)
+      if (result.connected) {
+        const evts = (await api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)) as CalendarEvent[]
+        setEvents(evts ?? [])
+        setIcalInput('')
+      }
+    } catch (err) {
+      console.error('[MeetReady] iCal connect failed:', err)
+    } finally {
+      setIcalConnecting(false)
     }
   }
 
@@ -571,7 +600,8 @@ export function MeetReady(): React.JSX.Element {
             {calStatus.connected ? (
               <>
                 <div style={styles.calStatus}>
-                  &#10003; Connected{calStatus.email ? ` as ${calStatus.email}` : ''}
+                  &#10003; Connected via {calStatus.source === 'ical' ? 'iCal URL' : 'Google'}
+                  {calStatus.email ? ` (${calStatus.email})` : ''}
                 </div>
                 <button
                   style={styles.disconnectBtn}
@@ -603,6 +633,32 @@ export function MeetReady(): React.JSX.Element {
                 >
                   Connect Google Calendar
                 </button>
+                <div style={styles.icalOrRow}>
+                  <div style={styles.icalOrLine} />
+                  <span style={styles.icalOrText}>or</span>
+                  <div style={styles.icalOrLine} />
+                </div>
+                <div style={styles.icalRow}>
+                  <input
+                    type="text"
+                    style={styles.icalInput}
+                    placeholder="Paste iCal secret URL"
+                    value={icalInput}
+                    onChange={(e) => setIcalInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') connectIcal() }}
+                  />
+                  <button
+                    style={{
+                      ...styles.icalBtn,
+                      opacity: icalConnecting || !icalInput.trim() ? 0.5 : 1,
+                      cursor: icalConnecting || !icalInput.trim() ? 'default' : 'pointer'
+                    }}
+                    onClick={connectIcal}
+                    disabled={icalConnecting || !icalInput.trim()}
+                  >
+                    {icalConnecting ? '...' : 'Connect'}
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -1030,6 +1086,60 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
     cursor: 'pointer',
     transition: 'all 0.2s',
+    outline: 'none'
+  },
+
+  icalOrRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    margin: '12px 0 4px'
+  },
+
+  icalOrLine: {
+    flex: 1,
+    height: 1,
+    background: DS.border
+  },
+
+  icalOrText: {
+    fontSize: 9,
+    color: DS.textDim,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1.5
+  },
+
+  icalRow: {
+    display: 'flex',
+    gap: 6,
+    width: '100%',
+    marginTop: 6
+  },
+
+  icalInput: {
+    flex: 1,
+    padding: '8px 10px',
+    background: DS.bgLight,
+    border: `1px solid ${DS.border}`,
+    borderRadius: 8,
+    color: DS.white,
+    fontFamily: 'inherit',
+    fontSize: 10,
+    outline: 'none'
+  },
+
+  icalBtn: {
+    padding: '8px 12px',
+    background: DS.bgLight,
+    border: `1px solid ${DS.border}`,
+    borderRadius: 8,
+    color: DS.white,
+    fontFamily: 'inherit',
+    fontSize: 10,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    flexShrink: 0,
     outline: 'none'
   },
 

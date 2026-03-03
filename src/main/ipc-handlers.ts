@@ -198,8 +198,15 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_INVOKE.SHELL_OPEN_EXTERNAL, async (_event, url: string): Promise<void> => {
-    if (typeof url === 'string' && url.startsWith('https://')) {
+    if (typeof url !== 'string') return
+    try {
+      const parsed = new URL(url)
+      if (!['https:', 'http:', 'mailto:'].includes(parsed.protocol)) return
+      // Block localhost/loopback to prevent SSRF
+      if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(parsed.hostname)) return
       await shell.openExternal(url)
+    } catch {
+      // Invalid URL — silently ignore
     }
   })
 
@@ -376,6 +383,20 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.CALENDAR_FETCH_NOW,
     async (): Promise<CalendarEvent[]> => {
       return getCalendarService().fetchEvents()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_SET_ICAL_URL,
+    (_event, url: string | null): CalendarStatus => {
+      return getCalendarService().setIcalUrl(url)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CALENDAR_GET_ICAL_URL,
+    (): string | null => {
+      return getCalendarService().getIcalUrl()
     }
   )
 

@@ -64,6 +64,7 @@ interface CalendarEvent {
 
 interface CalendarStatus {
   connected: boolean
+  source: 'google' | 'ical' | null
   email: string | null
   lastFetched: string | null
   error: string | null
@@ -164,10 +165,13 @@ export function ScreenSlap(): React.JSX.Element {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [calStatus, setCalStatus] = useState<CalendarStatus>({
     connected: false,
+    source: null,
     email: null,
     lastFetched: null,
     error: null
   })
+  const [icalInput, setIcalInput] = useState('')
+  const [icalConnecting, setIcalConnecting] = useState(false)
   const [state, setState] = useState<ScreenSlapState>({
     monitoring: false,
     activeAlert: null,
@@ -258,6 +262,39 @@ export function ScreenSlap(): React.JSX.Element {
       }
     } catch (err) {
       console.error('[ScreenSlap] Auth failed:', err)
+    }
+  }
+
+  const connectIcal = async (): Promise<void> => {
+    const url = icalInput.trim()
+    if (!url) return
+    try {
+      const normalized = url.replace(/^webcal:\/\//i, 'https://')
+      new URL(normalized)
+    } catch {
+      showToast('Invalid URL')
+      return
+    }
+    setIcalConnecting(true)
+    try {
+      const result = (await api.invoke(IPC_INVOKE.CALENDAR_SET_ICAL_URL, url)) as CalendarStatus
+      setCalStatus(result)
+      if (result.connected) {
+        showToast('Connected via iCal URL')
+        await api.invoke(IPC_INVOKE.SCREENSLAP_START)
+        const evts = (await api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)) as CalendarEvent[]
+        setEvents(evts ?? [])
+        const stateRes = (await api.invoke(IPC_INVOKE.SCREENSLAP_GET_STATE)) as ScreenSlapState
+        setState(stateRes)
+        setIcalInput('')
+      } else if (result.error) {
+        showToast(result.error)
+      }
+    } catch (err) {
+      console.error('[ScreenSlap] iCal connect failed:', err)
+      showToast('Failed to connect')
+    } finally {
+      setIcalConnecting(false)
     }
   }
 
@@ -396,11 +433,42 @@ export function ScreenSlap(): React.JSX.Element {
               <div style={styles.idleIcon}>&#128197;</div>
               <div style={styles.idleTitle}>Connect Calendar</div>
               <div style={styles.idleSub}>
-                Connect your Google Calendar to get full-screen alerts before meetings.
+                Get full-screen alerts before meetings start.
               </div>
               <button style={styles.connectBtn} onClick={connectCalendar}>
                 Connect Google Calendar
               </button>
+              <div style={styles.orDivider}>
+                <div style={styles.orLine} />
+                <span style={styles.orText}>or</span>
+                <div style={styles.orLine} />
+              </div>
+              <div style={styles.icalRow}>
+                <input
+                  type="text"
+                  style={styles.icalInput}
+                  placeholder="Paste iCal secret URL"
+                  value={icalInput}
+                  onChange={(e) => setIcalInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') connectIcal() }}
+                />
+                <button
+                  style={{
+                    ...styles.icalBtn,
+                    opacity: icalConnecting || !icalInput.trim() ? 0.5 : 1,
+                    cursor: icalConnecting || !icalInput.trim() ? 'default' : 'pointer'
+                  }}
+                  onClick={connectIcal}
+                  disabled={icalConnecting || !icalInput.trim()}
+                >
+                  {icalConnecting ? '...' : 'Connect'}
+                </button>
+              </div>
+              {calStatus.error && (
+                <div style={{ fontSize: 11, color: DS.red, marginTop: 8 }}>
+                  {calStatus.error}
+                </div>
+              )}
             </div>
           ) : state.activeAlert ? (
             /* Active alert indicator (alert itself is fullscreen in separate window) */
@@ -566,7 +634,8 @@ export function ScreenSlap(): React.JSX.Element {
               {calStatus.connected ? (
                 <>
                   <div style={styles.calStatusSm}>
-                    &#10003; Connected as {calStatus.email}
+                    &#10003; Connected via {calStatus.source === 'ical' ? 'iCal URL' : 'Google'}
+                    {calStatus.email ? ` (${calStatus.email})` : ''}
                   </div>
                   <button style={styles.disconnectBtn} onClick={disconnectCalendar}>
                     Disconnect Calendar
@@ -933,6 +1002,60 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: 'inherit',
     cursor: 'pointer',
     transition: 'all 0.2s'
+  },
+
+  orDivider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    width: 200,
+    margin: '16px 0 4px'
+  },
+
+  orLine: {
+    flex: 1,
+    height: 1,
+    background: DS.border
+  },
+
+  orText: {
+    fontSize: 10,
+    color: DS.textDim,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1.5
+  },
+
+  icalRow: {
+    display: 'flex',
+    gap: 6,
+    width: 280,
+    marginTop: 8
+  },
+
+  icalInput: {
+    flex: 1,
+    padding: '10px 12px',
+    background: 'rgba(255,255,255,0.04)',
+    border: `1px solid ${DS.border}`,
+    borderRadius: 10,
+    color: DS.white,
+    fontFamily: 'inherit',
+    fontSize: 11,
+    outline: 'none'
+  },
+
+  icalBtn: {
+    padding: '10px 14px',
+    background: 'rgba(94,184,255,0.12)',
+    border: `1px solid rgba(94,184,255,0.25)`,
+    borderRadius: 10,
+    color: DS.blue,
+    fontFamily: 'inherit',
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    flexShrink: 0
   },
 
   connectBtnSmall: {
