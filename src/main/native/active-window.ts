@@ -11,6 +11,7 @@ import koffi from 'koffi'
 
 const user32 = koffi.load('user32.dll')
 const dwmapi = koffi.load('dwmapi.dll')
+const kernel32 = koffi.load('kernel32.dll')
 
 // RECT struct: { left, top, right, bottom } — all int32
 const RECT = koffi.struct('RECT', {
@@ -44,6 +45,12 @@ const DwmGetWindowAttributeDword = dwmapi.func('DwmGetWindowAttribute', 'long', 
   koffi.out(koffi.pointer('uint32')),
   'uint32'
 ])
+
+// Process query bindings (for PID → exe name resolution)
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+const OpenProcess = kernel32.func('OpenProcess', 'void *', ['uint32', 'bool', 'uint32'])
+const QueryFullProcessImageNameW = kernel32.func('QueryFullProcessImageNameW', 'bool', ['void *', 'uint32', 'void *', koffi.inout(koffi.pointer('uint32'))])
+const CloseHandle = kernel32.func('CloseHandle', 'bool', ['void *'])
 
 // Window enumeration bindings (for multi-window highlight modes)
 const EnumWindowsCallback = koffi.proto('bool __stdcall EnumWindowsCallback(void *, intptr)')
@@ -257,4 +264,176 @@ export function getAllVisibleWindows(filterPid?: number, displayBounds?: Display
   }
 
   return results
+}
+
+// ─── PID → exe name resolution ─────────────────────────────────────────────
+
+/** Cache of PID → lowercase exe filename. Cleared when FocusDim enables/disables. */
+const pidExeCache = new Map<number, string>()
+
+/** Clear the PID→exe cache (call on FocusDim enable/disable). */
+export function clearPidExeCache(): void {
+  pidExeCache.clear()
+}
+
+/**
+ * Get the lowercase exe filename for a process ID (e.g., "chrome.exe").
+ * Returns null if the process can't be opened or queried.
+ */
+export function getProcessExeName(pid: number): string | null {
+  const cached = pidExeCache.get(pid)
+  if (cached !== undefined) return cached
+
+  try {
+    const hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+    if (!hProcess) return null
+
+    try {
+      const buf = Buffer.alloc(1024)
+      const size = [512]
+      const ok = QueryFullProcessImageNameW(hProcess, 0, buf, size)
+      if (!ok || size[0] === 0) return null
+
+      const fullPath = buf.toString('utf16le', 0, size[0] * 2).replace(/\0/g, '')
+      const lastSlash = Math.max(fullPath.lastIndexOf('\\'), fullPath.lastIndexOf('/'))
+      const exeName = (lastSlash >= 0 ? fullPath.substring(lastSlash + 1) : fullPath).toLowerCase()
+      pidExeCache.set(pid, exeName)
+      return exeName
+    } finally {
+      CloseHandle(hProcess)
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Enumerate all visible windows whose exe name matches one of the given names.
+ * Returns their rects in physical pixel coordinates.
+ * Uses the same filters as getAllVisibleWindows (skip cloaked, minimized, system classes, overlay windows).
+ */
+export function getWindowsForExeNames(exeNames: string[], displayBounds?: DisplayBounds[]): WindowRect[] {
+  if (exeNames.length === 0) return []
+
+  const exeSet = new Set(exeNames)
+  const results: WindowRect[] = []
+  const DWMWA_EXTENDED_FRAME_BOUNDS = 9
+  const sizeOfRect = 16
+  const MAX_WINDOWS = 50
+
+  const callback = koffi.register((hwnd: unknown, _lParam: number): boolean => {
+    if (results.length >= MAX_WINDOWS) return false
+    try {
+      if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return true
+
+      const classNameBuf = Buffer.alloc(512)
+      const classLen = GetClassNameW(hwnd, classNameBuf, 256)
+      const className = classLen > 0
+        ? classNameBuf.toString('utf16le', 0, classLen * 2).replace(/\0/g, '')
+        : ''
+      if (ENUM_IGNORED_CLASSES.has(className)) return true
+
+      // Skip cloaked windows
+      const DWMWA_CLOAKED = 14
+      const cloaked = [0]
+      const cloakResult = DwmGetWindowAttributeDword(hwnd, DWMWA_CLOAKED, cloaked, 4)
+      if (cloakResult === 0 && cloaked[0] !== 0) return true
+
+      // Skip PeakFlow overlay windows
+      const titleBuf = Buffer.alloc(512)
+      const titleLen = GetWindowTextW(hwnd, titleBuf, 256)
+      const title = titleLen > 0
+        ? titleBuf.toString('utf16le', 0, titleLen * 2).replace(/\0/g, '')
+        : ''
+      if (title === '__peakflow_dim__') return true
+
+      // Check exe name
+      const winPid = getProcessId(hwnd)
+      const exeName = getProcessExeName(winPid)
+      if (!exeName || !exeSet.has(exeName)) return true
+
+      const rect = { left: 0, top: 0, right: 0, bottom: 0 }
+      const dwmResult = DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, rect, sizeOfRect)
+      if (dwmResult !== 0) {
+        const success = GetWindowRect(hwnd, rect)
+        if (!success) return true
+      }
+
+      const w = rect.right - rect.left
+      const h = rect.bottom - rect.top
+      if (w < 10 || h < 10) return true
+
+      // Skip full-screen UWP frames
+      if (className === 'ApplicationFrameWindow' && displayBounds) {
+        const winArea = w * h
+        for (const db of displayBounds) {
+          if (winArea >= db.w * db.h * 0.9) return true
+        }
+      }
+
+      results.push({ x: rect.left, y: rect.top, w, h })
+    } catch { /* skip */ }
+    return true
+  }, koffi.pointer(EnumWindowsCallback))
+
+  try {
+    EnumWindows(callback, 0)
+  } finally {
+    koffi.unregister(callback)
+  }
+
+  return results
+}
+
+/**
+ * Get a deduplicated list of visible apps (exe + window title).
+ * Excludes PeakFlow, system windows, and any exe names in the skipSet.
+ * Returns one entry per unique exe, sorted by title.
+ */
+export function getVisibleAppList(skipSet?: Set<string>): Array<{ exe: string; name: string }> {
+  const seen = new Map<string, string>()
+  const selfExes = new Set(['electron.exe', 'peakflow.exe'])
+
+  const callback = koffi.register((hwnd: unknown, _lParam: number): boolean => {
+    try {
+      if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return true
+
+      const classNameBuf = Buffer.alloc(512)
+      const classLen = GetClassNameW(hwnd, classNameBuf, 256)
+      const className = classLen > 0
+        ? classNameBuf.toString('utf16le', 0, classLen * 2).replace(/\0/g, '')
+        : ''
+      if (ENUM_IGNORED_CLASSES.has(className)) return true
+
+      const DWMWA_CLOAKED = 14
+      const cloaked = [0]
+      const cloakResult = DwmGetWindowAttributeDword(hwnd, DWMWA_CLOAKED, cloaked, 4)
+      if (cloakResult === 0 && cloaked[0] !== 0) return true
+
+      const titleBuf = Buffer.alloc(512)
+      const titleLen = GetWindowTextW(hwnd, titleBuf, 256)
+      const title = titleLen > 0
+        ? titleBuf.toString('utf16le', 0, titleLen * 2).replace(/\0/g, '')
+        : ''
+      if (title === '__peakflow_dim__' || !title) return true
+
+      const pid = getProcessId(hwnd)
+      const exe = getProcessExeName(pid)
+      if (!exe || selfExes.has(exe) || seen.has(exe)) return true
+      if (skipSet && skipSet.has(exe)) return true
+
+      seen.set(exe, title)
+    } catch { /* skip */ }
+    return true
+  }, koffi.pointer(EnumWindowsCallback))
+
+  try {
+    EnumWindows(callback, 0)
+  } finally {
+    koffi.unregister(callback)
+  }
+
+  return Array.from(seen.entries())
+    .map(([exe, name]) => ({ exe, name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 }

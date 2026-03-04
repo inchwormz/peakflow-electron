@@ -124,6 +124,12 @@ if (!gotLock) {
     // Set app user model id for Windows (used for taskbar grouping & notifications)
     electronApp.setAppUserModelId('pro.getpeakflow.core')
 
+    // Log auto-start state (packaged builds only)
+    if (!is.dev) {
+      const loginSettings = app.getLoginItemSettings()
+      console.log(`[PeakFlow] Launch at login: ${loginSettings.openAtLogin ? 'enabled' : 'disabled'}`)
+    }
+
     // Handle hardware permissions securely (Webcam/Mic for MeetReady and LiquidFocus)
     // Prevents renderer crashes/hangs when waking from sleep or hot-swapping devices in prod
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

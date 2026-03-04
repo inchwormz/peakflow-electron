@@ -17,6 +17,7 @@ export interface FocusDimConfig {
   disabled_displays: number[]
   highlight_mode: 'active' | 'app' | 'all'
   drag_escape: boolean
+  excluded_apps: Array<{ exe: string; name: string }>
 }
 
 export interface QuickBoardConfig {
@@ -86,7 +87,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     auto_reveal_desktop: true,
     disabled_displays: [],
     highlight_mode: 'active' as const,
-    drag_escape: true
+    drag_escape: true,
+    excluded_apps: []
   },
   [ToolId.QuickBoard]: {
     max_entries: 100,

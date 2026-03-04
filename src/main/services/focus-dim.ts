@@ -20,7 +20,7 @@ import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
-import { getActiveWindow, getAllVisibleWindows, type WindowRect, type DisplayBounds } from '../native/active-window'
+import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, type WindowRect, type DisplayBounds } from '../native/active-window'
 
 // ─── Legacy color key → hex migration map ────────────────────────────────────
 
@@ -47,6 +47,7 @@ export interface FocusDimState {
   autoRevealDesktop: boolean
   highlightMode: 'active' | 'app' | 'all'
   dragEscape: boolean
+  excludedApps: Array<{ exe: string; name: string }>
 }
 
 export interface DisplayInfo {
@@ -144,7 +145,8 @@ class FocusDimService {
       hotkey: conf.hotkey,
       autoRevealDesktop: conf.auto_reveal_desktop,
       highlightMode: conf.highlight_mode,
-      dragEscape: conf.drag_escape
+      dragEscape: conf.drag_escape,
+      excludedApps: conf.excluded_apps ?? []
     }
   }
 
@@ -168,6 +170,7 @@ class FocusDimService {
 
     this._enabled = true
     this.setConf('enabled', true)
+    clearPidExeCache()
     this.createOverlayWindows()
     this.listenForDisplayChanges()
     this.startTracking()
@@ -182,6 +185,7 @@ class FocusDimService {
     this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
     this._lastRectsHash = ''
     this.setConf('enabled', false)
+    clearPidExeCache()
     this.stopTracking()
     this.stopListeningForDisplayChanges()
     this.destroyAllOverlays()
@@ -355,6 +359,38 @@ class FocusDimService {
   setBorder(show: boolean): void {
     this.setConf('show_border', show)
     this.updateAllOverlays()
+    this.broadcastState()
+  }
+
+  /** Get all running apps (unique exe names with window titles), excluding PeakFlow and already-excluded apps. */
+  getRunningApps(): Array<{ exe: string; name: string }> {
+    const conf = this.getConf()
+    const excludedSet = new Set((conf.excluded_apps ?? []).map((a) => a.exe))
+    return getVisibleAppList(excludedSet)
+  }
+
+  /** Add an app to the exclusion whitelist by exe name and display name. */
+  addExcludedAppByExe(exe: string, name: string): { exe: string; name: string } | null {
+    const conf = this.getConf()
+    const existing = conf.excluded_apps ?? []
+    if (existing.some((a) => a.exe === exe)) return null
+
+    const entry = { exe, name: name || exe }
+    this.setConf('excluded_apps', [...existing, entry])
+    this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+    this._lastRectsHash = ''
+    this.broadcastState()
+    return entry
+  }
+
+  /** Remove an app from the exclusion whitelist by exe name. */
+  removeExcludedApp(exe: string): void {
+    const conf = this.getConf()
+    const existing = conf.excluded_apps ?? []
+    const updated = existing.filter((a) => a.exe !== exe)
+    this.setConf('excluded_apps', updated)
+    this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+    this._lastRectsHash = ''
     this.broadcastState()
   }
 
@@ -937,9 +973,36 @@ class FocusDimService {
         this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
       }
 
+      // Collect excluded app rects if any are configured
+      const excludedApps = conf.excluded_apps ?? []
+      const hasExclusions = excludedApps.length > 0
+      let excludedRects: WindowRect[] = []
+      let dispBounds: DisplayBounds[] | undefined
+      if (hasExclusions) {
+        dispBounds = this.overlays.map(o => ({
+          x: o.physicalBounds.x, y: o.physicalBounds.y,
+          w: o.physicalBounds.width, h: o.physicalBounds.height
+        }))
+        const exeNames = excludedApps.map(a => a.exe)
+        excludedRects = getWindowsForExeNames(exeNames, dispBounds)
+      }
+
       if (conf.highlight_mode === 'active') {
-        // Single-window mode: use 4-div approach (existing behavior)
         const rect = { x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h }
+
+        if (hasExclusions && excludedRects.length > 0) {
+          // Active + excluded rects: use canvas multi-rect
+          const allRects = [rect, ...excludedRects]
+          const activeKey = `A:${rect.x},${rect.y},${rect.w},${rect.h}`
+          const hash = activeKey + '|' + allRects.map(r => `${r.x},${r.y},${r.w},${r.h}`).sort().join('|')
+          if (hash === this._lastRectsHash) return
+          this._lastRectsHash = hash
+          this.hideFourDivs()
+          this.sendMultiRectOverlayUpdate(allRects, rect)
+          return
+        }
+
+        // No exclusions: simple 4-div approach
         const lr = this._lastRect
         if (rect.x === lr.x && rect.y === lr.y && rect.w === lr.w && rect.h === lr.h) return
         this._lastRect = rect
@@ -949,15 +1012,29 @@ class FocusDimService {
       }
 
       // Multi-rect modes: enumerate windows
-      const dispBounds: DisplayBounds[] = this.overlays.map(o => ({
-        x: o.physicalBounds.x, y: o.physicalBounds.y,
-        w: o.physicalBounds.width, h: o.physicalBounds.height
-      }))
+      if (!dispBounds) {
+        dispBounds = this.overlays.map(o => ({
+          x: o.physicalBounds.x, y: o.physicalBounds.y,
+          w: o.physicalBounds.width, h: o.physicalBounds.height
+        }))
+      }
       let rects: WindowRect[]
       if (conf.highlight_mode === 'app') {
         rects = getAllVisibleWindows(activeWin.pid, dispBounds)
       } else {
         rects = getAllVisibleWindows(undefined, dispBounds)
+      }
+
+      // Merge excluded app rects (dedup by matching exact coords)
+      if (hasExclusions && excludedRects.length > 0) {
+        const existingKeys = new Set(rects.map(r => `${r.x},${r.y},${r.w},${r.h}`))
+        for (const er of excludedRects) {
+          const key = `${er.x},${er.y},${er.w},${er.h}`
+          if (!existingKeys.has(key)) {
+            rects.push(er)
+            existingKeys.add(key)
+          }
+        }
       }
 
       if (rects.length === 0) {

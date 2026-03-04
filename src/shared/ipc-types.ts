@@ -80,6 +80,13 @@ export const IPC_INVOKE = {
   FOCUSDIM_GET_DISPLAYS: 'focusdim:get-displays',
   FOCUSDIM_SET_DISABLED_DISPLAYS: 'focusdim:set-disabled-displays',
   FOCUSDIM_SET_HIGHLIGHT_MODE: 'focusdim:set-highlight-mode',
+  FOCUSDIM_GET_RUNNING_APPS: 'focusdim:get-running-apps',
+  FOCUSDIM_ADD_EXCLUDED_APP: 'focusdim:add-excluded-app',
+  FOCUSDIM_REMOVE_EXCLUDED_APP: 'focusdim:remove-excluded-app',
+
+  // App-level
+  APP_GET_AUTO_START: 'app:get-auto-start',
+  APP_SET_AUTO_START: 'app:set-auto-start',
 
   // QuickBoard
   CLIPBOARD_GET_HISTORY: 'clipboard:get-history',

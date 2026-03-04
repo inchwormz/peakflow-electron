@@ -7,6 +7,7 @@
 
 import { Tray, Menu, app, nativeImage } from 'electron'
 import { join } from 'path'
+import { is } from '@electron-toolkit/utils'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck } from './windows'
 import { checkForUpdates } from './services/auto-updater'
@@ -132,6 +133,15 @@ function buildContextMenu(): Electron.Menu {
   }
 
   template.push(
+    {
+      label: 'Launch at Login',
+      type: 'checkbox',
+      checked: !is.dev && app.getLoginItemSettings().openAtLogin,
+      enabled: !is.dev,
+      click: (menuItem): void => {
+        app.setLoginItemSettings({ openAtLogin: menuItem.checked })
+      }
+    },
     {
       label: 'Check for Updates',
       click: (): void => {

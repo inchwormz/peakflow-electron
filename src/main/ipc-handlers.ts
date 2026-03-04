@@ -5,7 +5,8 @@
  * Config handlers use persistent electron-store.
  */
 
-import { ipcMain, BrowserWindow, shell } from 'electron'
+import { ipcMain, BrowserWindow, shell, app } from 'electron'
+import { is } from '@electron-toolkit/utils'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
@@ -311,6 +312,29 @@ export function registerIpcHandlers(): void {
       if (mode === 'active' || mode === 'app' || mode === 'all') {
         getFocusDimService().setHighlightMode(mode)
       }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_GET_RUNNING_APPS,
+    (): Array<{ exe: string; name: string }> => {
+      return getFocusDimService().getRunningApps()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_ADD_EXCLUDED_APP,
+    (_event, exe: string, name: string): { exe: string; name: string } | null => {
+      if (typeof exe !== 'string' || typeof name !== 'string') return null
+      return getFocusDimService().addExcludedAppByExe(exe, name)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_REMOVE_EXCLUDED_APP,
+    (_event, exe: string): void => {
+      if (typeof exe !== 'string') return
+      getFocusDimService().removeExcludedApp(exe)
     }
   )
 
@@ -698,6 +722,25 @@ export function registerIpcHandlers(): void {
     async (): Promise<void> => {
       const { revealLogFile } = await import('./services/bug-report')
       revealLogFile()
+    }
+  )
+
+  // ─── Auto Start ──────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.APP_GET_AUTO_START,
+    (): boolean => {
+      if (is.dev) return false
+      return app.getLoginItemSettings().openAtLogin
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.APP_SET_AUTO_START,
+    (_event, enabled: boolean): boolean => {
+      if (is.dev) return false
+      app.setLoginItemSettings({ openAtLogin: enabled })
+      return app.getLoginItemSettings().openAtLogin
     }
   )
 

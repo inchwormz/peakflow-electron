@@ -64,6 +64,7 @@ interface FocusDimState {
   autoRevealDesktop: boolean
   highlightMode: 'active' | 'app' | 'all'
   dragEscape: boolean
+  excludedApps: Array<{ exe: string; name: string }>
 }
 
 interface DisplayInfo {
@@ -87,12 +88,14 @@ export function FocusDim(): React.JSX.Element {
     hotkey: 'ctrl+shift+d',
     autoRevealDesktop: true,
     highlightMode: 'active' as const,
-    dragEscape: true
+    dragEscape: true,
+    excludedApps: []
   })
 
   const [displays, setDisplays] = useState<DisplayInfo[]>([])
   const [recording, setRecording] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [autoStart, setAutoStart] = useState(false)
 
   const [hexInput, setHexInput] = useState('#000000')
 
@@ -110,6 +113,9 @@ export function FocusDim(): React.JSX.Element {
     })
     window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_GET_DISPLAYS).then((d) => {
       if (Array.isArray(d)) setDisplays(d as DisplayInfo[])
+    })
+    window.peakflow.invoke(IPC_INVOKE.APP_GET_AUTO_START).then((v) => {
+      if (typeof v === 'boolean') setAutoStart(v)
     })
   }, [])
 
@@ -182,6 +188,31 @@ export function FocusDim(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_HIGHLIGHT_MODE, mode)
     setState((prev) => ({ ...prev, highlightMode: mode }))
   }, [])
+
+  const [runningApps, setRunningApps] = useState<Array<{ exe: string; name: string }>>([])
+  const [showAppPicker, setShowAppPicker] = useState(false)
+
+  const handleOpenAppPicker = useCallback(() => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_GET_RUNNING_APPS).then((apps) => {
+      if (Array.isArray(apps)) setRunningApps(apps as Array<{ exe: string; name: string }>)
+      setShowAppPicker(true)
+    })
+  }, [])
+
+  const handleAddExcludedApp = useCallback((exe: string, name: string) => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_ADD_EXCLUDED_APP, exe, name)
+    setShowAppPicker(false)
+  }, [])
+
+  const handleRemoveExcludedApp = useCallback((exe: string) => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_REMOVE_EXCLUDED_APP, exe)
+  }, [])
+
+  const handleToggleAutoStart = useCallback(() => {
+    window.peakflow.invoke(IPC_INVOKE.APP_SET_AUTO_START, !autoStart).then((v) => {
+      if (typeof v === 'boolean') setAutoStart(v)
+    })
+  }, [autoStart])
 
   const handleSetHotkey = useCallback((hotkey: string) => {
     window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_HOTKEY, hotkey).then((ok) => {
@@ -551,6 +582,144 @@ export function FocusDim(): React.JSX.Element {
             onChange={() => handleSetDragEscape(!state.dragEscape)}
           />
         </div>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 0',
+            borderBottom: `1px solid ${DS.surface}`
+          }}
+        >
+          <span style={{ fontSize: 10, color: DS.textSecondary }}>
+            Launch at login
+          </span>
+          <Toggle
+            checked={autoStart}
+            onChange={handleToggleAutoStart}
+          />
+        </div>
+
+        {/* ── Excluded Apps Section ── */}
+        <SectionLabel>Excluded Apps</SectionLabel>
+
+        <div style={{ marginBottom: 4 }}>
+          <button
+            onClick={handleOpenAppPicker}
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              border: `1px solid ${DS.border}`,
+              borderRadius: 6,
+              background: DS.surface,
+              color: DS.textSecondary,
+              fontFamily: 'inherit',
+              fontSize: 10,
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'border-color 0.2s',
+              outline: 'none'
+            }}
+            onMouseEnter={(e) => { (e.target as HTMLElement).style.borderColor = DS.borderActive }}
+            onMouseLeave={(e) => { (e.target as HTMLElement).style.borderColor = DS.border }}
+          >
+            + Add App
+          </button>
+          {showAppPicker && (
+            <div style={{
+              marginTop: 4,
+              border: `1px solid ${DS.border}`,
+              borderRadius: 6,
+              background: DS.surface,
+              maxHeight: 150,
+              overflowY: 'auto'
+            }}>
+              {runningApps.length === 0 ? (
+                <div style={{ fontSize: 9, color: DS.textLabel, padding: '8px' }}>
+                  No running apps found
+                </div>
+              ) : (
+                runningApps.map((app) => (
+                  <button
+                    key={app.exe}
+                    onClick={() => handleAddExcludedApp(app.exe, app.name)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '5px 8px',
+                      background: 'none',
+                      border: 'none',
+                      borderBottom: `1px solid ${DS.border}`,
+                      color: DS.textSecondary,
+                      fontFamily: 'inherit',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = DS.surface2 }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                      {app.name}
+                    </span>
+                    <span style={{ fontSize: 9, color: DS.textLabel, marginLeft: 8, flexShrink: 0 }}>
+                      {app.exe}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {state.excludedApps.length === 0 ? (
+          <div style={{ fontSize: 9, color: DS.textLabel, padding: '4px 0' }}>
+            No excluded apps
+          </div>
+        ) : (
+          state.excludedApps.map((app) => (
+            <div
+              key={app.exe}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 0',
+                borderBottom: `1px solid ${DS.surface}`
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                <span style={{ fontSize: 10, color: DS.textPrimary, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {app.name}
+                </span>
+                <span style={{ fontSize: 9, color: DS.textLabel, flexShrink: 0 }}>
+                  {app.exe}
+                </span>
+              </div>
+              <button
+                onClick={() => handleRemoveExcludedApp(app.exe)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: DS.textMuted,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  padding: '0 4px',
+                  fontFamily: 'inherit',
+                  lineHeight: 1,
+                  flexShrink: 0
+                }}
+                onMouseEnter={(e) => { (e.target as HTMLElement).style.color = DS.red }}
+                onMouseLeave={(e) => { (e.target as HTMLElement).style.color = DS.textMuted }}
+              >
+                ×
+              </button>
+            </div>
+          ))
+        )}
 
         {/* Keyboard shortcuts — collapsible */}
         <button
