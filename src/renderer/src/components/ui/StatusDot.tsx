@@ -16,7 +16,7 @@ const colorMap: Record<StatusDotColor, string> = {
 
 /**
  * 8x8px status indicator dot.
- * Colors: green (#4ae08a), yellow (#eab308), red (#f05858), gray (#555).
+ * Colors: green (#ffe17c), yellow (#eab308), red (#f05858), gray (#555).
  */
 export function StatusDot({ color = 'green', className }: StatusDotProps): React.JSX.Element {
   const style: CSSProperties = {

@@ -42,12 +42,12 @@ const ALL_TOOLS = Object.values(ToolId)
 // ─── Tool accent colors ─────────────────────────────────────────────────────
 
 const TOOL_ACCENTS: Record<ToolId, string> = {
-  [ToolId.LiquidFocus]: '#4ae08a',
-  [ToolId.FocusDim]: '#a78bfa',
-  [ToolId.QuickBoard]: '#5eb8ff',
-  [ToolId.ScreenSlap]: '#f05858',
-  [ToolId.MeetReady]: '#eab308',
-  [ToolId.SoundSplit]: '#f472b6'
+  [ToolId.LiquidFocus]: '#ffe17c',
+  [ToolId.FocusDim]: '#ffe17c',
+  [ToolId.QuickBoard]: '#ffe17c',
+  [ToolId.ScreenSlap]: '#ffe17c',
+  [ToolId.MeetReady]: '#ffe17c',
+  [ToolId.SoundSplit]: '#ffe17c'
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ export function ShareAndEarn({ ownedTools }: ShareAndEarnProps): React.JSX.Eleme
     fontSize: 12,
     fontFamily: "'Outfit', sans-serif",
     fontWeight: 600,
-    color: '#4ae08a',
+    color: '#ffe17c',
     marginBottom: 4
   }
 
@@ -115,8 +115,8 @@ export function ShareAndEarn({ ownedTools }: ShareAndEarnProps): React.JSX.Eleme
     fontSize: 10,
     fontWeight: 600,
     fontFamily: "'Outfit', sans-serif",
-    background: 'rgba(74,224,138,0.12)',
-    color: '#4ae08a',
+    background: 'rgba(255,225,124,0.12)',
+    color: '#ffe17c',
     transition: 'background 0.2s'
   }
 
@@ -130,7 +130,7 @@ export function ShareAndEarn({ ownedTools }: ShareAndEarnProps): React.JSX.Eleme
     fontSize: 11,
     fontWeight: 600,
     fontFamily: "'Outfit', sans-serif",
-    background: '#4ae08a',
+    background: '#ffe17c',
     color: '#0a0a0a',
     transition: 'opacity 0.2s',
     marginBottom: 10
@@ -144,7 +144,7 @@ export function ShareAndEarn({ ownedTools }: ShareAndEarnProps): React.JSX.Eleme
 
   const successMsg: CSSProperties = {
     fontSize: 11,
-    color: '#4ae08a',
+    color: '#ffe17c',
     textAlign: 'center',
     padding: '6px 0'
   }
@@ -167,8 +167,8 @@ export function ShareAndEarn({ ownedTools }: ShareAndEarnProps): React.JSX.Eleme
                 key={link.platform}
                 style={shareBtn}
                 onClick={() => openExternal(link.url)}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(74,224,138,0.22)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(74,224,138,0.12)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,225,124,0.22)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,225,124,0.12)' }}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                   <path d={link.icon} />

@@ -30,7 +30,7 @@ const DS = {
   textMuted: '#666666',
   textDim: '#555555',
   textLabel: '#444444',
-  green: '#4ae08a',
+  accent: '#ffe17c',
   red: '#f05858',
   white: '#ffffff',
   accentPurple: 'rgba(168, 85, 247, 0.9)'
@@ -674,7 +674,7 @@ function HotkeyRecorder({
     <span
       style={{
         fontSize: 11,
-        color: DS.green,
+        color: DS.accent,
         fontWeight: 500,
         letterSpacing: '0.5px',
         animation: 'pulse 1.5s infinite'
@@ -733,7 +733,7 @@ function Toggle({
         style={{
           position: 'absolute',
           inset: 0,
-          background: checked ? DS.green : DS.surface2,
+          background: checked ? DS.accent : DS.surface2,
           borderRadius: 10,
           transition: 'background 0.25s'
         }}

@@ -39,9 +39,10 @@ export const DS = {
   textDim: 'rgba(255, 255, 255, 0.5)',
   textLabel: 'rgba(255, 255, 255, 0.4)',
   textGhost: '#222222',
-  green: '#4ae08a',
+  accent: '#ffe17c',
   blue: '#5eb8ff',
   red: '#f05858',
+  orange: '#FF7043',
   amber: '#eab308',
   white: '#ffffff'
 } as const
@@ -294,7 +295,7 @@ export function LiquidFocus(): React.JSX.Element {
     width: 500,
     height: 500,
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(74,224,138,0.12) 0%, rgba(74,224,138,0) 70%)',
+    background: `radial-gradient(circle, ${timer.mode === 'work' ? 'rgba(255,112,67,0.15)' : 'rgba(255,225,124,0.12)'} 0%, transparent 70%)`,
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',

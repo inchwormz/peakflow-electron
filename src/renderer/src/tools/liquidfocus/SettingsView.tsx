@@ -472,7 +472,7 @@ function IntegrationsTab({
           <div
             style={{
               fontSize: 11,
-              color: status.connected ? DS.green : DS.textLabel,
+              color: status.connected ? DS.accent : DS.textLabel,
               marginTop: 2,
               display: 'flex',
               alignItems: 'center',
@@ -484,7 +484,7 @@ function IntegrationsTab({
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: status.connected ? DS.green : '#333',
+                background: status.connected ? DS.accent : '#333',
                 display: 'inline-block'
               }}
             />
@@ -510,7 +510,7 @@ function IntegrationsTab({
             disabled={loading}
             style={{
               ...connBtnStyle,
-              background: DS.green,
+              background: DS.accent,
               color: DS.bg,
               opacity: loading ? 0.5 : 1
             }}
@@ -713,7 +713,7 @@ function Toggle({
         style={{
           position: 'absolute',
           inset: 0,
-          background: checked ? DS.green : DS.elevated,
+          background: checked ? DS.orange : DS.elevated,
           borderRadius: 10,
           transition: 'background 0.25s'
         }}
@@ -755,7 +755,7 @@ function SmallToggle({
         style={{
           position: 'absolute',
           inset: 0,
-          background: checked ? DS.green : DS.elevated,
+          background: checked ? DS.orange : DS.elevated,
           borderRadius: 8,
           transition: 'background 0.25s'
         }}

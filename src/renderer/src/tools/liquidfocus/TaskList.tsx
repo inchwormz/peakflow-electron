@@ -372,7 +372,7 @@ export function TaskList({
                         gap: 8
                       }}
                     >
-                      <span style={{ color: DS.green, fontSize: 10 }}>&#10003;</span>
+                      <span style={{ color: DS.accent, fontSize: 10 }}>&#10003;</span>
                       <span style={{ textDecoration: 'line-through' }}>{task.name}</span>
                     </div>
                   ))}
@@ -415,7 +415,7 @@ function TaskRow({
     marginBottom: 1,
     transition: 'background 0.15s',
     background: isActive || hovered ? DS.surface : 'transparent',
-    borderLeft: isActive ? `3px solid ${DS.white}` : '3px solid transparent',
+    borderLeft: isActive ? `3px solid ${DS.orange}` : '3px solid transparent',
     position: 'relative'
   }
 
@@ -444,7 +444,7 @@ function TaskRow({
           width: 16,
           height: 16,
           borderRadius: '50%',
-          border: `1.5px solid ${isActive ? DS.white : chkHovered ? DS.green : '#2a2a2a'}`,
+          border: `1.5px solid ${isActive ? DS.white : chkHovered ? DS.accent : '#2a2a2a'}`,
           background: 'transparent',
           cursor: 'pointer',
           flexShrink: 0,
@@ -452,7 +452,7 @@ function TaskRow({
           alignItems: 'center',
           justifyContent: 'center',
           fontSize: chkHovered ? 8 : 0,
-          color: chkHovered ? DS.green : 'transparent',
+          color: chkHovered ? DS.accent : 'transparent',
           transition: 'all 0.2s',
           padding: 0
         }}
@@ -525,7 +525,7 @@ function TaskRow({
             style={{
               height: '100%',
               width: `${pct}%`,
-              background: DS.green,
+              background: DS.accent,
               borderRadius: 1
             }}
           />
@@ -568,9 +568,9 @@ function TodoistImportBtn({
         height: 32,
         paddingInline: 10,
         borderRadius: 16,
-        border: `1px solid ${hovered ? DS.green : 'rgba(255,255,255,0.15)'}`,
-        background: hovered ? 'rgba(74,224,138,0.1)' : 'transparent',
-        color: importing ? DS.textLabel : DS.green,
+        border: `1px solid ${hovered ? DS.accent : 'rgba(255,255,255,0.15)'}`,
+        background: hovered ? 'rgba(255,225,124,0.1)' : 'transparent',
+        color: importing ? DS.textLabel : DS.accent,
         cursor: importing ? 'wait' : 'pointer',
         display: 'flex',
         alignItems: 'center',

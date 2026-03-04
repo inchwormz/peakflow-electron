@@ -5,7 +5,7 @@ interface ProgressBarProps {
   value: number
   /** Track height in pixels (default: 3) */
   height?: number
-  /** Fill color (default: #4ae08a) */
+  /** Fill color (default: #ffe17c) */
   color?: string
   className?: string
 }
@@ -13,12 +13,12 @@ interface ProgressBarProps {
 /**
  * Progress bar matching PeakFlow desktop design specs.
  * Container: 2-3px height, bg #1a1a1a, radius 1-2px.
- * Fill: bg #4ae08a, transition width 0.2s.
+ * Fill: bg #ffe17c, transition width 0.2s.
  */
 export function ProgressBar({
   value,
   height = 3,
-  color = '#4ae08a',
+  color = '#ffe17c',
   className
 }: ProgressBarProps): React.JSX.Element {
   const clampedValue = Math.max(0, Math.min(100, value))

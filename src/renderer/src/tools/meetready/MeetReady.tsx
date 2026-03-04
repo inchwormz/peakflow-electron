@@ -29,7 +29,7 @@ const DS = {
   bg: '#0a0a0a',
   bgLight: '#111111',
   bgHover: '#141414',
-  accent: '#4ae08a',
+  accent: '#ffe17c',
   text: '#f0f0f5',
   textDim: '#666666',
   textGray: '#888888',
@@ -872,9 +872,10 @@ const styles: Record<string, CSSProperties> = {
   },
 
   navTitle: {
-    fontSize: 16,
-    fontWeight: 600,
-    color: DS.text
+    fontSize: 13,
+    fontWeight: 400,
+    color: DS.text,
+    fontFamily: "'Silkscreen', cursive"
   },
 
   navBtn: {

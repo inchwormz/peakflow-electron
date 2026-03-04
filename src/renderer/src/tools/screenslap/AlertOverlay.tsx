@@ -30,7 +30,7 @@ const DS = {
   textTime: '#888888',
   textHint: '#444444',
   blue: '#5eb8ff',
-  green: '#4ae08a',
+  accent: '#ffe17c',
   yellow: '#eab308',
   red: '#f05858',
   dismissBg: '#1a1a1a',
@@ -39,7 +39,7 @@ const DS = {
   dismissBorder: '#333333',
   snoozeBg: '#1a2f2a',
   snoozeHover: '#254540',
-  snoozeText: '#4ade80',
+  snoozeText: '#4ae08a',
   snoozeBorder: '#22c55e',
   joinBg: '#0a84ff',
   joinHover: '#5eb8ff',
@@ -392,7 +392,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 0,
     height: 6,
-    background: 'linear-gradient(90deg, #5eb8ff, #4ae08a, #5eb8ff, #4ae08a)',
+    background: 'linear-gradient(90deg, #5eb8ff, #ffe17c, #5eb8ff, #ffe17c)',
     backgroundSize: '200% 100%',
     animation: 'barShift 8s ease infinite'
   },
@@ -403,7 +403,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 0,
     height: 6,
-    background: 'linear-gradient(90deg, #4ae08a, #5eb8ff, #4ae08a, #5eb8ff)',
+    background: 'linear-gradient(90deg, #ffe17c, #5eb8ff, #ffe17c, #5eb8ff)',
     backgroundSize: '200% 100%',
     animation: 'barShift 8s ease infinite reverse'
   },
@@ -417,7 +417,7 @@ const styles: Record<string, CSSProperties> = {
     height: 600,
     borderRadius: '50%',
     background:
-      'radial-gradient(circle, rgba(94,184,255,0.1) 0%, rgba(74,224,138,0.05) 40%, transparent 70%)',
+      'radial-gradient(circle, rgba(94,184,255,0.1) 0%, rgba(255,225,124,0.05) 40%, transparent 70%)',
     pointerEvents: 'none'
   },
 

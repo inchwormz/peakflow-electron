@@ -8,9 +8,10 @@
  *   - Stats row: Streak / Today (mini chart) / All Time
  */
 
-import { useState, useMemo, type CSSProperties } from 'react'
+import { useState, useCallback, useMemo, type CSSProperties } from 'react'
 import { DS, type TimerState, type SessionStats } from './LiquidFocus'
 import { FocusDetector } from './FocusDetector'
+import { IPC_INVOKE } from '@shared/ipc-types'
 
 interface TimerViewProps {
   timer: TimerState
@@ -28,8 +29,8 @@ interface TimerViewProps {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const RING_SIZE = 190
-const RING_RADIUS = 88
+const RING_SIZE = 240
+const RING_RADIUS = 110
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -103,6 +104,9 @@ export function TimerView({
           <TextNavButton onClick={onShowTasks}>Tasks</TextNavButton>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <NavButton onClick={() => window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_TOGGLE_MINI)} title="Mini mode">
+            &#9724;
+          </NavButton>
           <NavButton onClick={onShowSettings} title="Settings">
             &#9881;
           </NavButton>
@@ -117,38 +121,39 @@ export function TimerView({
             position: 'relative',
             width: RING_SIZE,
             height: RING_SIZE,
-            marginBottom: 14
+            marginBottom: 16
           }}
         >
           <svg
-            viewBox="0 0 200 200"
+            viewBox="0 0 240 240"
             width={RING_SIZE}
             height={RING_SIZE}
-            style={{ transform: 'rotate(-90deg)' }}
+            style={{ transform: 'rotate(-90deg)', filter: `drop-shadow(0 0 18px ${isBreak ? 'rgba(255,225,124,0.3)' : 'rgba(255,112,67,0.35)'})` }}
           >
             <defs>
               <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor={DS.green} />
-                <stop offset="100%" stopColor={DS.blue} />
+                <stop offset="0%" stopColor="#FF7043" />
+                <stop offset="50%" stopColor="#FF5252" />
+                <stop offset="100%" stopColor="#E53935" />
               </linearGradient>
             </defs>
             {/* Track */}
             <circle
-              cx="100"
-              cy="100"
+              cx="120"
+              cy="120"
               r={RING_RADIUS}
               fill="none"
-              stroke={DS.elevated}
-              strokeWidth={4}
+              stroke="rgba(255,255,255,0.05)"
+              strokeWidth={10}
             />
             {/* Progress */}
             <circle
-              cx="100"
-              cy="100"
+              cx="120"
+              cy="120"
               r={RING_RADIUS}
               fill="none"
-              stroke={isBreak ? DS.green : 'url(#ringGrad)'}
-              strokeWidth={4}
+              stroke={isBreak ? DS.accent : 'url(#ringGrad)'}
+              strokeWidth={10}
               strokeLinecap="round"
               strokeDasharray={RING_CIRCUMFERENCE}
               strokeDashoffset={dashOffset}
@@ -169,8 +174,8 @@ export function TimerView({
           >
             <div
               style={{
-                fontSize: 46,
-                fontWeight: 300,
+                fontSize: 52,
+                fontWeight: 500,
                 letterSpacing: 2,
                 color: DS.white,
                 lineHeight: 1,
@@ -183,15 +188,16 @@ export function TimerView({
         </div>
 
         {/* Pomodoro dots */}
-        <div style={{ display: 'flex', gap: 5, marginBottom: 4 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
           {pomDots.map((filled, i) => (
             <div
               key={i}
               style={{
-                width: 6,
-                height: 6,
+                width: 8,
+                height: 8,
                 borderRadius: '50%',
-                background: filled ? DS.green : DS.textGhost
+                background: filled ? (isBreak ? DS.accent : DS.orange) : DS.textGhost,
+                boxShadow: filled ? `0 0 6px ${isBreak ? 'rgba(255,225,124,0.5)' : 'rgba(255,112,67,0.5)'}` : 'none'
               }}
             />
           ))}
@@ -202,9 +208,9 @@ export function TimerView({
           style={{
             fontSize: 10,
             fontWeight: 600,
-            letterSpacing: 3,
+            letterSpacing: 4,
             textTransform: 'uppercase',
-            color: DS.textMuted,
+            color: 'rgba(255,255,255,0.35)',
             marginBottom: activeTaskName ? 4 : focusDetectionEnabled ? 8 : 16
           }}
         >
@@ -246,7 +252,7 @@ export function TimerView({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 16,
+            gap: 18,
             width: '100%'
           }}
         >
@@ -278,7 +284,7 @@ export function TimerView({
             onClick={onShowStats}
           />
           <div style={{ textAlign: 'center', cursor: 'pointer' }} onClick={onShowStats}>
-            <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color: DS.green }}>
+            <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color: DS.orange }}>
               {stats.today}
             </div>
             <div
@@ -403,17 +409,17 @@ function IconButton({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 36,
-        height: 36,
+        width: 46,
+        height: 46,
         borderRadius: '50%',
-        border: `1px solid ${hovered ? '#444' : 'rgba(255,255,255,0.15)'}`,
+        border: `1px solid ${hovered ? '#444' : 'rgba(255,255,255,0.08)'}`,
         background: hovered ? DS.elevated : 'transparent',
         color: DS.white,
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: 14,
+        fontSize: 18,
         transition: 'all 0.2s',
         fontFamily: 'inherit',
         padding: 0
@@ -436,10 +442,15 @@ function MainButton({
   const isPaused = status === 'paused'
 
   const baseStyle: CSSProperties = {
-    padding: '10px 32px',
-    borderRadius: 20,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    minWidth: 150,
+    padding: '0 44px',
+    borderRadius: 24,
     border: `1px solid ${isRunning ? DS.white : isPaused ? DS.amber : DS.borderLight}`,
-    background: isRunning ? DS.white : DS.surface2,
+    background: isRunning ? DS.white : isPaused ? 'rgba(234,179,8,0.05)' : DS.surface2,
     color: isRunning ? DS.bg : isPaused ? DS.amber : DS.white,
     fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
     fontSize: 11,
@@ -539,7 +550,7 @@ function MiniChart({
             style={{
               width: 6,
               borderRadius: '2px 2px 0 0',
-              background: d.count > 0 ? DS.green : DS.elevated,
+              background: d.count > 0 ? DS.orange : DS.elevated,
               height: `${h}%`,
               minHeight: 2
             }}

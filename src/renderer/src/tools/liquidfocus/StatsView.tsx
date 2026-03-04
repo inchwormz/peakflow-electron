@@ -76,8 +76,8 @@ export function StatsView({ stats, onBack }: StatsViewProps): React.JSX.Element 
             marginTop: 20
           }}
         >
-          <StatCard label="Focus Time" value={`${focusHours}h`} color={DS.blue} />
-          <StatCard label="Sessions" value={String(stats.allTime)} color={DS.green} />
+          <StatCard label="Focus Time" value={`${focusHours}h`} color={DS.orange} />
+          <StatCard label="Sessions" value={String(stats.allTime)} color={DS.accent} />
           <StatCard label="Interruptions" value={String(stats.interruptions)} color={DS.red} />
         </div>
 
@@ -156,7 +156,7 @@ export function StatsView({ stats, onBack }: StatsViewProps): React.JSX.Element 
                         width: 28,
                         height: h,
                         borderRadius: '4px 4px 0 0',
-                        background: day.count > 0 ? DS.blue : DS.border,
+                        background: day.count > 0 ? DS.orange : DS.border,
                         transition: 'height 0.3s ease'
                       }}
                     />

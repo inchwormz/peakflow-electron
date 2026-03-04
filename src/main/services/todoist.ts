@@ -147,7 +147,7 @@ class TodoistService {
             <html>
               <body style="background:#0a0a0a;color:#fff;font-family:Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
                 <div style="text-align:center">
-                  <h2 style="color:#4ae08a">Connected to Todoist!</h2>
+                  <h2 style="color:#ffe17c">Connected to Todoist!</h2>
                   <p style="color:#888">You can close this window.</p>
                 </div>
               </body>

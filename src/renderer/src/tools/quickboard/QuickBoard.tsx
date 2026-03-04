@@ -34,7 +34,7 @@ const DS = {
   textDim: '#555555',
   textLabel: '#444444',
   textGhost: '#333333',
-  green: '#4ae08a',
+  accent: '#ffe17c',
   yellow: '#eab308',
   red: '#f05858',
   white: '#ffffff',
@@ -316,7 +316,7 @@ export function QuickBoard(): React.JSX.Element {
           {/* Nav bar */}
           <div style={navBarStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-              <span style={{ fontSize: 16, fontWeight: 600, color: DS.textPrimary }}>
+              <span style={{ fontSize: 13, fontWeight: 400, color: DS.textPrimary, fontFamily: "'Silkscreen', cursive" }}>
                 QuickBoard
               </span>
               <span style={{ fontSize: 10, color: DS.textDim }}>
@@ -402,7 +402,7 @@ export function QuickBoard(): React.JSX.Element {
             {/* @ts-expect-error -- Electron-specific CSS */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, WebkitAppRegion: 'no-drag' }}>
               <NavButton icon="&#9664;" onClick={switchToMain} />
-              <span style={{ fontSize: 16, fontWeight: 600, color: DS.textPrimary }}>
+              <span style={{ fontSize: 13, fontWeight: 400, color: DS.textPrimary, fontFamily: "'Silkscreen', cursive" }}>
                 Settings
               </span>
             </div>
@@ -753,7 +753,7 @@ function Toggle({
         style={{
           position: 'absolute',
           inset: 0,
-          background: checked ? DS.green : DS.surface,
+          background: checked ? DS.accent : DS.surface,
           borderRadius: 10,
           transition: 'background 0.25s'
         }}
@@ -869,7 +869,7 @@ const toastStyle: CSSProperties = {
   bottom: 30,
   left: '50%',
   transform: 'translateX(-50%)',
-  background: DS.green,
+  background: DS.accent,
   color: DS.bg,
   padding: '8px 20px',
   borderRadius: 20,

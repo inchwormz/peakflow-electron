@@ -35,10 +35,10 @@ const DS = {
   textDim: '#555555',
   textLabel: '#444444',
   textGhost: '#333333',
-  green: '#4ae08a',
-  greenBorder: '#22c55e',
-  greenBg: '#1a2f2a',
-  greenText: '#4ade80',
+  accent: '#ffe17c',
+  accentBorder: '#d4a843',
+  accentBg: '#2f2a1a',
+  accentText: '#ffe17c',
   blue: '#5eb8ff',
   blueBright: '#0a84ff',
   red: '#f05858',
@@ -152,7 +152,7 @@ function getMeetingBadgeStyle(service: string | null): CSSProperties {
   if (lower.includes('zoom'))
     return { background: 'rgba(94,184,255,0.15)', color: DS.blue }
   if (lower.includes('meet'))
-    return { background: 'rgba(74,224,138,0.15)', color: DS.green }
+    return { background: 'rgba(255,225,124,0.15)', color: DS.accent }
   if (lower.includes('teams'))
     return { background: 'rgba(94,184,255,0.15)', color: DS.blue }
   return { background: 'rgba(94,184,255,0.15)', color: DS.blue }
@@ -373,7 +373,7 @@ export function ScreenSlap(): React.JSX.Element {
         <div
           style={{
             ...styles.brandDot,
-            background: state.activeAlert ? DS.red : calStatus.connected ? DS.green : DS.textDim
+            background: state.activeAlert ? DS.red : calStatus.connected ? '#4ae08a' : DS.textDim
           }}
         />
         <span style={styles.brandName}>ScreenSlap</span>
@@ -761,7 +761,7 @@ function Toggle({
       <div
         style={{
           ...styles.toggleBg,
-          background: checked ? DS.green : '#1a1a1a'
+          background: checked ? DS.accent : '#1a1a1a'
         }}
       />
       <div
@@ -798,7 +798,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 0,
     height: 6,
-    background: 'linear-gradient(90deg, #5eb8ff, #4ae08a, #5eb8ff, #4ae08a)',
+    background: 'linear-gradient(90deg, #5eb8ff, #ffe17c, #5eb8ff, #ffe17c)',
     backgroundSize: '200% 100%',
     animation: 'barShift 8s ease infinite'
   },
@@ -809,7 +809,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 0,
     height: 6,
-    background: 'linear-gradient(90deg, #4ae08a, #5eb8ff, #4ae08a, #5eb8ff)',
+    background: 'linear-gradient(90deg, #ffe17c, #5eb8ff, #ffe17c, #5eb8ff)',
     backgroundSize: '200% 100%',
     animation: 'barShift 8s ease infinite reverse'
   },
@@ -823,7 +823,7 @@ const styles: Record<string, CSSProperties> = {
     height: 400,
     borderRadius: '50%',
     background:
-      'radial-gradient(circle, rgba(94,184,255,0.1) 0%, rgba(74,224,138,0.05) 40%, transparent 70%)',
+      'radial-gradient(circle, rgba(94,184,255,0.1) 0%, rgba(255,225,124,0.05) 40%, transparent 70%)',
     pointerEvents: 'none'
   },
 
@@ -845,10 +845,11 @@ const styles: Record<string, CSSProperties> = {
   },
 
   brandName: {
-    fontSize: 16,
-    fontWeight: 600,
+    fontSize: 13,
+    fontWeight: 400,
     color: DS.white,
-    letterSpacing: 0.5
+    letterSpacing: 0.5,
+    fontFamily: "'Silkscreen', cursive"
   },
 
   brandStatus: {
@@ -1223,7 +1224,7 @@ const styles: Record<string, CSSProperties> = {
 
   calStatusSm: {
     fontSize: 10,
-    color: DS.green,
+    color: DS.accent,
     display: 'flex',
     alignItems: 'center',
     gap: 5,
@@ -1314,9 +1315,9 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 100,
     padding: '12px 28px',
     borderRadius: 14,
-    background: DS.greenBg,
-    border: `1px solid ${DS.greenBorder}`,
-    color: DS.greenText,
+    background: DS.accentBg,
+    border: `1px solid ${DS.accentBorder}`,
+    color: DS.accentText,
     fontSize: 13,
     fontWeight: 600,
     whiteSpace: 'nowrap' as const,

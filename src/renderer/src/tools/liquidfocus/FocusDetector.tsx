@@ -234,7 +234,7 @@ export function FocusDetector({
     height: 30,
     borderRadius: 6,
     overflow: 'hidden',
-    border: `1px solid ${status === 'focused' ? DS.green : status === 'away' ? DS.red : DS.border}`,
+    border: `1px solid ${status === 'focused' ? DS.accent : status === 'away' ? DS.red : DS.border}`,
     opacity: showPreview && (status === 'focused' || status === 'away') ? 0.9 : 0,
     transition: 'border-color 0.3s, opacity 0.3s',
     position: 'relative'
@@ -253,7 +253,7 @@ export function FocusDetector({
     borderRadius: '50%',
     background:
       status === 'focused'
-        ? DS.green
+        ? DS.accent
         : status === 'away'
           ? DS.red
           : status === 'loading'
@@ -261,7 +261,7 @@ export function FocusDetector({
             : DS.textMuted,
     boxShadow:
       status === 'focused'
-        ? `0 0 6px ${DS.green}`
+        ? `0 0 6px ${DS.accent}`
         : status === 'away'
           ? `0 0 6px ${DS.red}`
           : 'none',

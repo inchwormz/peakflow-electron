@@ -64,10 +64,10 @@ export function TitleBar({
         className="pl-3 truncate"
         style={{
           color: '#666666',
-          fontSize: 12,
-          fontWeight: 500,
+          fontSize: 11,
+          fontWeight: 400,
           letterSpacing: '0.5px',
-          fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif"
+          fontFamily: "'Silkscreen', cursive"
         }}
       >
         {title}

@@ -33,7 +33,7 @@ const DS = {
   textMuted: '#666666',
   textLabel: '#444444',
   textEmpty: '#333333',
-  green: '#4ae08a',
+  accent: '#ffe17c',
   yellow: '#eab308',
   red: '#f05858',
   white: '#ffffff'
@@ -300,7 +300,7 @@ function EmptyState(): React.JSX.Element {
 function VUMeter({ level }: { level: number }): React.JSX.Element {
   const percent = Math.min(100, Math.max(0, level * 100))
 
-  let color = DS.green
+  let color = DS.accent
   if (percent > 80) color = DS.red
   else if (percent > 55) color = DS.yellow
 

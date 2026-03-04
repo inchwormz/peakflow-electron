@@ -34,7 +34,7 @@ export function Toggle({
     width: trackWidth,
     height: trackHeight,
     borderRadius: trackRadius,
-    background: checked ? '#4ae08a' : '#1a1a1a',
+    background: checked ? '#ffe17c' : '#1a1a1a',
     cursor: disabled ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.5 : 1,
     transition: 'background 0.25s ease',

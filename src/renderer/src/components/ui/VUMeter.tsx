@@ -12,7 +12,7 @@ interface VUMeterProps {
  * VU meter for audio levels matching PeakFlow desktop design specs.
  * Container: 3-6px height, bg #1a1a1a, radius 2-3px.
  * Fill color based on level:
- *   <60%  → green (#4ae08a)
+ *   <60%  → green (#ffe17c)
  *   60-85% → yellow (#eab308)
  *   >85%  → red (#f05858)
  */

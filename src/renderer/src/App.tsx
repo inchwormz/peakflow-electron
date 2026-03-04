@@ -9,6 +9,7 @@ import { ScreenSlap } from './tools/screenslap/ScreenSlap'
 import { AlertOverlay } from './tools/screenslap/AlertOverlay'
 import { MeetReady } from './tools/meetready/MeetReady'
 import { LiquidFocus } from './tools/liquidfocus/LiquidFocus'
+import { LiquidFocusMini } from './tools/liquidfocus/LiquidFocusMini'
 import { SoundSplit } from './tools/soundsplit/SoundSplit'
 import { TrialExpired } from './components/licensing/TrialExpired'
 
@@ -19,12 +20,12 @@ function ToolPlaceholder({ toolId }: { toolId: ToolId }): React.JSX.Element {
 
   // Per-tool accent colors for visual distinction
   const accentColors: Record<ToolId, string> = {
-    [ToolId.FocusDim]: '#a78bfa',      // violet
-    [ToolId.QuickBoard]: '#4ae08a',     // green
-    [ToolId.ScreenSlap]: '#f05858',     // red
-    [ToolId.MeetReady]: '#5eb8ff',      // blue
-    [ToolId.LiquidFocus]: '#e8a237',    // amber
-    [ToolId.SoundSplit]: '#f472b6'      // pink
+    [ToolId.FocusDim]: '#ffe17c',
+    [ToolId.QuickBoard]: '#ffe17c',
+    [ToolId.ScreenSlap]: '#ffe17c',
+    [ToolId.MeetReady]: '#ffe17c',
+    [ToolId.LiquidFocus]: '#ffe17c',
+    [ToolId.SoundSplit]: '#ffe17c'
   }
 
   const accent = accentColors[toolId]
@@ -141,6 +142,10 @@ export default function App(): React.JSX.Element {
       return <AlertOverlay />
     }
 
+    if (systemId === SystemWindowId.LiquidFocusMini) {
+      return <LiquidFocusMini />
+    }
+
     // Trial expired / tool not licensed lock screen
     if (systemId === SystemWindowId.TrialExpired) {
       const params = new URLSearchParams(window.location.search)
@@ -174,7 +179,7 @@ export default function App(): React.JSX.Element {
   }
 
   // System windows render without AppShell (no title bar, no chrome)
-  if (systemId === SystemWindowId.ScreenSlapAlert) {
+  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini) {
     return renderTool()
   }
 
