@@ -20,7 +20,7 @@ import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
-import { getActiveWindow } from '../native/active-window'
+import { getActiveWindow, getAllVisibleWindows, type WindowRect, type DisplayBounds } from '../native/active-window'
 
 // ─── Legacy color key → hex migration map ────────────────────────────────────
 
@@ -45,6 +45,8 @@ export interface FocusDimState {
   peeking: boolean
   hotkey: string
   autoRevealDesktop: boolean
+  highlightMode: 'active' | 'app' | 'all'
+  dragEscape: boolean
 }
 
 export interface DisplayInfo {
@@ -72,6 +74,14 @@ class FocusDimService {
   private _peeking = false
   private _desktopRevealed = false
   private _lastRect = { x: 0, y: 0, w: 0, h: 0 }
+  private _lastRectsHash = ''
+  private _desktopNullTicks = 0
+  private _dragMoveTicks = 0
+  private _dragStableTicks = 0
+  private _dragging = false
+  private _lastTrackWindowId = ''
+  private _lastTrackX = 0
+  private _lastTrackY = 0
   private peekTimer: ReturnType<typeof setTimeout> | null = null
   private displayChangeHandler: (() => void) | null = null
   private suspendHandler: (() => void) | null = null
@@ -132,7 +142,9 @@ class FocusDimService {
       peekDuration: conf.peek_duration,
       peeking: this._peeking,
       hotkey: conf.hotkey,
-      autoRevealDesktop: conf.auto_reveal_desktop
+      autoRevealDesktop: conf.auto_reveal_desktop,
+      highlightMode: conf.highlight_mode,
+      dragEscape: conf.drag_escape
     }
   }
 
@@ -168,6 +180,7 @@ class FocusDimService {
     this.cancelPeek()
     this._enabled = false
     this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+    this._lastRectsHash = ''
     this.setConf('enabled', false)
     this.stopTracking()
     this.stopListeningForDisplayChanges()
@@ -218,7 +231,7 @@ class FocusDimService {
     }
 
     this._peeking = true
-    // Hide all overlay divs
+    // Hide all overlay divs (both 4-div and clip-path)
     for (const entry of this.overlays) {
       if (entry.window.isDestroyed()) continue
       entry.window.webContents.executeJavaScript(`
@@ -228,6 +241,8 @@ class FocusDimService {
             var el = document.getElementById(ids[i]);
             if (el) el.style.opacity = '0';
           }
+          var c = document.getElementById('dim-canvas');
+          if (c) c.style.display = 'none';
           var border = document.getElementById('border-frame');
           if (border) border.style.display = 'none';
         })();
@@ -325,6 +340,14 @@ class FocusDimService {
       this.destroyAllOverlays()
       this.createOverlayWindows()
     }
+    this.broadcastState()
+  }
+
+  /** Set highlight mode: 'active', 'app', or 'all' */
+  setHighlightMode(mode: 'active' | 'app' | 'all'): void {
+    this.setConf('highlight_mode', mode)
+    this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+    this._lastRectsHash = ''
     this.broadcastState()
   }
 
@@ -497,7 +520,7 @@ class FocusDimService {
     // This avoids sub-pixel rounding, evenodd quirks, and percentage math errors.
     const dimStyle = `position:fixed; background:${color}; opacity:${opacity}; pointer-events:none; z-index:1; transition:opacity ${fadeDuration}ms ease;`
     return `<!DOCTYPE html>
-<html><head><style>
+<html><head><title>__peakflow_dim__</title><style>
   * { margin: 0; padding: 0; }
   html, body { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
 </style></head><body>
@@ -505,6 +528,7 @@ class FocusDimService {
 <div id="dim-left" style="${dimStyle} left:0; top:0; width:0; height:100%;"></div>
 <div id="dim-right" style="${dimStyle} right:0; top:0; width:0; height:100%;"></div>
 <div id="dim-bottom" style="${dimStyle} left:0; bottom:0; right:0; height:0;"></div>
+<canvas id="dim-canvas" style="position:fixed; inset:0; pointer-events:none; z-index:1; display:none;" width="1" height="1"></canvas>
 <div id="border-frame" style="position:fixed; border:3px solid rgba(168,85,247,0.9); border-radius:4px; pointer-events:none; z-index:2; transition:all 0.05s linear; display:${showBorder ? 'block' : 'none'}; box-shadow:0 0 12px rgba(168,85,247,0.3);"></div>
 </body></html>`
   }
@@ -629,10 +653,144 @@ class FocusDimService {
     }
   }
 
+  /**
+   * Send canvas-based overlay update for multiple window cutouts.
+   * Fills canvas with dim color, then uses clearRect to punch transparent holes.
+   * Avoids clip-path polygon which causes diagonal line artifacts on transparent Electron windows.
+   */
+  private sendMultiRectOverlayUpdate(rects: WindowRect[], activeRect?: WindowRect): void {
+    if (this.overlays.length === 0 || this._peeking) return
+
+    const conf = this.getConf()
+    const hex = conf.dim_color
+
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+
+      const sf = entry.scaleFactor
+      const pb = entry.physicalBounds
+      const lb = entry.bounds
+
+      // Find which rects overlap this display, clip and convert to logical pixels
+      const localRects: Array<{ x: number; y: number; w: number; h: number }> = []
+      for (const rect of rects) {
+        const overlapX = Math.max(0, Math.min(rect.x + rect.w, pb.x + pb.width) - Math.max(rect.x, pb.x))
+        const overlapY = Math.max(0, Math.min(rect.y + rect.h, pb.y + pb.height) - Math.max(rect.y, pb.y))
+        if (overlapX <= 0 || overlapY <= 0) continue
+
+        const clippedLeft = Math.max(rect.x, pb.x)
+        const clippedTop = Math.max(rect.y, pb.y)
+        const clippedRight = Math.min(rect.x + rect.w, pb.x + pb.width)
+        const clippedBottom = Math.min(rect.y + rect.h, pb.y + pb.height)
+
+        const logX = (clippedLeft - pb.x) / sf
+        const logY = (clippedTop - pb.y) / sf
+        const logW = (clippedRight - clippedLeft) / sf
+        const logH = (clippedBottom - clippedTop) / sf
+
+        if (logW > 0 && logH > 0) {
+          localRects.push({ x: logX, y: logY, w: logW, h: logH })
+        }
+      }
+
+      const sw = lb.width
+      const sh = lb.height
+
+      if (localRects.length === 0) {
+        // No windows on this display: full dim via canvas
+        entry.window.webContents.executeJavaScript(`
+          (function() {
+            var c = document.getElementById('dim-canvas');
+            if (!c) return;
+            c.width = ${sw}; c.height = ${sh};
+            c.style.display = 'block';
+            var ctx = c.getContext('2d');
+            ctx.globalAlpha = ${conf.opacity};
+            ctx.fillStyle = ${JSON.stringify(hex)};
+            ctx.fillRect(0, 0, ${sw}, ${sh});
+            var b = document.getElementById('border-frame');
+            if (b) b.style.display = 'none';
+          })();
+        `).catch(() => {})
+        continue
+      }
+
+      // Build the rects array as inline JSON for the executeJavaScript call
+      const rectsJson = JSON.stringify(localRects)
+
+      // Border tracks the active window, not just the first rect
+      let borderJs = `var b = document.getElementById('border-frame'); if (b) b.style.display = 'none';`
+      if (conf.show_border && activeRect) {
+        // Convert active window physical coords to logical coords on this display
+        const aOverlapX = Math.max(0, Math.min(activeRect.x + activeRect.w, pb.x + pb.width) - Math.max(activeRect.x, pb.x))
+        const aOverlapY = Math.max(0, Math.min(activeRect.y + activeRect.h, pb.y + pb.height) - Math.max(activeRect.y, pb.y))
+        if (aOverlapX > 0 && aOverlapY > 0) {
+          const bx = (Math.max(activeRect.x, pb.x) - pb.x) / sf
+          const by = (Math.max(activeRect.y, pb.y) - pb.y) / sf
+          const bw = (Math.min(activeRect.x + activeRect.w, pb.x + pb.width) - Math.max(activeRect.x, pb.x)) / sf
+          const bh = (Math.min(activeRect.y + activeRect.h, pb.y + pb.height) - Math.max(activeRect.y, pb.y)) / sf
+          borderJs = `var b = document.getElementById('border-frame'); if (b) { b.style.display = 'block'; b.style.left = '${bx}px'; b.style.top = '${by}px'; b.style.width = '${bw}px'; b.style.height = '${bh}px'; }`
+        }
+      }
+
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var c = document.getElementById('dim-canvas');
+          if (!c) return;
+          c.width = ${sw}; c.height = ${sh};
+          c.style.display = 'block';
+          var ctx = c.getContext('2d');
+          ctx.globalAlpha = ${conf.opacity};
+          ctx.fillStyle = ${JSON.stringify(hex)};
+          ctx.fillRect(0, 0, ${sw}, ${sh});
+          var rects = ${rectsJson};
+          for (var i = 0; i < rects.length; i++) {
+            var r = rects[i];
+            ctx.clearRect(r.x, r.y, r.w, r.h);
+          }
+          ${borderJs}
+        })();
+      `).catch(() => {})
+    }
+  }
+
+  /** Hide the canvas (when switching to 4-div mode) */
+  private hideCanvas(): void {
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var c = document.getElementById('dim-canvas');
+          if (c) c.style.display = 'none';
+        })();
+      `).catch(() => {})
+    }
+  }
+
+  /** Hide the 4 div elements (when switching to clip-path mode) */
+  private hideFourDivs(): void {
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var ids = ['dim-top','dim-left','dim-right','dim-bottom'];
+          for (var i = 0; i < ids.length; i++) {
+            var el = document.getElementById(ids[i]);
+            if (el) el.style.opacity = '0';
+          }
+        })();
+      `).catch(() => {})
+    }
+  }
+
   /** Push style-only updates to all overlays (no position change) */
   private updateAllOverlays(): void {
     const conf = this.getConf()
     const hex = conf.dim_color
+
+    // Reset dirty check so canvas mode redraws on next tick with new settings
+    this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+    this._lastRectsHash = ''
 
     for (const entry of this.overlays) {
       if (entry.window.isDestroyed()) continue
@@ -676,28 +834,156 @@ class FocusDimService {
     }
   }
 
+  /** Fade all overlays to opacity 0 (drag started) */
+  private fadeOutForDrag(): void {
+    const conf = this.getConf()
+    const fadeMs = Math.min(conf.fade_duration, 150)
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var ids = ['dim-top','dim-left','dim-right','dim-bottom'];
+          for (var i = 0; i < ids.length; i++) {
+            var el = document.getElementById(ids[i]);
+            if (el) { el.style.transition = 'opacity ${fadeMs}ms ease'; el.style.opacity = '0'; }
+          }
+          var c = document.getElementById('dim-canvas');
+          if (c) { c.style.transition = 'opacity ${fadeMs}ms ease'; c.style.opacity = '0'; }
+          var border = document.getElementById('border-frame');
+          if (border) { border.style.transition = 'opacity ${fadeMs}ms ease'; border.style.opacity = '0'; }
+        })();
+      `).catch(() => {})
+    }
+  }
+
+  /** Fade all overlays back to configured opacity (drag ended) */
+  private fadeInAfterDrag(): void {
+    const conf = this.getConf()
+    const fadeMs = conf.fade_duration
+    for (const entry of this.overlays) {
+      if (entry.window.isDestroyed()) continue
+      entry.window.webContents.executeJavaScript(`
+        (function() {
+          var ids = ['dim-top','dim-left','dim-right','dim-bottom'];
+          for (var i = 0; i < ids.length; i++) {
+            var el = document.getElementById(ids[i]);
+            if (el) { el.style.transition = 'opacity ${fadeMs}ms ease'; el.style.opacity = '${conf.opacity}'; }
+          }
+          var c = document.getElementById('dim-canvas');
+          if (c) { c.style.transition = 'opacity ${fadeMs}ms ease'; c.style.opacity = '1'; }
+          var border = document.getElementById('border-frame');
+          if (border) { border.style.transition = 'opacity ${fadeMs}ms ease'; border.style.opacity = '1'; }
+        })();
+      `).catch(() => {})
+    }
+  }
+
   /**
    * Get the active window rect using native Win32 API.
-   * Calls GetForegroundWindow() + DwmGetWindowAttribute() for accurate bounds.
+   * Branches on highlight_mode:
+   *   'active' — single window, 4-div approach
+   *   'app'    — all windows from active app's process, clip-path
+   *   'all'    — all visible windows, clip-path
    */
   private trackActiveWindow(): void {
     if (!this._enabled || this.overlays.length === 0) return
 
+    const conf = this.getConf()
     const activeWin = getActiveWindow()
 
     if (activeWin) {
+      this._desktopNullTicks = 0
+
+      // ── Drag detection ──────────────────────────────────────────────
+      if (conf.drag_escape) {
+        const windowId = `${activeWin.pid}:${activeWin.title}`
+        const sameWindow = windowId === this._lastTrackWindowId
+        const posChanged = activeWin.x !== this._lastTrackX || activeWin.y !== this._lastTrackY
+
+        if (sameWindow && posChanged) {
+          this._dragMoveTicks++
+          this._dragStableTicks = 0
+          if (this._dragMoveTicks >= 3 && !this._dragging) {
+            this._dragging = true
+            this.fadeOutForDrag()
+          }
+        } else if (this._dragging) {
+          this._dragStableTicks++
+          if (this._dragStableTicks >= 60) {
+            this._dragging = false
+            this._dragMoveTicks = 0
+            this._dragStableTicks = 0
+            this.fadeInAfterDrag()
+            this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+            this._lastRectsHash = ''
+          }
+        } else {
+          this._dragMoveTicks = 0
+        }
+
+        this._lastTrackWindowId = windowId
+        this._lastTrackX = activeWin.x
+        this._lastTrackY = activeWin.y
+
+        if (this._dragging) return
+      }
+
+      const wasDesktopRevealed = this._desktopRevealed
       this._desktopRevealed = false
-      const rect = { x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h }
-      // Skip update if the window hasn't moved or resized
-      const lr = this._lastRect
-      if (rect.x === lr.x && rect.y === lr.y && rect.w === lr.w && rect.h === lr.h) return
-      this._lastRect = rect
-      this.sendOverlayUpdate(rect)
+
+      // Force redraw after returning from desktop reveal (canvas was hidden)
+      if (wasDesktopRevealed) {
+        this._lastRectsHash = ''
+        this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+      }
+
+      if (conf.highlight_mode === 'active') {
+        // Single-window mode: use 4-div approach (existing behavior)
+        const rect = { x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h }
+        const lr = this._lastRect
+        if (rect.x === lr.x && rect.y === lr.y && rect.w === lr.w && rect.h === lr.h) return
+        this._lastRect = rect
+        this.hideCanvas()
+        this.sendOverlayUpdate(rect)
+        return
+      }
+
+      // Multi-rect modes: enumerate windows
+      const dispBounds: DisplayBounds[] = this.overlays.map(o => ({
+        x: o.physicalBounds.x, y: o.physicalBounds.y,
+        w: o.physicalBounds.width, h: o.physicalBounds.height
+      }))
+      let rects: WindowRect[]
+      if (conf.highlight_mode === 'app') {
+        rects = getAllVisibleWindows(activeWin.pid, dispBounds)
+      } else {
+        rects = getAllVisibleWindows(undefined, dispBounds)
+      }
+
+      if (rects.length === 0) {
+        // Fallback to single active window
+        this.hideCanvas()
+        this.sendOverlayUpdate({ x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h })
+        return
+      }
+
+      // Dirty check: hash rects + active window (so border follows focus changes)
+      const activeKey = `A:${activeWin.x},${activeWin.y},${activeWin.w},${activeWin.h}`
+      const hash = activeKey + '|' + rects.map(r => `${r.x},${r.y},${r.w},${r.h}`).sort().join('|')
+      if (hash === this._lastRectsHash) return
+      this._lastRectsHash = hash
+
+      this.hideFourDivs()
+      this.sendMultiRectOverlayUpdate(rects, { x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h })
       return
     }
 
-    // Desktop focused — auto-reveal hides overlays, otherwise dim everything
-    const conf = this.getConf()
+    // Desktop focused — debounce to avoid flicker when closing a single window
+    // (Windows briefly focuses desktop before Z-ordering to next window).
+    // At 16ms polling, 6 ticks ≈ 100ms — enough to ride out transient focus changes.
+    this._desktopNullTicks++
+    if (this._desktopNullTicks < 6) return
+
     if (conf.auto_reveal_desktop) {
       if (!this._desktopRevealed) {
         this._desktopRevealed = true
@@ -710,6 +996,8 @@ class FocusDimService {
                 var el = document.getElementById(ids[i]);
                 if (el) el.style.opacity = '0';
               }
+              var c = document.getElementById('dim-canvas');
+              if (c) c.style.display = 'none';
               var border = document.getElementById('border-frame');
               if (border) border.style.display = 'none';
             })();

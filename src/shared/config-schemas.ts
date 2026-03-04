@@ -15,6 +15,8 @@ export interface FocusDimConfig {
   peek_duration: number
   auto_reveal_desktop: boolean
   disabled_displays: number[]
+  highlight_mode: 'active' | 'app' | 'all'
+  drag_escape: boolean
 }
 
 export interface QuickBoardConfig {
@@ -82,7 +84,9 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     fade_duration: 200,
     peek_duration: 3,
     auto_reveal_desktop: true,
-    disabled_displays: []
+    disabled_displays: [],
+    highlight_mode: 'active' as const,
+    drag_escape: true
   },
   [ToolId.QuickBoard]: {
     max_entries: 100,

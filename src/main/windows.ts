@@ -81,7 +81,14 @@ const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
     resizable: false,
     alwaysOnTop: true
   },
-  [SystemWindowId.Settings]: { width: 500, height: 600 }
+  [SystemWindowId.Settings]: { width: 500, height: 600 },
+  [SystemWindowId.LiquidFocusMini]: {
+    width: 220,
+    height: 64,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true
+  }
 }
 
 /**
@@ -182,7 +189,7 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
     win.show()
     // 'screen-saver' level keeps windows above fullscreen apps (Chrome, etc.).
     // Re-assert on blur/show/restore because Windows can silently drop it.
-    if (toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert) {
+    if (toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert || toolId === SystemWindowId.LiquidFocusMini) {
       const pinAbove = (): void => {
         if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver')
       }
@@ -190,6 +197,12 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
       win.on('blur', pinAbove)
       win.on('show', pinAbove)
       win.on('restore', pinAbove)
+    }
+
+    // Position mini widget at bottom-right of primary display
+    if (toolId === SystemWindowId.LiquidFocusMini) {
+      const workArea = screen.getPrimaryDisplay().workArea
+      win.setPosition(workArea.x + workArea.width - 220 - 16, workArea.y + workArea.height - 64 - 16)
     }
   })
 

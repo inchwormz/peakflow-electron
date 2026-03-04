@@ -12,7 +12,7 @@ import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig } from '@shared/config-schemas'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
-import { createToolWindow, openToolWithAccessCheck } from './windows'
+import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
 import { registerToolHotkey } from './hotkeys'
 import { checkAccess } from './security/access-check'
@@ -302,6 +302,15 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.FOCUSDIM_SET_DISABLED_DISPLAYS,
     (_event, ids: number[]): void => {
       getFocusDimService().setDisabledDisplays(ids)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.FOCUSDIM_SET_HIGHLIGHT_MODE,
+    (_event, mode: string): void => {
+      if (mode === 'active' || mode === 'app' || mode === 'all') {
+        getFocusDimService().setHighlightMode(mode)
+      }
     }
   )
 
@@ -638,6 +647,20 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.MIC_TOGGLE_MUTE,
     async (): Promise<MicMuteResult> => {
       return toggleMicMute()
+    }
+  )
+
+  // ─── LiquidFocus Mini Mode ─────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_TOGGLE_MINI,
+    (): void => {
+      const existing = getToolWindow(SystemWindowId.LiquidFocusMini)
+      if (existing) {
+        closeToolWindow(SystemWindowId.LiquidFocusMini)
+      } else {
+        createToolWindow(SystemWindowId.LiquidFocusMini)
+      }
     }
   )
 

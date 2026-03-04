@@ -3,12 +3,15 @@
  *
  * Compares app.getVersion() against the latest release tag
  * on github.com/inchwormz/peakflow-releases. If a newer version exists,
- * prompts the user to download it via their browser.
+ * downloads the installer directly and launches it.
  *
  * This approach works with manually-uploaded releases (no latest.yml needed).
  */
 
-import { app, dialog, shell, net } from 'electron'
+import { app, dialog, net, BrowserWindow } from 'electron'
+import { createWriteStream } from 'fs'
+import { join } from 'path'
+import { spawn } from 'child_process'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,7 @@ const RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let checking = false
+let downloading = false
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -108,6 +112,78 @@ function fetchLatestRelease(): Promise<{
   })
 }
 
+/**
+ * Download installer exe to temp dir, showing progress on all windows' taskbar icons.
+ * Returns the local file path on success.
+ */
+function downloadInstaller(url: string, fileName: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const dest = join(app.getPath('temp'), fileName)
+    const file = createWriteStream(dest)
+    const request = net.request({ url, method: 'GET' })
+    request.setHeader('User-Agent', `PeakFlow/${app.getVersion()}`)
+
+    request.on('response', (response) => {
+      // Follow redirects (GitHub asset URLs redirect to S3)
+      if (response.statusCode === 302 || response.statusCode === 301) {
+        const location = response.headers['location']
+        const redirectUrl = Array.isArray(location) ? location[0] : location
+        if (redirectUrl && redirectUrl.startsWith('https://')) {
+          file.close()
+          resolve(downloadInstaller(redirectUrl, fileName))
+          return
+        }
+        file.close()
+        reject(new Error('Redirect to non-HTTPS URL'))
+        return
+      }
+
+      if (response.statusCode !== 200) {
+        file.close()
+        reject(new Error(`Download failed: HTTP ${response.statusCode}`))
+        return
+      }
+
+      const contentLength = response.headers['content-length']
+      const total = contentLength
+        ? parseInt(Array.isArray(contentLength) ? contentLength[0] : contentLength, 10)
+        : 0
+      let received = 0
+
+      response.on('data', (chunk) => {
+        received += chunk.length
+        file.write(chunk)
+        if (total > 0) {
+          const progress = received / total
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.setProgressBar(progress)
+          }
+        }
+      })
+
+      response.on('end', () => {
+        file.end(() => {
+          // Clear taskbar progress
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.setProgressBar(-1)
+          }
+          resolve(dest)
+        })
+      })
+    })
+
+    request.on('error', (err) => {
+      file.close()
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.setProgressBar(-1)
+      }
+      reject(err)
+    })
+
+    request.end()
+  })
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -148,12 +224,49 @@ export async function checkForUpdates(silent = false): Promise<void> {
       })
 
       if (result.response === 0) {
-        // Open installer download or release page — only allow HTTPS
-        const url = release.installerUrl || release.htmlUrl
-        if (url.startsWith('https://')) {
-          shell.openExternal(url)
-        } else {
-          console.warn('[AutoUpdater] Blocked non-HTTPS URL:', url)
+        if (!release.installerUrl) {
+          console.error('[AutoUpdater] No installer asset found in release')
+          dialog.showMessageBox({
+            type: 'error',
+            title: 'Update Error',
+            message: 'No installer found for this release.'
+          })
+          return
+        }
+
+        downloading = true
+        console.log(`[AutoUpdater] Downloading: ${release.installerUrl}`)
+
+        try {
+          const fileName = `PeakFlow-Setup-${release.tag}.exe`
+          const installerPath = await downloadInstaller(release.installerUrl, fileName)
+          console.log(`[AutoUpdater] Downloaded to: ${installerPath}`)
+
+          const installResult = await dialog.showMessageBox({
+            type: 'info',
+            title: 'Download Complete',
+            message: `PeakFlow ${release.tag} is ready to install.`,
+            detail: 'The app will close and the installer will open.',
+            buttons: ['Install Now', 'Later'],
+            defaultId: 0,
+            cancelId: 1
+          })
+
+          if (installResult.response === 0) {
+            spawn(installerPath, { detached: true, stdio: 'ignore' }).unref()
+            app.quit()
+          }
+        } catch (dlErr) {
+          const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr)
+          console.error('[AutoUpdater] Download failed:', dlMsg)
+          dialog.showMessageBox({
+            type: 'error',
+            title: 'Download Failed',
+            message: 'Could not download the update.',
+            detail: dlMsg
+          })
+        } finally {
+          downloading = false
         }
       }
     } else {
@@ -197,6 +310,6 @@ export function initAutoUpdater(): void {
 /**
  * Get the current update status for display purposes.
  */
-export function getUpdateStatus(): { checking: boolean } {
-  return { checking }
+export function getUpdateStatus(): { checking: boolean; downloading: boolean } {
+  return { checking, downloading }
 }

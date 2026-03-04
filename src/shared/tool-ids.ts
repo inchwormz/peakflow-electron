@@ -19,7 +19,9 @@ export enum SystemWindowId {
   /** ScreenSlap full-screen alert overlay */
   ScreenSlapAlert = 'screenslap-alert',
   /** FocusDim transparent overlay panels */
-  FocusDimOverlay = 'focusdim-overlay'
+  FocusDimOverlay = 'focusdim-overlay',
+  /** LiquidFocus compact floating timer widget */
+  LiquidFocusMini = 'liquidfocus-mini'
 }
 
 export type WindowId = ToolId | SystemWindowId

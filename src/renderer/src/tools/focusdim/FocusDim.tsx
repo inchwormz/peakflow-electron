@@ -26,10 +26,10 @@ const DS = {
   border: '#1a1a1a',
   borderActive: '#333333',
   textPrimary: '#f0f0f5',
-  textSecondary: '#888888',
-  textMuted: '#666666',
-  textDim: '#555555',
-  textLabel: '#444444',
+  textSecondary: '#aaaaaa',
+  textMuted: '#888888',
+  textDim: '#777777',
+  textLabel: '#666666',
   accent: '#ffe17c',
   red: '#f05858',
   white: '#ffffff',
@@ -39,10 +39,10 @@ const DS = {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const PRESETS = [
-  { value: 0.3, pct: '30%', label: 'Light' },
-  { value: 0.5, pct: '50%', label: 'Medium' },
-  { value: 0.7, pct: '70%', label: 'Heavy' },
-  { value: 0.85, pct: '85%', label: 'Max' }
+  { value: 0.3, label: 'Light' },
+  { value: 0.5, label: 'Medium' },
+  { value: 0.7, label: 'Heavy' },
+  { value: 0.85, label: 'Max' }
 ]
 
 const DIM_COLOR_PRESETS = [
@@ -62,6 +62,8 @@ interface FocusDimState {
   peeking: boolean
   hotkey: string
   autoRevealDesktop: boolean
+  highlightMode: 'active' | 'app' | 'all'
+  dragEscape: boolean
 }
 
 interface DisplayInfo {
@@ -83,11 +85,14 @@ export function FocusDim(): React.JSX.Element {
     peekDuration: 3,
     peeking: false,
     hotkey: 'ctrl+shift+d',
-    autoRevealDesktop: true
+    autoRevealDesktop: true,
+    highlightMode: 'active' as const,
+    dragEscape: true
   })
 
   const [displays, setDisplays] = useState<DisplayInfo[]>([])
   const [recording, setRecording] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const [hexInput, setHexInput] = useState('#000000')
 
@@ -164,6 +169,20 @@ export function FocusDim(): React.JSX.Element {
     setState((prev) => ({ ...prev, autoRevealDesktop: enabled }))
   }, [])
 
+  const handleSetDragEscape = useCallback((enabled: boolean) => {
+    window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
+      tool: 'focusdim',
+      key: 'drag_escape',
+      value: enabled
+    })
+    setState((prev) => ({ ...prev, dragEscape: enabled }))
+  }, [])
+
+  const handleSetHighlightMode = useCallback((mode: 'active' | 'app' | 'all') => {
+    window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_HIGHLIGHT_MODE, mode)
+    setState((prev) => ({ ...prev, highlightMode: mode }))
+  }, [])
+
   const handleSetHotkey = useCallback((hotkey: string) => {
     window.peakflow.invoke(IPC_INVOKE.FOCUSDIM_SET_HOTKEY, hotkey).then((ok) => {
       if (ok) {
@@ -215,7 +234,7 @@ export function FocusDim(): React.JSX.Element {
         style={{
           flex: 1,
           overflow: 'auto',
-          padding: '0 24px 24px',
+          padding: '0 20px 16px',
           fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif"
         }}
       >
@@ -225,7 +244,7 @@ export function FocusDim(): React.JSX.Element {
             fontSize: 10,
             color: DS.textMuted,
             letterSpacing: '0.5px',
-            padding: '2px 0 16px'
+            padding: '2px 0 8px'
           }}
         >
           Dim inactive windows
@@ -244,14 +263,14 @@ export function FocusDim(): React.JSX.Element {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '14px 0',
+            padding: '10px 0',
             borderBottom: `1px solid ${DS.surface}`
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <span
               style={{
-                fontSize: 14,
+                fontSize: 11,
                 fontWeight: 500,
                 color: DS.textPrimary
               }}
@@ -271,14 +290,45 @@ export function FocusDim(): React.JSX.Element {
           <Toggle checked={state.enabled} onChange={handleToggle} />
         </div>
 
+        {/* ── Highlight Mode Section ── */}
+        <SectionLabel>Highlight Mode</SectionLabel>
+
+        <div style={{ display: 'flex', gap: 4 }}>
+          {([
+            { value: 'active' as const, label: 'Active Window' },
+            { value: 'app' as const, label: 'App Windows' },
+            { value: 'all' as const, label: 'All Windows' }
+          ]).map((mode) => (
+            <button
+              key={mode.value}
+              onClick={() => handleSetHighlightMode(mode.value)}
+              style={{
+                flex: 1,
+                padding: '8px 4px',
+                border: `1px solid ${state.highlightMode === mode.value ? DS.white : DS.border}`,
+                borderRadius: 8,
+                background: state.highlightMode === mode.value ? DS.white : DS.surface,
+                color: state.highlightMode === mode.value ? DS.bg : DS.textMuted,
+                fontFamily: 'inherit',
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+
         {/* ── Intensity Section ── */}
         <SectionLabel>Intensity</SectionLabel>
 
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
           {PRESETS.map((p) => (
             <PresetButton
               key={p.value}
-              pct={p.pct}
               label={p.label}
               active={Math.abs(p.value - state.opacity) < 0.02}
               onClick={() => handlePresetClick(p.value)}
@@ -291,7 +341,7 @@ export function FocusDim(): React.JSX.Element {
             display: 'flex',
             alignItems: 'center',
             gap: 10,
-            padding: '10px 0'
+            padding: '6px 0'
           }}
         >
           <input
@@ -305,7 +355,7 @@ export function FocusDim(): React.JSX.Element {
           />
           <span
             style={{
-              fontSize: 13,
+              fontSize: 10,
               fontWeight: 600,
               color: DS.textSecondary,
               width: 36,
@@ -319,7 +369,7 @@ export function FocusDim(): React.JSX.Element {
         {/* ── Dim Color Section ── */}
         <SectionLabel>Dim Color</SectionLabel>
 
-        <div style={{ display: 'flex', gap: 10, padding: '4px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
           {DIM_COLOR_PRESETS.map((c) => (
             <ColorSwatch
               key={c.hex}
@@ -329,56 +379,47 @@ export function FocusDim(): React.JSX.Element {
               onClick={() => handleSetColor(c.hex)}
             />
           ))}
-        </div>
-
-        {/* Custom hex input */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '8px 0'
-          }}
-        >
-          <div
-            style={{
-              width: 24,
-              height: 24,
-              borderRadius: '50%',
-              background: dimColorHex,
-              border: `2px solid ${DS.borderActive}`,
-              flexShrink: 0
-            }}
-          />
-          <input
-            type="text"
-            value={hexInput}
-            onChange={(e) => setHexInput(e.target.value)}
-            onBlur={() => {
-              if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hexInput)) {
-                handleSetColor(hexInput)
-              } else {
-                setHexInput(state.dimColor)
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                (e.target as HTMLInputElement).blur()
-              }
-            }}
-            style={{
-              width: 80,
-              padding: '4px 8px',
-              background: DS.surface,
-              border: `1px solid ${DS.border}`,
-              borderRadius: 6,
-              color: DS.textSecondary,
-              fontFamily: 'monospace',
-              fontSize: 12,
-              outline: 'none'
-            }}
-          />
-          <span style={{ fontSize: 10, color: DS.textLabel }}>Custom</span>
+          {/* Custom hex input inline */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                background: dimColorHex,
+                border: `2px solid ${DS.borderActive}`,
+                flexShrink: 0
+              }}
+            />
+            <input
+              type="text"
+              value={hexInput}
+              onChange={(e) => setHexInput(e.target.value)}
+              onBlur={() => {
+                if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hexInput)) {
+                  handleSetColor(hexInput)
+                } else {
+                  setHexInput(state.dimColor)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  (e.target as HTMLInputElement).blur()
+                }
+              }}
+              style={{
+                width: 64,
+                padding: '3px 6px',
+                background: DS.surface,
+                border: `1px solid ${DS.border}`,
+                borderRadius: 5,
+                color: DS.textSecondary,
+                fontFamily: 'monospace',
+                fontSize: 10,
+                outline: 'none'
+              }}
+            />
+          </div>
         </div>
 
         {/* ── Options Section ── */}
@@ -389,11 +430,11 @@ export function FocusDim(): React.JSX.Element {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px 0',
+            padding: '8px 0',
             borderBottom: `1px solid ${DS.surface}`
           }}
         >
-          <span style={{ fontSize: 13, color: DS.textSecondary }}>
+          <span style={{ fontSize: 10, color: DS.textSecondary }}>
             Active window border
           </span>
           <Toggle
@@ -408,11 +449,11 @@ export function FocusDim(): React.JSX.Element {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px 0',
+            padding: '8px 0',
             borderBottom: `1px solid ${DS.surface}`
           }}
         >
-          <span style={{ fontSize: 13, color: DS.textSecondary }}>
+          <span style={{ fontSize: 10, color: DS.textSecondary }}>
             Fade speed
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -444,11 +485,11 @@ export function FocusDim(): React.JSX.Element {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px 0',
+            padding: '8px 0',
             borderBottom: `1px solid ${DS.surface}`
           }}
         >
-          <span style={{ fontSize: 13, color: DS.textSecondary }}>
+          <span style={{ fontSize: 10, color: DS.textSecondary }}>
             Peek duration
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -480,11 +521,11 @@ export function FocusDim(): React.JSX.Element {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px 0',
+            padding: '8px 0',
             borderBottom: `1px solid ${DS.surface}`
           }}
         >
-          <span style={{ fontSize: 13, color: DS.textSecondary }}>
+          <span style={{ fontSize: 10, color: DS.textSecondary }}>
             Hide on desktop focus
           </span>
           <Toggle
@@ -493,90 +534,157 @@ export function FocusDim(): React.JSX.Element {
           />
         </div>
 
-        {/* Keyboard shortcuts */}
-        <SectionLabel>Shortcuts</SectionLabel>
-
-        {/* Toggle dim — editable hotkey */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '6px 0'
+            padding: '8px 0',
+            borderBottom: `1px solid ${DS.surface}`
           }}
         >
-          <span style={{ fontSize: 12, color: DS.textSecondary }}>
-            Toggle dim
+          <span style={{ fontSize: 10, color: DS.textSecondary }}>
+            Fade while dragging
           </span>
-          {recording ? (
-            <HotkeyRecorder
-              onRecord={(combo) => {
-                setRecording(false)
-                handleSetHotkey(combo)
-              }}
-              onCancel={() => setRecording(false)}
-            />
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  color: DS.textDim,
-                  fontWeight: 500,
-                  letterSpacing: '0.5px'
-                }}
-              >
-                {formatHotkeyDisplay(state.hotkey)}
-              </span>
-              <button
-                onClick={() => setRecording(true)}
-                style={{
-                  fontSize: 9,
-                  color: DS.textMuted,
-                  background: DS.surface,
-                  border: `1px solid ${DS.border}`,
-                  borderRadius: 4,
-                  padding: '2px 6px',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit'
-                }}
-              >
-                Change
-              </button>
-            </div>
-          )}
+          <Toggle
+            checked={state.dragEscape}
+            onChange={() => handleSetDragEscape(!state.dragEscape)}
+          />
         </div>
 
-        {/* Static shortcuts */}
-        {[
-          { label: 'Intensity up', shortcut: 'Ctrl+Alt+Up' },
-          { label: 'Intensity down', shortcut: 'Ctrl+Alt+Down' },
-          { label: 'Peek', shortcut: 'Ctrl+Alt+`' }
-        ].map((s) => (
-          <div
-            key={s.shortcut}
+        {/* Keyboard shortcuts — collapsible */}
+        <button
+          onClick={() => setShortcutsOpen(!shortcutsOpen)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            width: '100%',
+            background: 'none',
+            border: 'none',
+            padding: '0',
+            margin: '12px 0 0',
+            cursor: 'pointer',
+            fontFamily: 'inherit'
+          }}
+        >
+          <span
             style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '6px 0'
+              gap: 5
             }}
           >
-            <span style={{ fontSize: 12, color: DS.textSecondary }}>
-              {s.label}
+            <span
+              style={{
+                fontSize: 8,
+                fontWeight: 600,
+                letterSpacing: '2.5px',
+                textTransform: 'uppercase' as const,
+                color: DS.textLabel
+              }}
+            >
+              Shortcuts
             </span>
             <span
               style={{
                 fontSize: 11,
-                color: DS.textDim,
-                fontWeight: 500,
-                letterSpacing: '0.5px'
+                color: DS.textMuted,
+                transition: 'transform 0.2s',
+                transform: shortcutsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                lineHeight: 1
               }}
             >
-              {s.shortcut}
+              ▾
             </span>
+          </span>
+        </button>
+
+        {shortcutsOpen && (
+          <div style={{ paddingTop: 6 }}>
+            {/* Toggle dim — editable hotkey */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '4px 0'
+              }}
+            >
+              <span style={{ fontSize: 10, color: DS.textSecondary }}>
+                Toggle dim
+              </span>
+              {recording ? (
+                <HotkeyRecorder
+                  onRecord={(combo) => {
+                    setRecording(false)
+                    handleSetHotkey(combo)
+                  }}
+                  onCancel={() => setRecording(false)}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: DS.textDim,
+                      fontWeight: 500,
+                      letterSpacing: '0.5px'
+                    }}
+                  >
+                    {formatHotkeyDisplay(state.hotkey)}
+                  </span>
+                  <button
+                    onClick={() => setRecording(true)}
+                    style={{
+                      fontSize: 8,
+                      color: DS.textMuted,
+                      background: DS.surface,
+                      border: `1px solid ${DS.border}`,
+                      borderRadius: 4,
+                      padding: '2px 5px',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit'
+                    }}
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Static shortcuts */}
+            {[
+              { label: 'Intensity up', shortcut: 'Ctrl+Alt+Up' },
+              { label: 'Intensity down', shortcut: 'Ctrl+Alt+Down' },
+              { label: 'Peek', shortcut: 'Ctrl+Alt+`' }
+            ].map((s) => (
+              <div
+                key={s.shortcut}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '4px 0'
+                }}
+              >
+                <span style={{ fontSize: 10, color: DS.textSecondary }}>
+                  {s.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: DS.textDim,
+                    fontWeight: 500,
+                    letterSpacing: '0.5px'
+                  }}
+                >
+                  {s.shortcut}
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
 
         {/* Displays section — only if 2+ displays */}
         {displays.length >= 2 && (
@@ -589,11 +697,11 @@ export function FocusDim(): React.JSX.Element {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '10px 0',
+                  padding: '8px 0',
                   borderBottom: `1px solid ${DS.surface}`
                 }}
               >
-                <span style={{ fontSize: 13, color: DS.textSecondary }}>
+                <span style={{ fontSize: 10, color: DS.textSecondary }}>
                   {d.label}
                 </span>
                 <Toggle
@@ -697,7 +805,7 @@ function SectionLabel({ children }: { children: React.ReactNode }): React.JSX.El
         letterSpacing: '2.5px',
         textTransform: 'uppercase' as const,
         color: DS.textLabel,
-        margin: '16px 0 8px'
+        margin: '12px 0 6px'
       }}
     >
       {children}
@@ -705,7 +813,7 @@ function SectionLabel({ children }: { children: React.ReactNode }): React.JSX.El
   )
 }
 
-/** Pill toggle: 36x20, green when on, matching HTML spec exactly */
+/** Pill toggle: 29x16, green when on */
 function Toggle({
   checked,
   onChange
@@ -717,8 +825,8 @@ function Toggle({
     <label
       style={{
         position: 'relative',
-        width: 36,
-        height: 20,
+        width: 29,
+        height: 16,
         cursor: 'pointer',
         display: 'inline-block',
         flexShrink: 0
@@ -734,7 +842,7 @@ function Toggle({
           position: 'absolute',
           inset: 0,
           background: checked ? DS.accent : DS.surface2,
-          borderRadius: 10,
+          borderRadius: 8,
           transition: 'background 0.25s'
         }}
       />
@@ -742,10 +850,10 @@ function Toggle({
       <div
         style={{
           position: 'absolute',
-          top: 3,
-          left: checked ? 19 : 3,
-          width: 14,
-          height: 14,
+          top: 2.5,
+          left: checked ? 16 : 2.5,
+          width: 11,
+          height: 11,
           borderRadius: '50%',
           background: checked ? DS.white : '#444444',
           transition: 'all 0.25s'
@@ -769,8 +877,8 @@ function Preview({
     <div
       style={{
         position: 'relative',
-        height: 110,
-        borderRadius: 14,
+        height: 56,
+        borderRadius: 10,
         overflow: 'hidden',
         marginBottom: 4
       }}
@@ -790,13 +898,13 @@ function Preview({
       <div
         style={{
           position: 'absolute',
-          top: 14,
+          top: 8,
           left: '50%',
           transform: 'translateX(-50%)',
-          width: 130,
-          height: 64,
+          width: 90,
+          height: 36,
           background: '#1a1a2a',
-          borderRadius: 8,
+          borderRadius: 6,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -806,17 +914,17 @@ function Preview({
       >
         <div
           style={{
-            width: 100,
-            height: 10,
-            borderRadius: 3,
+            width: 60,
+            height: 6,
+            borderRadius: 2,
             background: '#333',
-            marginBottom: 3
+            marginBottom: 2
           }}
         />
         <div
           style={{
-            width: 60,
-            height: 5,
+            width: 36,
+            height: 4,
             borderRadius: 2,
             background: '#444'
           }}
@@ -827,48 +935,29 @@ function Preview({
       <div
         style={{
           position: 'absolute',
-          top: 11,
+          top: 5,
           left: '50%',
           transform: 'translateX(-50%)',
-          width: 136,
-          height: 70,
-          border: '3px solid #fff',
-          borderRadius: 11,
+          width: 96,
+          height: 42,
+          border: '2px solid #fff',
+          borderRadius: 8,
           zIndex: 3,
           pointerEvents: 'none',
           opacity: showBorder ? 1 : 0,
           transition: 'opacity 0.3s'
         }}
       />
-
-      {/* Preview label */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 8,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          fontSize: 8,
-          letterSpacing: '2px',
-          textTransform: 'uppercase' as const,
-          color: DS.textDim,
-          zIndex: 2
-        }}
-      >
-        Preview
-      </div>
     </div>
   )
 }
 
-/** Intensity preset button matching the HTML spec */
+/** Intensity preset button */
 function PresetButton({
-  pct,
   label,
   active,
   onClick
 }: {
-  pct: string
   label: string
   active: boolean
   onClick: () => void
@@ -882,9 +971,9 @@ function PresetButton({
       onMouseLeave={() => setHovered(false)}
       style={{
         flex: 1,
-        padding: '10px 4px',
+        padding: '6px 4px',
         border: `1px solid ${active ? DS.white : hovered ? DS.borderActive : DS.border}`,
-        borderRadius: 10,
+        borderRadius: 8,
         background: active ? DS.white : DS.surface,
         color: active ? DS.bg : hovered ? DS.textSecondary : DS.textMuted,
         fontFamily: 'inherit',
@@ -896,16 +985,6 @@ function PresetButton({
         outline: 'none'
       }}
     >
-      <span
-        style={{
-          display: 'block',
-          fontSize: 14,
-          fontWeight: 300,
-          marginBottom: 2
-        }}
-      >
-        {pct}
-      </span>
       {label}
     </button>
   )
@@ -939,8 +1018,8 @@ function ColorSwatch({
     >
       <div
         style={{
-          width: 36,
-          height: 36,
+          width: 28,
+          height: 28,
           borderRadius: '50%',
           background: hex,
           border: `2px solid ${active ? DS.white : 'transparent'}`,

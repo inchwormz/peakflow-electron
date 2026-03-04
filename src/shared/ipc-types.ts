@@ -79,6 +79,7 @@ export const IPC_INVOKE = {
   FOCUSDIM_SET_HOTKEY: 'focusdim:set-hotkey',
   FOCUSDIM_GET_DISPLAYS: 'focusdim:get-displays',
   FOCUSDIM_SET_DISABLED_DISPLAYS: 'focusdim:set-disabled-displays',
+  FOCUSDIM_SET_HIGHLIGHT_MODE: 'focusdim:set-highlight-mode',
 
   // QuickBoard
   CLIPBOARD_GET_HISTORY: 'clipboard:get-history',
@@ -126,6 +127,7 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_DELETE_TASK: 'liquidfocus:delete-task',
   LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats',
   LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
+  LIQUIDFOCUS_TOGGLE_MINI: 'liquidfocus:toggle-mini',
 
   // Shell
   SHELL_OPEN_EXTERNAL: 'shell:open-external',
