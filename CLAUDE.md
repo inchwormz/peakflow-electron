@@ -47,8 +47,9 @@
 - `npm run dev` — hot-reload dev mode (main + renderer)
 - `npm run lint` — TypeScript type checking (`npm run typecheck`)
 - `npm run build:win` — package as Windows NSIS installer → `release/`
-- `npx electron .` — run from project root (single-instance lock enforced)
-- Kill existing: `cmd /c "taskkill /F /IM electron.exe"` (git bash needs `//F //IM`)
+- **Launch (from git bash):** `cd /c/Users/OEM/Projects/PeakFlow && ./node_modules/.bin/electron .` — do NOT use `npx electron .` (triggers Windows "open with" dialog)
+- **Launch (from PowerShell):** `cd C:\Users\OEM\Projects\PeakFlow; .\node_modules\.bin\electron.cmd .`
+- Kill existing: `powershell -Command "Stop-Process -Name electron -Force -ErrorAction SilentlyContinue"` (preferred over taskkill)
 
 ### Tools
 | Tool | ID | Window Type |
