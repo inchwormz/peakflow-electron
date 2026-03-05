@@ -730,7 +730,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.APP_GET_AUTO_START,
     (): boolean => {
-      if (is.dev) return false
       return app.getLoginItemSettings().openAtLogin
     }
   )
@@ -738,7 +737,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.APP_SET_AUTO_START,
     (_event, enabled: boolean): boolean => {
-      if (is.dev) return false
       app.setLoginItemSettings({ openAtLogin: enabled })
       return app.getLoginItemSettings().openAtLogin
     }
