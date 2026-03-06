@@ -25,16 +25,17 @@ import {
   SortButton,
   rootStyle,
   navBarStyle,
-  clipListStyle,
-  emptyStateStyle,
   toastStyle,
   type ClipboardItem,
   type SortMode,
   type ViewMode
 } from './components/shared'
 import { ClipRow } from './components/ClipRow'
+import { ClipList } from './components/ClipList'
 import { SearchBar } from './components/SearchBar'
 import { SettingsPanel } from './components/SettingsPanel'
+import { TypeFilter, type ContentTypeFilter } from './components/TypeFilter'
+import { scoreItem } from './fuzzy-search'
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -45,8 +46,8 @@ export function QuickBoard(): React.JSX.Element {
   const [view, setView] = useState<ViewMode>('main')
   const [toastVisible, setToastVisible] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [typeFilter, setTypeFilter] = useState<ContentTypeFilter>('all')
   const searchRef = useRef<HTMLInputElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Settings state
@@ -112,14 +113,18 @@ export function QuickBoard(): React.JSX.Element {
   const filteredHistory = useMemo(() => {
     let items = history
 
-    // Filter by search query
+    // Filter by content type
+    if (typeFilter !== 'all') {
+      items = items.filter((item) => item.contentType === typeFilter)
+    }
+
+    // Fuzzy search
     if (searchQuery) {
-      const q = searchQuery.toLowerCase()
-      items = items.filter(
-        (item) =>
-          item.type === 'text' &&
-          item.preview.toLowerCase().includes(q)
-      )
+      const scored = items
+        .map((item) => ({ item, score: scoreItem(searchQuery, item) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+      items = scored.map(({ item }) => item)
     }
 
     // Separate pinned and unpinned
@@ -129,13 +134,14 @@ export function QuickBoard(): React.JSX.Element {
     if (sortMode === 'frequency') {
       pinned.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
       unpinned.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
-    } else {
+    } else if (!searchQuery) {
+      // Only re-sort by time if not doing a search (search is already sorted by relevance)
       pinned.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       unpinned.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     }
 
-    return [...pinned, ...unpinned].slice(0, 50)
-  }, [history, searchQuery, sortMode])
+    return [...pinned, ...unpinned].slice(0, 200)
+  }, [history, searchQuery, sortMode, typeFilter])
 
   const handleDeleteItem = useCallback(
     (e: React.MouseEvent, itemId: string) => {
@@ -223,7 +229,7 @@ export function QuickBoard(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
       tool: 'quickboard',
       key: 'max_entries',
-      value: Math.max(10, Math.min(200, settingsMaxItems))
+      value: Math.max(10, Math.min(2000, settingsMaxItems))
     })
     window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
       tool: 'quickboard',
@@ -318,6 +324,9 @@ export function QuickBoard(): React.JSX.Element {
             }}
           />
 
+          {/* Content type filter */}
+          <TypeFilter active={typeFilter} onChange={(f) => { setTypeFilter(f); setSelectedIndex(0) }} />
+
           {/* Sort toggle */}
           <div style={{ padding: '10px 24px', display: 'flex', gap: 2 }}>
             <SortButton
@@ -332,26 +341,23 @@ export function QuickBoard(): React.JSX.Element {
             />
           </div>
 
-          {/* Clip list */}
-          <div ref={listRef} style={clipListStyle}>
-            {filteredHistory.length === 0 ? (
-              <div style={emptyStateStyle}>No clips found</div>
-            ) : (
-              filteredHistory.map((item, idx) => (
-                <ClipRow
-                  key={item.id}
-                  item={item}
-                  icon={getItemIcon(item)}
-                  time={formatTime(item.timestamp)}
-                  showBadge={sortMode === 'frequency'}
-                  isSelected={idx === selectedIndex}
-                  onSelect={() => handleSelectItem(item)}
-                  onPin={(e) => handlePinItem(e, item.id)}
-                  onDelete={(e) => handleDeleteItem(e, item.id)}
-                />
-              ))
+          {/* Clip list (virtualized) */}
+          <ClipList
+            items={filteredHistory}
+            selectedIndex={selectedIndex}
+            renderRow={(item, idx) => (
+              <ClipRow
+                item={item}
+                icon={getItemIcon(item)}
+                time={formatTime(item.timestamp)}
+                showBadge={sortMode === 'frequency'}
+                isSelected={idx === selectedIndex}
+                onSelect={() => handleSelectItem(item)}
+                onPin={(e) => handlePinItem(e, item.id)}
+                onDelete={(e) => handleDeleteItem(e, item.id)}
+              />
             )}
-          </div>
+          />
         </div>
       ) : (
         /* ═══════════════ SETTINGS VIEW ═══════════════ */

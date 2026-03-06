@@ -66,7 +66,7 @@ export function SettingsPanel({
               type="number"
               value={maxItems}
               min={10}
-              max={200}
+              max={2000}
               onChange={(e) => onMaxItemsChange(parseInt(e.target.value) || 50)}
               style={settingNumStyle}
             />
