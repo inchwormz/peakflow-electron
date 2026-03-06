@@ -28,6 +28,7 @@ import { looksLikeSecret } from '../security/secret-detection'
 import { isExcludedApp } from '../security/excluded-apps'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { simulateCtrlV } from '../native/keyboard'
+import { getActiveWindow, getProcessExeName } from '../native/active-window'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,43 @@ class ClipboardService {
   }
 
   /** Detect content type for an item (used at capture time and for migration) */
+  private captureSourceApp(): void {
+    try {
+      const win = getActiveWindow()
+      if (!win) {
+        this.currentSourceApp = null
+        return
+      }
+      const exe = getProcessExeName(win.pid)
+      this.currentSourceApp = this.formatAppName(exe, win.title)
+    } catch {
+      this.currentSourceApp = null
+    }
+  }
+
+  private formatAppName(exe: string | null, title: string): string {
+    const exeMap: Record<string, string> = {
+      'code.exe': 'VS Code',
+      'chrome.exe': 'Chrome',
+      'msedge.exe': 'Edge',
+      'firefox.exe': 'Firefox',
+      'explorer.exe': 'Explorer',
+      'notepad.exe': 'Notepad',
+      'slack.exe': 'Slack',
+      'discord.exe': 'Discord',
+      'outlook.exe': 'Outlook',
+      'teams.exe': 'Teams',
+      'windowsterminal.exe': 'Terminal',
+      'cmd.exe': 'CMD',
+      'powershell.exe': 'PowerShell',
+      'pwsh.exe': 'PowerShell'
+    }
+    if (exe && exeMap[exe]) return exeMap[exe]
+    if (exe) return exe.replace(/\.exe$/i, '')
+    const dash = title.indexOf(' - ')
+    return dash > 0 ? title.substring(dash + 3).trim() : title.substring(0, 30)
+  }
+
   private detectContentType(item: Partial<ClipboardItem>): ClipboardItem['contentType'] {
     if (item.type === 'image') return 'image'
     if (item.type === 'file') return 'file'
@@ -221,6 +259,7 @@ class ClipboardService {
 
   private checkClipboard(): void {
     try {
+      this.captureSourceApp()
       // Fast bail: check if clipboard formats changed before doing expensive reads.
       // availableFormats() is cheap (no image decoding or PNG compression).
       const formats = clipboard.availableFormats().join(',')
