@@ -95,6 +95,13 @@ export const IPC_INVOKE = {
   CLIPBOARD_DELETE_ITEM: 'clipboard:delete-item',
   CLIPBOARD_PIN_ITEM: 'clipboard:pin-item',
   CLIPBOARD_CLEAR_HISTORY: 'clipboard:clear-history',
+  CLIPBOARD_SET_TAGS: 'clipboard:set-tags',
+  CLIPBOARD_GET_ALL_TAGS: 'clipboard:get-all-tags',
+  CLIPBOARD_MANAGE_TAGS: 'clipboard:manage-tags',
+  CLIPBOARD_EDIT_ITEM: 'clipboard:edit-item',
+  CLIPBOARD_QUEUE_START: 'clipboard:queue-start',
+  CLIPBOARD_QUEUE_NEXT: 'clipboard:queue-next',
+  CLIPBOARD_QUEUE_CANCEL: 'clipboard:queue-cancel',
 
   // SoundSplit
   SOUNDSPLIT_GET_SESSIONS: 'soundsplit:get-sessions',
@@ -161,6 +168,7 @@ export const IPC_INVOKE = {
 /** Send channels (main → renderer, push notifications) */
 export const IPC_SEND = {
   CLIPBOARD_ON_CHANGE: 'clipboard:on-change',
+  CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-status',
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',

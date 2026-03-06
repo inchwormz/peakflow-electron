@@ -1,20 +1,15 @@
 /**
  * QuickBoard -- Clipboard Manager UI
  *
- * Matches QuickBoard_Redesign.html pixel-for-pixel:
+ * Features:
  *   - 340px wide popup, dark cinematic design
- *   - Search bar at top, sort tabs (Recent | Top Copied)
- *   - Clip list with icon, preview, copy count badge, pin/delete
- *   - Settings view with max items, plain text, encrypt toggles
+ *   - Search bar with fuzzy search + from:app syntax
+ *   - Content type filter chips, tag filter bar
+ *   - Sort tabs (Recent | Top Copied)
+ *   - Virtualized clip list with pin/delete/edit
+ *   - Multi-select for sequential paste queue
+ *   - Settings with max items, plain text, encrypt toggles
  *   - Toast notification on copy
- *
- * Communicates with main process via IPC:
- *   - clipboard:get-history   -> retrieve current history
- *   - clipboard:simulate-paste -> copy + paste an item
- *   - clipboard:delete-item   -> remove one item
- *   - clipboard:pin-item      -> toggle pin
- *   - clipboard:clear-history -> clear non-pinned
- *   - clipboard:on-change     -> push updates from main
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
@@ -35,6 +30,9 @@ import { ClipList } from './components/ClipList'
 import { SearchBar } from './components/SearchBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { TypeFilter, type ContentTypeFilter } from './components/TypeFilter'
+import { TagBar } from './components/TagBar'
+import { QueueBanner } from './components/QueueBanner'
+import { EditModal } from './components/EditModal'
 import { scoreItem } from './fuzzy-search'
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -55,17 +53,33 @@ export function QuickBoard(): React.JSX.Element {
   const [settingsPlainText, setSettingsPlainText] = useState(false)
   const [settingsEncrypt, setSettingsEncrypt] = useState(false)
 
-  // ── Load history on mount ───────────────────────────────────────────────
+  // Tags state
+  const [allTags, setAllTags] = useState<string[]>([])
+  const [activeTags, setActiveTags] = useState<string[]>([])
+
+  // Sequential paste state
+  const [multiSelectMode, setMultiSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [queueStatus, setQueueStatus] = useState<{ active: boolean; current: number; total: number }>({
+    active: false, current: 0, total: 0
+  })
+
+  // Edit modal state
+  const [editingItem, setEditingItem] = useState<ClipboardItem | null>(null)
+
+  // ── Load history + tags on mount ──────────────────────────────────────────
 
   useEffect(() => {
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_HISTORY).then((data) => {
-      if (Array.isArray(data)) {
-        setHistory(data as ClipboardItem[])
-      }
+      if (Array.isArray(data)) setHistory(data as ClipboardItem[])
     }).catch((err) => {
       console.error('[QuickBoard] Failed to load history:', err)
       setHistory([])
     })
+
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS).then((data) => {
+      if (Array.isArray(data)) setAllTags(data as string[])
+    }).catch(() => {})
   }, [])
 
   // ── Listen for clipboard changes from main process ─────────────────────
@@ -74,9 +88,7 @@ export function QuickBoard(): React.JSX.Element {
     const unsub = window.peakflow.on(
       IPC_SEND.CLIPBOARD_ON_CHANGE,
       (data: unknown) => {
-        if (Array.isArray(data)) {
-          setHistory(data as ClipboardItem[])
-        }
+        if (Array.isArray(data)) setHistory(data as ClipboardItem[])
       }
     )
     return unsub
@@ -118,6 +130,13 @@ export function QuickBoard(): React.JSX.Element {
       items = items.filter((item) => item.contentType === typeFilter)
     }
 
+    // Filter by active tags
+    if (activeTags.length > 0) {
+      items = items.filter((item) =>
+        activeTags.some((tag) => item.tags.includes(tag))
+      )
+    }
+
     // Fuzzy search
     if (searchQuery) {
       const scored = items
@@ -135,13 +154,12 @@ export function QuickBoard(): React.JSX.Element {
       pinned.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
       unpinned.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
     } else if (!searchQuery) {
-      // Only re-sort by time if not doing a search (search is already sorted by relevance)
       pinned.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       unpinned.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     }
 
     return [...pinned, ...unpinned].slice(0, 200)
-  }, [history, searchQuery, sortMode, typeFilter])
+  }, [history, searchQuery, sortMode, typeFilter, activeTags])
 
   const handleDeleteItem = useCallback(
     (e: React.MouseEvent, itemId: string) => {
@@ -185,18 +203,65 @@ export function QuickBoard(): React.JSX.Element {
   // ── Actions ─────────────────────────────────────────────────────────────
 
   const handleSelectItem = useCallback((item: ClipboardItem) => {
+    if (multiSelectMode) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(item.id)) next.delete(item.id)
+        else next.add(item.id)
+        return next
+      })
+      return
+    }
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, item.id, settingsPlainText)
     showToast()
-    // Close after brief delay so the user sees the toast
     setTimeout(() => {
       window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
     }, 400)
-  }, [settingsPlainText, showToast])
+  }, [settingsPlainText, showToast, multiSelectMode])
+
+  // ── Edit handler ──────────────────────────────────────────────────────────
+
+  const handleEditSave = useCallback((itemId: string, editedText: string) => {
+    window.peakflow
+      .invoke(IPC_INVOKE.CLIPBOARD_EDIT_ITEM, itemId, editedText)
+      .then((data) => {
+        if (Array.isArray(data)) setHistory(data as ClipboardItem[])
+      })
+    setEditingItem(null)
+  }, [])
+
+  // ── Sequential paste ──────────────────────────────────────────────────────
+
+  const handleStartQueue = useCallback(() => {
+    if (selectedIds.size < 2) return
+    const ids = filteredHistory
+      .filter((item) => selectedIds.has(item.id))
+      .map((item) => item.id)
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_QUEUE_START, ids)
+    setQueueStatus({ active: true, current: 1, total: ids.length })
+    setMultiSelectMode(false)
+    setSelectedIds(new Set())
+  }, [selectedIds, filteredHistory])
+
+  const handleCancelQueue = useCallback(() => {
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_QUEUE_CANCEL)
+    setQueueStatus({ active: false, current: 0, total: 0 })
+  }, [])
+
+  // ── Tag toggle ────────────────────────────────────────────────────────────
+
+  const handleToggleTag = useCallback((tag: string) => {
+    setActiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    )
+    setSelectedIndex(0)
+  }, [])
 
   // ── Keyboard navigation ────────────────────────────────────────────────
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
+      if (editingItem) return
       if (view !== 'main') return
 
       if (e.key === 'ArrowDown') {
@@ -211,12 +276,17 @@ export function QuickBoard(): React.JSX.Element {
           handleSelectItem(filteredHistory[selectedIndex])
         }
       } else if (e.key === 'Escape') {
-        window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+        if (multiSelectMode) {
+          setMultiSelectMode(false)
+          setSelectedIds(new Set())
+        } else {
+          window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+        }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [view, selectedIndex, filteredHistory, handleSelectItem])
+  }, [view, selectedIndex, filteredHistory, handleSelectItem, editingItem, multiSelectMode])
 
   // ── View switching (save settings on return) ───────────────────────────
 
@@ -225,7 +295,6 @@ export function QuickBoard(): React.JSX.Element {
   }, [])
 
   const switchToMain = useCallback(() => {
-    // Persist settings
     window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
       tool: 'quickboard',
       key: 'max_entries',
@@ -293,9 +362,27 @@ export function QuickBoard(): React.JSX.Element {
         Copied!
       </div>
 
+      {/* Edit Modal */}
+      {editingItem && (
+        <EditModal
+          item={editingItem}
+          onSave={handleEditSave}
+          onCancel={() => setEditingItem(null)}
+        />
+      )}
+
       {view === 'main' ? (
         /* ═══════════════ MAIN VIEW ═══════════════ */
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          {/* Queue banner */}
+          {queueStatus.active && (
+            <QueueBanner
+              current={queueStatus.current}
+              total={queueStatus.total}
+              onCancel={handleCancelQueue}
+            />
+          )}
+
           {/* Nav bar */}
           <div style={navBarStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
@@ -308,6 +395,14 @@ export function QuickBoard(): React.JSX.Element {
             </div>
             {/* @ts-expect-error -- Electron-specific CSS */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' }}>
+              {/* Multi-select toggle */}
+              <NavButton
+                icon={multiSelectMode ? '&#10003;' : '&#9776;'}
+                onClick={() => {
+                  setMultiSelectMode(!multiSelectMode)
+                  if (multiSelectMode) setSelectedIds(new Set())
+                }}
+              />
               <NavButton icon="&#9881;" onClick={switchToSettings} />
               <NavButton icon="&#8212;" onClick={handleMinimize} />
               <NavButton icon="&#10005;" onClick={handleClose} isClose />
@@ -327,18 +422,48 @@ export function QuickBoard(): React.JSX.Element {
           {/* Content type filter */}
           <TypeFilter active={typeFilter} onChange={(f) => { setTypeFilter(f); setSelectedIndex(0) }} />
 
-          {/* Sort toggle */}
+          {/* Tag filter bar */}
+          <TagBar tags={allTags} activeTags={activeTags} onToggleTag={handleToggleTag} />
+
+          {/* Sort toggle + multi-select actions */}
           <div style={{ padding: '10px 24px', display: 'flex', gap: 2 }}>
-            <SortButton
-              label="RECENT"
-              active={sortMode === 'recent'}
-              onClick={() => { setSortMode('recent'); setSelectedIndex(0) }}
-            />
-            <SortButton
-              label="TOP COPIED"
-              active={sortMode === 'frequency'}
-              onClick={() => { setSortMode('frequency'); setSelectedIndex(0) }}
-            />
+            {multiSelectMode ? (
+              <>
+                <span style={{ fontSize: 10, color: DS.textDim, flex: 1, alignSelf: 'center' }}>
+                  {selectedIds.size} selected
+                </span>
+                <button
+                  onClick={handleStartQueue}
+                  disabled={selectedIds.size < 2}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: selectedIds.size >= 2 ? DS.accent : DS.surface,
+                    color: selectedIds.size >= 2 ? DS.bg : DS.textDim,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    cursor: selectedIds.size >= 2 ? 'pointer' : 'default',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  Start Pasting
+                </button>
+              </>
+            ) : (
+              <>
+                <SortButton
+                  label="RECENT"
+                  active={sortMode === 'recent'}
+                  onClick={() => { setSortMode('recent'); setSelectedIndex(0) }}
+                />
+                <SortButton
+                  label="TOP COPIED"
+                  active={sortMode === 'frequency'}
+                  onClick={() => { setSortMode('frequency'); setSelectedIndex(0) }}
+                />
+              </>
+            )}
           </div>
 
           {/* Clip list (virtualized) */}
@@ -348,13 +473,14 @@ export function QuickBoard(): React.JSX.Element {
             renderRow={(item, idx) => (
               <ClipRow
                 item={item}
-                icon={getItemIcon(item)}
+                icon={multiSelectMode && selectedIds.has(item.id) ? '\u2611' : getItemIcon(item)}
                 time={formatTime(item.timestamp)}
                 showBadge={sortMode === 'frequency'}
                 isSelected={idx === selectedIndex}
                 onSelect={() => handleSelectItem(item)}
                 onPin={(e) => handlePinItem(e, item.id)}
                 onDelete={(e) => handleDeleteItem(e, item.id)}
+                onDoubleClick={item.type === 'text' ? () => setEditingItem(item) : undefined}
               />
             )}
           />

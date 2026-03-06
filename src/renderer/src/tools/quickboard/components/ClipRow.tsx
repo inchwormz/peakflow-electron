@@ -21,7 +21,8 @@ export function ClipRow({
   isSelected,
   onSelect,
   onPin,
-  onDelete
+  onDelete,
+  onDoubleClick
 }: {
   item: ClipboardItem
   icon: string
@@ -31,6 +32,7 @@ export function ClipRow({
   onSelect: () => void
   onPin: (e: React.MouseEvent) => void
   onDelete: (e: React.MouseEvent) => void
+  onDoubleClick?: () => void
 }): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
 
@@ -50,6 +52,7 @@ export function ClipRow({
         background: rowBg
       }}
       onClick={onSelect}
+      onDoubleClick={onDoubleClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -76,6 +79,9 @@ export function ClipRow({
         {/* Meta row */}
         <div style={clipMetaStyle}>
           <span>{time}</span>
+          {item.sourceApp && (
+            <span style={{ color: DS.textDim }}>{item.sourceApp}</span>
+          )}
           {showBadge && item.copyCount > 1 && (
             <span style={clipBadgeStyle}>&times;{item.copyCount}</span>
           )}

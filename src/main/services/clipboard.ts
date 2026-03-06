@@ -525,13 +525,13 @@ class ClipboardService {
       return
     }
 
-    // Write to clipboard
-    if (item.type === 'text' && item.text) {
+    // Write to clipboard (prefer editedText if user has edited)
+    if (item.type === 'text') {
+      const textToWrite = item.editedText ?? item.text ?? ''
       if (plainText) {
-        // Strip formatting: write as plain text only (no RTF/HTML)
-        this.writeText(item.text.replace(/[\r]/g, ''))
+        this.writeText(textToWrite.replace(/[\r]/g, ''))
       } else {
-        this.writeText(item.text)
+        this.writeText(textToWrite)
       }
     } else if (item.type === 'image' && item.imagePath) {
       this.writeImage(item.imagePath)
@@ -592,6 +592,65 @@ class ClipboardService {
 
     this.saveHistory()
     this.broadcastChange()
+    return this.history
+  }
+
+  // ─── Tag methods ──────────────────────────────────────────────────────────
+
+  /** Set tags on a single item. */
+  setItemTags(itemId: string, tags: string[]): ClipboardItem[] {
+    const item = this.history.find((h) => h.id === itemId)
+    if (item) {
+      item.tags = tags
+      this.saveHistory()
+      this.broadcastChange()
+    }
+    return this.history
+  }
+
+  /** Remove a tag from all items. */
+  removeTagFromAll(tag: string): void {
+    let changed = false
+    for (const item of this.history) {
+      const idx = item.tags.indexOf(tag)
+      if (idx !== -1) {
+        item.tags.splice(idx, 1)
+        changed = true
+      }
+    }
+    if (changed) {
+      this.saveHistory()
+      this.broadcastChange()
+    }
+  }
+
+  /** Rename a tag across all items. */
+  renameTagOnAll(oldName: string, newName: string): void {
+    let changed = false
+    for (const item of this.history) {
+      const idx = item.tags.indexOf(oldName)
+      if (idx !== -1) {
+        item.tags[idx] = newName
+        changed = true
+      }
+    }
+    if (changed) {
+      this.saveHistory()
+      this.broadcastChange()
+    }
+  }
+
+  // ─── Edit methods ─────────────────────────────────────────────────────────
+
+  /** Edit a text clip in-place, preserving the original in `text`. */
+  editItem(itemId: string, editedText: string): ClipboardItem[] {
+    const item = this.history.find((h) => h.id === itemId)
+    if (item && item.type === 'text') {
+      item.editedText = editedText
+      item.preview = editedText.replace(/\n/g, ' ').trim().slice(0, 120) + (editedText.length > 120 ? '...' : '')
+      this.saveHistory()
+      this.broadcastChange()
+    }
     return this.history
   }
 }

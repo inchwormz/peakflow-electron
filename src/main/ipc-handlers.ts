@@ -382,6 +382,68 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ─── QuickBoard: Tags ──────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_SET_TAGS,
+    (_event, itemId: string, tags: string[]): ClipboardItem[] => {
+      const { setItemTags } = require('./services/clipboard-collections')
+      setItemTags(itemId, tags)
+      return getClipboardService().getHistory()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS,
+    (): string[] => {
+      const { getAllTags } = require('./services/clipboard-collections')
+      return getAllTags()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_MANAGE_TAGS,
+    (_event, action: string, payload: Record<string, unknown>): string[] => {
+      const { manageTags } = require('./services/clipboard-collections')
+      return manageTags(action, payload)
+    }
+  )
+
+  // ─── QuickBoard: Edit ─────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_EDIT_ITEM,
+    (_event, itemId: string, editedText: string): ClipboardItem[] => {
+      return getClipboardService().editItem(itemId, editedText)
+    }
+  )
+
+  // ─── QuickBoard: Sequential Paste ─────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_QUEUE_START,
+    (_event, itemIds: string[]): void => {
+      const { startQueue } = require('./services/clipboard-sequential')
+      startQueue(itemIds)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_QUEUE_NEXT,
+    (): boolean => {
+      const { pasteNext } = require('./services/clipboard-sequential')
+      return pasteNext()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_QUEUE_CANCEL,
+    (): void => {
+      const { cancelQueue } = require('./services/clipboard-sequential')
+      cancelQueue()
+    }
+  )
+
   // ─── Google Calendar (shared by ScreenSlap + MeetReady) ────────────────────
 
   ipcMain.handle(
