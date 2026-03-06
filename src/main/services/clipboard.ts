@@ -34,7 +34,7 @@ import { simulateCtrlV } from '../native/keyboard'
 export interface ClipboardItem {
   id: string
   text: string | null
-  type: 'text' | 'image'
+  type: 'text' | 'image' | 'file'
   timestamp: string
   copyCount: number
   pinned: boolean
@@ -48,6 +48,26 @@ export interface ClipboardItem {
   /** Original image dimensions */
   imageWidth?: number
   imageHeight?: number
+
+  // ─── New fields (feature parity) ──────────────────────────────────────────
+  /** User-assigned tags for organization */
+  tags: string[]
+  /** App that was active when this item was copied */
+  sourceApp: string | null
+  /** Auto-detected content type */
+  contentType: 'text' | 'code' | 'url' | 'image' | 'file'
+  /** OCR-extracted text from image clips */
+  ocrText: string | null
+  /** File paths for file-type clips */
+  filePaths?: string[]
+  /** File metadata for file-type clips */
+  fileMeta?: { name: string; size: number; ext: string }[]
+  /** User-edited version of text (original preserved in `text`) */
+  editedText?: string
+  /** Auto-fetched page title for URL clips */
+  linkTitle?: string
+  /** Auto-fetched favicon as base64 data URL */
+  linkFavicon?: string
 }
 
 // ─── Service class ──────────────────────────────────────────────────────────
@@ -61,6 +81,8 @@ class ClipboardService {
   private store: Store
   private skippedCount = 0
   private imagesDir: string
+  /** The app name captured at the start of each poll cycle */
+  private currentSourceApp: string | null = null
 
   constructor() {
     this.imagesDir = join(app.getPath('userData'), 'quickboard-images')
@@ -87,8 +109,14 @@ class ClipboardService {
     try {
       const data = this.store.get('items') as ClipboardItem[] | undefined
       if (Array.isArray(data)) {
-        this.history = data
-        // Run expiry on load
+        // Migrate: backfill new fields on existing items
+        this.history = data.map((item) => ({
+          ...item,
+          tags: item.tags ?? [],
+          sourceApp: item.sourceApp ?? null,
+          contentType: item.contentType ?? this.detectContentType(item),
+          ocrText: item.ocrText ?? null
+        }))
         this.expireOldEntries()
       }
     } catch (error) {
@@ -178,6 +206,17 @@ class ClipboardService {
     return 'text'
   }
 
+  /** Detect content type for an item (used at capture time and for migration) */
+  private detectContentType(item: Partial<ClipboardItem>): ClipboardItem['contentType'] {
+    if (item.type === 'image') return 'image'
+    if (item.type === 'file') return 'file'
+    if (!item.text) return 'text'
+    if (/^https?:\/\//.test(item.text)) return 'url'
+    const codeIndicators = ['function', 'def ', 'class ', 'import ', 'const ', 'let ', 'var ', '=>', '{']
+    if (codeIndicators.some((ind) => item.text!.includes(ind))) return 'code'
+    return 'text'
+  }
+
   // ─── Clipboard polling ──────────────────────────────────────────────────
 
   private checkClipboard(): void {
@@ -253,7 +292,11 @@ class ClipboardService {
       timestamp: new Date().toISOString(),
       copyCount: 1,
       pinned: false,
-      preview: preview + (text.length > 120 ? '...' : '')
+      preview: preview + (text.length > 120 ? '...' : ''),
+      tags: [],
+      sourceApp: this.currentSourceApp,
+      contentType: this.detectContentType({ text, type: 'text' }),
+      ocrText: null
     }
 
     this.history.unshift(item)
@@ -308,7 +351,11 @@ class ClipboardService {
       imagePath,
       imageHash: imgHash,
       imageWidth: size.width,
-      imageHeight: size.height
+      imageHeight: size.height,
+      tags: [],
+      sourceApp: this.currentSourceApp,
+      contentType: 'image',
+      ocrText: null
     }
 
     this.history.unshift(item)

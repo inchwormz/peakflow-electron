@@ -26,6 +26,7 @@ export interface QuickBoardConfig {
   auto_expire: boolean
   encrypt_history: boolean
   search_fuzzy: boolean
+  plain_text_mode: boolean
 }
 
 export interface ScreenSlapConfig {
@@ -91,11 +92,12 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     excluded_apps: []
   },
   [ToolId.QuickBoard]: {
-    max_entries: 100,
+    max_entries: 500,
     max_age_hours: 24,
     auto_expire: true,
     encrypt_history: false,
-    search_fuzzy: true
+    search_fuzzy: true,
+    plain_text_mode: false
   },
   [ToolId.ScreenSlap]: {
     alert_minutes_before: 1,
