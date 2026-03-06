@@ -444,6 +444,68 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ─── QuickBoard: Transforms ──────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_GET_TRANSFORMS,
+    () => {
+      const { getSavedPipelines, AVAILABLE_TRANSFORMS } = require('./services/clipboard-transforms')
+      return { pipelines: getSavedPipelines(), available: AVAILABLE_TRANSFORMS }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_SAVE_TRANSFORM,
+    (_event, pipeline: { id: string; name: string; steps: { type: string; label: string }[] }) => {
+      const { savePipeline } = require('./services/clipboard-transforms')
+      return savePipeline(pipeline)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_DELETE_TRANSFORM,
+    (_event, pipelineId: string) => {
+      const { deletePipeline } = require('./services/clipboard-transforms')
+      return deletePipeline(pipelineId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_PASTE_WITH_TRANSFORM,
+    (_event, itemId: string, steps: { type: string; label: string }[]) => {
+      const { applyPipeline } = require('./services/clipboard-transforms')
+      const clipService = getClipboardService()
+      const history = clipService.getHistory()
+      const item = history.find((h: ClipboardItem) => h.id === itemId)
+      if (!item || item.type !== 'text') return
+      const text = item.editedText ?? item.text ?? ''
+      const transformed = applyPipeline(steps, text)
+      clipService.writeText(transformed)
+      setTimeout(() => {
+        const { simulateCtrlV } = require('./native/keyboard')
+        simulateCtrlV()
+      }, 500)
+    }
+  )
+
+  // ─── QuickBoard: OCR ───────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_RUN_OCR,
+    async (_event, itemId: string): Promise<ClipboardItem[]> => {
+      const clipService = getClipboardService()
+      const history = clipService.getHistory()
+      const item = history.find((h: ClipboardItem) => h.id === itemId)
+      if (!item || item.type !== 'image' || !item.imagePath) return history
+      const { runOcr } = require('./services/clipboard-ocr')
+      const ocrText = await runOcr(item.imagePath)
+      if (ocrText) {
+        return clipService.setOcrText(itemId, ocrText)
+      }
+      return clipService.getHistory()
+    }
+  )
+
   // ─── Google Calendar (shared by ScreenSlap + MeetReady) ────────────────────
 
   ipcMain.handle(

@@ -22,7 +22,8 @@ export function ClipRow({
   onSelect,
   onPin,
   onDelete,
-  onDoubleClick
+  onDoubleClick,
+  onContextMenu
 }: {
   item: ClipboardItem
   icon: string
@@ -33,6 +34,7 @@ export function ClipRow({
   onPin: (e: React.MouseEvent) => void
   onDelete: (e: React.MouseEvent) => void
   onDoubleClick?: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
 }): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
 
@@ -53,27 +55,53 @@ export function ClipRow({
       }}
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Icon */}
-      <div style={clipIconStyle}>{icon}</div>
+      {/* Icon — show favicon for URL clips if available */}
+      {item.linkFavicon ? (
+        <img
+          src={item.linkFavicon}
+          alt=""
+          style={{ width: 20, height: 20, borderRadius: 4, flexShrink: 0, marginTop: 2 }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      ) : (
+        <div style={clipIconStyle}>{icon}</div>
+      )}
 
       {/* Body */}
       <div style={{ flex: 1, minWidth: 0 }}>
         {item.type === 'image' && item.imageDataUrl ? (
-          <img
-            src={item.imageDataUrl}
-            alt="clipboard image"
-            style={{
-              maxWidth: 100,
-              maxHeight: 60,
-              borderRadius: 4,
-              display: 'block'
-            }}
-          />
+          <>
+            <img
+              src={item.imageDataUrl}
+              alt="clipboard image"
+              style={{
+                maxWidth: 100,
+                maxHeight: 60,
+                borderRadius: 4,
+                display: 'block'
+              }}
+            />
+            {/* Show OCR text below image if available */}
+            {item.ocrText && (
+              <div style={{ fontSize: 9, color: DS.textDim, marginTop: 4, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                OCR: {item.ocrText.slice(0, 80)}{item.ocrText.length > 80 ? '...' : ''}
+              </div>
+            )}
+          </>
         ) : (
-          <div style={clipPreviewStyle}>{item.preview}</div>
+          <>
+            {/* Show link title for URL clips */}
+            {item.linkTitle && (
+              <div style={{ fontSize: 10, fontWeight: 600, color: DS.textPrimary, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {item.linkTitle}
+              </div>
+            )}
+            <div style={clipPreviewStyle}>{item.preview}</div>
+          </>
         )}
 
         {/* Meta row */}

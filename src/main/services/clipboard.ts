@@ -342,6 +342,22 @@ class ClipboardService {
     this.trimHistory()
     this.saveHistory()
     this.broadcastChange()
+
+    // Auto-fetch link preview for URL clips (async, non-blocking)
+    if (item.contentType === 'url' && item.text) {
+      this.fetchLinkPreviewAsync(item.id, item.text)
+    }
+  }
+
+  /** Fetch link preview in background and update item when done. */
+  private fetchLinkPreviewAsync(itemId: string, url: string): void {
+    import('./clipboard-link-preview').then(({ fetchLinkPreview }) => {
+      fetchLinkPreview(url).then(({ title, favicon }) => {
+        if (title || favicon) {
+          this.setLinkPreview(itemId, title, favicon)
+        }
+      }).catch(() => {})
+    }).catch(() => {})
   }
 
   private handleNewImage(img: Electron.NativeImage): void {
@@ -401,6 +417,20 @@ class ClipboardService {
     this.trimHistory()
     this.saveHistory()
     this.broadcastChange()
+
+    // Auto-run OCR on image clips (async, non-blocking)
+    this.runOcrAsync(item.id, imagePath)
+  }
+
+  /** Run OCR in background and update item when done. */
+  private runOcrAsync(itemId: string, imagePath: string): void {
+    import('./clipboard-ocr').then(({ runOcr }) => {
+      runOcr(imagePath).then((ocrText) => {
+        if (ocrText) {
+          this.setOcrText(itemId, ocrText)
+        }
+      }).catch(() => {})
+    }).catch(() => {})
   }
 
   private trimHistory(): void {
@@ -648,6 +678,29 @@ class ClipboardService {
     if (item && item.type === 'text') {
       item.editedText = editedText
       item.preview = editedText.replace(/\n/g, ' ').trim().slice(0, 120) + (editedText.length > 120 ? '...' : '')
+      this.saveHistory()
+      this.broadcastChange()
+    }
+    return this.history
+  }
+
+  /** Set OCR text on an image clip. */
+  setOcrText(itemId: string, ocrText: string): ClipboardItem[] {
+    const item = this.history.find((h) => h.id === itemId)
+    if (item && item.type === 'image') {
+      item.ocrText = ocrText
+      this.saveHistory()
+      this.broadcastChange()
+    }
+    return this.history
+  }
+
+  /** Set link preview metadata on a URL clip. */
+  setLinkPreview(itemId: string, title: string | null, favicon: string | null): ClipboardItem[] {
+    const item = this.history.find((h) => h.id === itemId)
+    if (item) {
+      item.linkTitle = title
+      item.linkFavicon = favicon
       this.saveHistory()
       this.broadcastChange()
     }

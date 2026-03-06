@@ -33,6 +33,7 @@ import { TypeFilter, type ContentTypeFilter } from './components/TypeFilter'
 import { TagBar } from './components/TagBar'
 import { QueueBanner } from './components/QueueBanner'
 import { EditModal } from './components/EditModal'
+import { TransformPicker } from './components/TransformPicker'
 import { scoreItem } from './fuzzy-search'
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -66,6 +67,9 @@ export function QuickBoard(): React.JSX.Element {
 
   // Edit modal state
   const [editingItem, setEditingItem] = useState<ClipboardItem | null>(null)
+
+  // Transform picker state
+  const [transformItem, setTransformItem] = useState<ClipboardItem | null>(null)
 
   // ── Load history + tags on mount ──────────────────────────────────────────
 
@@ -371,6 +375,14 @@ export function QuickBoard(): React.JSX.Element {
         />
       )}
 
+      {/* Transform Picker */}
+      {transformItem && (
+        <TransformPicker
+          item={transformItem}
+          onClose={() => setTransformItem(null)}
+        />
+      )}
+
       {view === 'main' ? (
         /* ═══════════════ MAIN VIEW ═══════════════ */
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -481,6 +493,7 @@ export function QuickBoard(): React.JSX.Element {
                 onPin={(e) => handlePinItem(e, item.id)}
                 onDelete={(e) => handleDeleteItem(e, item.id)}
                 onDoubleClick={item.type === 'text' ? () => setEditingItem(item) : undefined}
+                onContextMenu={item.type === 'text' ? (e) => { e.preventDefault(); setTransformItem(item) } : undefined}
               />
             )}
           />
