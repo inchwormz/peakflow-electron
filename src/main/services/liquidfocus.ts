@@ -67,6 +67,7 @@ export interface LiquidFocusFullState {
   timer: TimerState
   tasks: LiquidFocusTask[]
   stats: SessionStats
+  workDurationMinutes: number
 }
 
 // ─── Service ────────────────────────────────────────────────────────────────
@@ -124,10 +125,12 @@ class LiquidFocusService {
   // ─── Timer ──────────────────────────────────────────────────────────────
 
   getState(): LiquidFocusFullState {
+    const cfg = this.getConfigSafe()
     return {
       timer: this.getTimerState(),
       tasks: this.getTasks(),
-      stats: this.getStats()
+      stats: this.getStats(),
+      workDurationMinutes: cfg.work_duration
     }
   }
 
@@ -229,9 +232,9 @@ class LiquidFocusService {
       this.store.set('pomodorosCompleted', this.pomodorosCompleted)
       this.recordSession()
 
-      // Update active task
+      // Update active task (skip if already done)
       const tasks = this.getTasks()
-      if (this.activeTaskIndex >= 0 && this.activeTaskIndex < tasks.length) {
+      if (this.activeTaskIndex >= 0 && this.activeTaskIndex < tasks.length && !tasks[this.activeTaskIndex].done) {
         tasks[this.activeTaskIndex].actual++
         this.saveTasks(tasks)
       }
@@ -325,6 +328,12 @@ class LiquidFocusService {
     if (idx >= 0) {
       tasks[idx] = { ...tasks[idx], ...updates }
       this.saveTasks(tasks)
+
+      // Clear active selection when the active task is marked done
+      if (updates.done && idx === this.activeTaskIndex) {
+        this.activeTaskIndex = -1
+        this.store.set('activeTaskIndex', this.activeTaskIndex)
+      }
     }
     return tasks
   }

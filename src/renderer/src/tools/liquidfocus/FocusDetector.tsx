@@ -95,6 +95,7 @@ export function FocusDetector({
         rafRef.current = null
       }
       awayStartRef.current = null
+      interruptionRecordedRef.current = false
       updateStatus('loading')
       return
     }

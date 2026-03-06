@@ -12,14 +12,14 @@ import { DS, type SessionStats } from './LiquidFocus'
 
 interface StatsViewProps {
   stats: SessionStats
+  workDurationMinutes: number
   onBack: () => void
 }
 
-export function StatsView({ stats, onBack }: StatsViewProps): React.JSX.Element {
+export function StatsView({ stats, workDurationMinutes, onBack }: StatsViewProps): React.JSX.Element {
   const focusHours = useMemo(() => {
-    // Use configured work_duration if available, fallback to 25min
-    return Math.round((stats.allTime * 25) / 60 * 10) / 10
-  }, [stats.allTime])
+    return Math.round((stats.allTime * workDurationMinutes) / 60 * 10) / 10
+  }, [stats.allTime, workDurationMinutes])
 
   const activeDays = useMemo(() => {
     return stats.dailyBreakdown.filter((d) => d.count > 0).length

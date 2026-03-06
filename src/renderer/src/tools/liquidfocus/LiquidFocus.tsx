@@ -104,6 +104,7 @@ export function LiquidFocus(): React.JSX.Element {
     today: 0,
     allTime: 0
   })
+  const [workDurationMinutes, setWorkDurationMinutes] = useState(25)
   const [focusDetectionEnabled, setFocusDetectionEnabled] = useState(false)
   const [focusAwayThresholdSecs, setFocusAwayThresholdSecs] = useState(5)
 
@@ -115,11 +116,13 @@ export function LiquidFocus(): React.JSX.Element {
         timer: TimerState
         tasks: LiquidFocusTask[]
         stats: SessionStats
+        workDurationMinutes?: number
       }
       if (state) {
         setTimer(state.timer)
         setTasks(state.tasks)
         setStats(state.stats)
+        if (state.workDurationMinutes) setWorkDurationMinutes(state.workDurationMinutes)
       }
     } catch (err) {
       console.warn('[LiquidFocus] Failed to load state:', err)
@@ -350,7 +353,7 @@ export function LiquidFocus(): React.JSX.Element {
             />
           )}
           {view === 'stats' && (
-            <StatsView stats={stats} onBack={() => setView('timer')} />
+            <StatsView stats={stats} workDurationMinutes={workDurationMinutes} onBack={() => setView('timer')} />
           )}
           {view === 'settings' && (
             <SettingsView onBack={() => setView('timer')} onShowTasks={() => setView('tasks')} />

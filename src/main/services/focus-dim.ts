@@ -220,6 +220,8 @@ class FocusDimService {
     if (this._enabled) {
       this.destroyAllOverlays()
       this.createOverlayWindows()
+      this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+      this._lastRectsHash = ''
     }
     this.broadcastState()
   }
@@ -297,11 +299,15 @@ class FocusDimService {
     try { globalShortcut.unregister(oldAccelerator) } catch { /* may not be registered */ }
 
     // Try registering new
-    const ok = globalShortcut.register(newElectronAccel, () => this.toggle())
+    let ok = false
+    try {
+      ok = globalShortcut.register(newElectronAccel, () => this.toggle())
+    } catch (err) {
+      console.warn(`[FocusDim] Invalid accelerator: ${newElectronAccel}`, err)
+    }
     if (!ok) {
       // Re-register old
-      globalShortcut.register(oldAccelerator, () => this.toggle())
-      console.warn(`[FocusDim] Failed to register hotkey: ${newElectronAccel}`)
+      try { globalShortcut.register(oldAccelerator, () => this.toggle()) } catch { /* best effort */ }
       return false
     }
 
@@ -319,6 +325,7 @@ class FocusDimService {
         const lower = part.trim().toLowerCase()
         if (lower === 'ctrl' || lower === 'control') return 'CommandOrControl'
         if (lower === 'cmd' || lower === 'command') return 'CommandOrControl'
+        if (lower === 'meta') return 'Super'
         // Capitalize first letter for Electron format
         return lower.charAt(0).toUpperCase() + lower.slice(1)
       })
@@ -413,6 +420,8 @@ class FocusDimService {
       console.log('[FocusDim] Display configuration changed — rebuilding overlays')
       this.destroyAllOverlays()
       this.createOverlayWindows()
+      this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+      this._lastRectsHash = ''
     }
 
     this.suspendHandler = (): void => {
@@ -425,6 +434,8 @@ class FocusDimService {
       if (!this._enabled) return
       console.log('[FocusDim] System resume — rebuilding overlays')
       this.createOverlayWindows()
+      this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
+      this._lastRectsHash = ''
     }
 
     screen.on('display-added', this.displayChangeHandler)
