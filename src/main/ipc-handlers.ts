@@ -488,6 +488,197 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ─── QuickBoard: AI ──────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS,
+    async (): Promise<{ allowed: boolean }> => {
+      const { checkAiAccess } = require('./services/clipboard-ai')
+      return checkAiAccess()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_AI_TRANSFORM,
+    async (_event, type: string, text: string, targetLang?: string) => {
+      const { aiTransform } = require('./services/clipboard-ai')
+      return aiTransform(type, text, targetLang)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_AI_ONBOARD,
+    async (_event, answers: { role: string; apps: string[]; copyPatterns: string[]; repetitiveText: string }) => {
+      const { aiOnboard } = require('./services/clipboard-ai')
+      return aiOnboard(answers)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_ONBOARDING_APPLY_CONFIG,
+    async (_event, config: {
+      tags?: string[]
+      pinnedTemplates?: Array<{ text: string; label: string }>
+      workflows?: Array<{ name: string; description: string; items: Array<{ label: string; text: string }> }>
+      formProfiles?: Array<{ name: string; fields: Array<{ label: string; value: string; type: string }> }>
+    }) => {
+      const clipService = getClipboardService()
+      const { manageTags } = require('./services/clipboard-collections')
+
+      // Create tags
+      if (config.tags) {
+        for (const tag of config.tags) {
+          manageTags('create', { name: tag })
+        }
+      }
+
+      // Pin templates (write to clipboard as pinned items)
+      if (config.pinnedTemplates) {
+        for (const tmpl of config.pinnedTemplates) {
+          clipService.writeText(tmpl.text)
+          // Pin the most recently added item
+          const history = clipService.getHistory()
+          if (history.length > 0) {
+            clipService.pinItem(history[0].id)
+          }
+        }
+      }
+
+      // Create workflows
+      if (config.workflows && config.workflows.length > 0) {
+        const { saveBulkWorkflows } = require('./services/clipboard-workflows')
+        saveBulkWorkflows(config.workflows)
+      }
+
+      // Create form profiles
+      if (config.formProfiles && config.formProfiles.length > 0) {
+        const { saveBulkFormProfiles } = require('./services/clipboard-forms')
+        saveBulkFormProfiles(config.formProfiles)
+      }
+
+      // Mark onboarding complete
+      setConfig('quickboard' as ToolId, 'ai_onboarding_complete', true)
+
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_AI_SUGGEST,
+    async () => {
+      const { getSuggestions } = require('./services/clipboard-suggestions')
+      return getSuggestions()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_AI_DISMISS_SUGGESTION,
+    (_event, suggestionId: string) => {
+      const { dismissSuggestion } = require('./services/clipboard-suggestions')
+      dismissSuggestion(suggestionId)
+    }
+  )
+
+  // ─── QuickBoard: Workflows ──────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_GET_WORKFLOWS,
+    () => {
+      const { getWorkflows } = require('./services/clipboard-workflows')
+      return getWorkflows()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_SAVE_WORKFLOW,
+    (_event, workflow: { name: string; description: string; items: Array<{ label: string; text: string }>; isAiGenerated?: boolean }) => {
+      const { saveWorkflow } = require('./services/clipboard-workflows')
+      return saveWorkflow({ ...workflow, isAiGenerated: workflow.isAiGenerated ?? false })
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_DELETE_WORKFLOW,
+    (_event, workflowId: string) => {
+      const { deleteWorkflow } = require('./services/clipboard-workflows')
+      return deleteWorkflow(workflowId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_START_WORKFLOW,
+    (_event, workflowId: string) => {
+      const { startWorkflow } = require('./services/clipboard-workflows')
+      return startWorkflow(workflowId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_WORKFLOW_PASTE_NEXT,
+    () => {
+      const { workflowPasteNext } = require('./services/clipboard-workflows')
+      return workflowPasteNext()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_CANCEL_WORKFLOW,
+    () => {
+      const { cancelWorkflow } = require('./services/clipboard-workflows')
+      cancelWorkflow()
+    }
+  )
+
+  // ─── QuickBoard: Form Fill ──────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_GET_FORM_PROFILES,
+    () => {
+      const { getFormProfiles } = require('./services/clipboard-forms')
+      return getFormProfiles()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_SAVE_FORM_PROFILE,
+    (_event, profile: { id?: string; name: string; fields: Array<{ label: string; value: string; type: string }>; isAiGenerated?: boolean }) => {
+      const { saveFormProfile } = require('./services/clipboard-forms')
+      return saveFormProfile({ ...profile, isAiGenerated: profile.isAiGenerated ?? false })
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_DELETE_FORM_PROFILE,
+    (_event, profileId: string) => {
+      const { deleteFormProfile } = require('./services/clipboard-forms')
+      return deleteFormProfile(profileId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_START_FORM_FILL,
+    (_event, profileId: string) => {
+      const { startFormFill } = require('./services/clipboard-forms')
+      return startFormFill(profileId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_FORM_PASTE_NEXT,
+    () => {
+      const { formPasteNext } = require('./services/clipboard-forms')
+      return formPasteNext()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_CANCEL_FORM_FILL,
+    () => {
+      const { cancelFormFill } = require('./services/clipboard-forms')
+      cancelFormFill()
+    }
+  )
+
   // ─── QuickBoard: OCR ───────────────────────────────────────────────────────
 
   ipcMain.handle(
@@ -818,6 +1009,16 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.WINDOW_OPEN,
     async (_event, payload: { toolId: string }): Promise<void> => {
       await openToolWithAccessCheck(payload.toolId as WindowId)
+    }
+  )
+
+  // ─── Hotkeys ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(
+    IPC_INVOKE.HOTKEY_GET_REGISTERED,
+    (): Array<{ accelerator: string; label: string }> => {
+      const { getRegisteredHotkeys } = require('./hotkeys')
+      return getRegisteredHotkeys()
     }
   )
 

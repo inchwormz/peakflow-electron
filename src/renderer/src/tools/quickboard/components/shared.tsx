@@ -25,6 +25,18 @@ export const DS = {
   badgeBg: '#1a1a1a'
 } as const
 
+/** Provenance strip colors — left-edge indicator by content type */
+export const STRIP_COLORS: Record<ClipboardItem['contentType'], string> = {
+  text: '#555555',
+  code: '#ffe17c',
+  url: '#eab308',
+  image: '#f05858',
+  file: '#666666'
+}
+
+/** Settings tab identifiers */
+export type SettingsTab = 'general' | 'transforms' | 'triggers' | 'hotkeys' | 'data' | 'ai'
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface ClipboardItem {
@@ -50,7 +62,7 @@ export interface ClipboardItem {
 }
 
 export type SortMode = 'recent' | 'frequency'
-export type ViewMode = 'main' | 'settings'
+export type ViewMode = 'main' | 'settings' | 'onboarding' | 'workflows' | 'formfill'
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 

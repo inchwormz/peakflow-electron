@@ -1,11 +1,16 @@
 /**
  * Sequential paste queue for QuickBoard.
  * Allows multi-select + paste-one-at-a-time via hotkey.
+ *
+ * Unlike single-click paste (which goes through simulatePaste with a 500ms
+ * window-close delay), queue paste writes directly to clipboard and fires
+ * Ctrl+V with a short delay since the user is already in the target app.
  */
 
 import type { ClipboardItem } from './clipboard'
 import { getClipboardService } from './clipboard'
-import type { Tray } from 'electron'
+import { clipboard, type Tray } from 'electron'
+import { simulateCtrlV } from '../native/keyboard'
 
 interface PasteQueue {
   items: ClipboardItem[]
@@ -25,8 +30,12 @@ export function startQueue(itemIds: string[]): void {
   const items = itemIds
     .map((id) => history.find((h) => h.id === id))
     .filter((h): h is ClipboardItem => h !== undefined)
-  if (items.length < 2) return
+  if (items.length < 2) {
+    console.warn(`[QuickBoard] Queue rejected: need 2+ items, got ${items.length}`)
+    return
+  }
   queue = { items, currentIndex: 0 }
+  console.log(`[QuickBoard] Queue started with ${items.length} items`)
   updateTrayTooltip()
 }
 
@@ -36,8 +45,31 @@ export function pasteNext(): boolean {
     return false
   }
   const item = queue.items[queue.currentIndex]
+  console.log(`[QuickBoard] Queue paste ${queue.currentIndex + 1}/${queue.items.length}: ${item.id}`)
+
+  // Write directly to clipboard (bypass simulatePaste's 500ms window-close delay)
+  const text = item.editedText ?? item.text ?? ''
+  if (item.type === 'text' && text) {
+    clipboard.writeText(text)
+  } else if (item.type === 'image' && item.imagePath) {
+    const svc = getClipboardService()
+    svc.writeImage(item.imagePath)
+  }
+
+  // Update usage count
   const svc = getClipboardService()
-  svc.simulatePaste(item.id, false)
+  const liveItem = svc.getHistory().find((h) => h.id === item.id)
+  if (liveItem) {
+    liveItem.copyCount += 1
+    liveItem.timestamp = new Date().toISOString()
+  }
+
+  // Short delay for clipboard to settle, then paste (user is already in target app)
+  setTimeout(() => {
+    const ok = simulateCtrlV()
+    console.log(`[QuickBoard] Queue Ctrl+V ${ok ? 'sent' : 'FAILED'}`)
+  }, 80)
+
   queue.currentIndex++
   updateTrayTooltip()
 

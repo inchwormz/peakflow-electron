@@ -18,6 +18,9 @@ import { isToolInstalled } from './security/trial'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
 
+/** Registry of all active hotkeys: accelerator → label (for conflict detection) */
+const hotkeyRegistry = new Map<string, string>()
+
 /**
  * Toggle a tool window: close it if open, create it if not.
  */
@@ -71,6 +74,9 @@ export function registerHotkeys(): void {
   if (isToolInstalled(ToolId.FocusDim)) {
     registerFocusDimFeatureHotkeys()
   }
+
+  // QuickBoard sequential paste queue hotkeys
+  registerQueueHotkeys()
 }
 
 /**
@@ -99,20 +105,21 @@ export function registerToolHotkey(toolId: ToolId): void {
 }
 
 /** Internal: register a single accelerator → tool binding. */
-function registerSingleHotkey(toolId: ToolId, accelerator: string): void {
-  const registered = globalShortcut.register(accelerator, () => {
+function registerSingleHotkey(toolId: string, accelerator: string, callback?: () => void): void {
+  const handler = callback ?? (() => {
     if (toolId === ToolId.FocusDim) {
-      // FocusDim hotkey toggles the dim effect, not the settings window
       getFocusDimService().toggle()
     } else if (toolId === ToolId.MeetReady) {
-      // MeetReady hotkey toggles mic mute, not the window
       toggleMicMute()
     } else {
-      toggleTool(toolId)
+      toggleTool(toolId as ToolId)
     }
   })
 
+  const registered = globalShortcut.register(accelerator, handler)
+
   if (registered) {
+    hotkeyRegistry.set(accelerator, toolId)
     console.log(`[PeakFlow] Hotkey registered: ${accelerator} -> ${toolId}`)
   } else {
     console.warn(
@@ -155,9 +162,59 @@ function registerFocusDimFeatureHotkeys(): void {
   for (const fk of featureKeys) {
     if (globalShortcut.isRegistered(fk.accel)) continue
     const ok = globalShortcut.register(fk.accel, fk.action)
-    if (ok) console.log(`[PeakFlow] Hotkey registered: ${fk.accel} -> FocusDim ${fk.label}`)
-    else console.warn(`[PeakFlow] Failed to register ${fk.accel}`)
+    if (ok) {
+      hotkeyRegistry.set(fk.accel, `focusdim:${fk.label}`)
+      console.log(`[PeakFlow] Hotkey registered: ${fk.accel} -> FocusDim ${fk.label}`)
+    } else {
+      console.warn(`[PeakFlow] Failed to register ${fk.accel}`)
+    }
   }
+}
+
+/**
+ * Register QuickBoard sequential paste queue hotkeys.
+ * Always active — pasteNext() is a no-op when queue is empty.
+ */
+function registerQueueHotkeys(): void {
+  if (!isToolInstalled(ToolId.QuickBoard)) return
+
+  const queueKeys: Array<{ accel: string; id: string; action: () => void }> = [
+    {
+      accel: 'CommandOrControl+Shift+N',
+      id: 'quickboard:paste-next',
+      action: () => {
+        const { pasteNext } = require('./services/clipboard-sequential')
+        pasteNext()
+      }
+    },
+    {
+      accel: 'CommandOrControl+Shift+Q',
+      id: 'quickboard:cancel-queue',
+      action: () => {
+        const { cancelQueue } = require('./services/clipboard-sequential')
+        cancelQueue()
+      }
+    }
+  ]
+
+  for (const qk of queueKeys) {
+    if (globalShortcut.isRegistered(qk.accel)) {
+      console.warn(`[PeakFlow] Skipping ${qk.accel} — already registered`)
+      continue
+    }
+    registerSingleHotkey(qk.id, qk.accel, qk.action)
+  }
+}
+
+/**
+ * Get all registered hotkeys for conflict detection.
+ * Returns array of { accelerator, label } pairs.
+ */
+export function getRegisteredHotkeys(): Array<{ accelerator: string; label: string }> {
+  return Array.from(hotkeyRegistry.entries()).map(([accelerator, label]) => ({
+    accelerator,
+    label
+  }))
 }
 
 /**
@@ -165,5 +222,6 @@ function registerFocusDimFeatureHotkeys(): void {
  */
 export function unregisterHotkeys(): void {
   globalShortcut.unregisterAll()
+  hotkeyRegistry.clear()
   console.log('[PeakFlow] All hotkeys unregistered')
 }

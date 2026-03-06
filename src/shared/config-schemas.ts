@@ -27,6 +27,11 @@ export interface QuickBoardConfig {
   encrypt_history: boolean
   search_fuzzy: boolean
   plain_text_mode: boolean
+  ai_onboarding_complete: boolean
+  ai_translate_default_lang: string
+  ai_suggestions_enabled: boolean
+  ai_last_suggestion_date: string
+  ai_dismissed_suggestions: string[]
 }
 
 export interface ScreenSlapConfig {
@@ -97,7 +102,12 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     auto_expire: true,
     encrypt_history: false,
     search_fuzzy: true,
-    plain_text_mode: false
+    plain_text_mode: false,
+    ai_onboarding_complete: false,
+    ai_translate_default_lang: '',
+    ai_suggestions_enabled: true,
+    ai_last_suggestion_date: '',
+    ai_dismissed_suggestions: []
   },
   [ToolId.ScreenSlap]: {
     alert_minutes_before: 1,

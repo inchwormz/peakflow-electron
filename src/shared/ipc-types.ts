@@ -108,6 +108,30 @@ export const IPC_INVOKE = {
   CLIPBOARD_PASTE_WITH_TRANSFORM: 'clipboard:paste-with-transform',
   CLIPBOARD_RUN_OCR: 'clipboard:run-ocr',
 
+  // QuickBoard AI
+  CLIPBOARD_AI_TRANSFORM: 'clipboard:ai-transform',
+  CLIPBOARD_AI_ONBOARD: 'clipboard:ai-onboard',
+  CLIPBOARD_AI_CHECK_ACCESS: 'clipboard:ai-check-access',
+  CLIPBOARD_ONBOARDING_APPLY_CONFIG: 'clipboard:onboarding-apply-config',
+  CLIPBOARD_AI_SUGGEST: 'clipboard:ai-suggest',
+  CLIPBOARD_AI_DISMISS_SUGGESTION: 'clipboard:ai-dismiss-suggestion',
+
+  // QuickBoard Workflows
+  CLIPBOARD_GET_WORKFLOWS: 'clipboard:get-workflows',
+  CLIPBOARD_SAVE_WORKFLOW: 'clipboard:save-workflow',
+  CLIPBOARD_DELETE_WORKFLOW: 'clipboard:delete-workflow',
+  CLIPBOARD_START_WORKFLOW: 'clipboard:start-workflow',
+  CLIPBOARD_WORKFLOW_PASTE_NEXT: 'clipboard:workflow-paste-next',
+  CLIPBOARD_CANCEL_WORKFLOW: 'clipboard:cancel-workflow',
+
+  // QuickBoard Form Fill
+  CLIPBOARD_GET_FORM_PROFILES: 'clipboard:get-form-profiles',
+  CLIPBOARD_SAVE_FORM_PROFILE: 'clipboard:save-form-profile',
+  CLIPBOARD_DELETE_FORM_PROFILE: 'clipboard:delete-form-profile',
+  CLIPBOARD_START_FORM_FILL: 'clipboard:start-form-fill',
+  CLIPBOARD_FORM_PASTE_NEXT: 'clipboard:form-paste-next',
+  CLIPBOARD_CANCEL_FORM_FILL: 'clipboard:cancel-form-fill',
+
   // SoundSplit
   SOUNDSPLIT_GET_SESSIONS: 'soundsplit:get-sessions',
   SOUNDSPLIT_SET_VOLUME: 'soundsplit:set-volume',
@@ -163,6 +187,9 @@ export const IPC_INVOKE = {
   MIC_GET_MUTE: 'mic:get-mute',
   MIC_SET_MUTE: 'mic:set-mute',
   MIC_TOGGLE_MUTE: 'mic:toggle-mute',
+
+  // Hotkeys
+  HOTKEY_GET_REGISTERED: 'hotkey:get-registered',
 
   // Bug Report
   BUGREPORT_SEND_EMAIL: 'bugreport:send-email',

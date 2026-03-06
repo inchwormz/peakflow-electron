@@ -10,6 +10,7 @@
  *   - Multi-select for sequential paste queue
  *   - Settings with max items, plain text, encrypt toggles
  *   - Toast notification on copy
+ *   - AI transforms, onboarding wizard, workflows, form fill, suggestions
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
@@ -34,7 +35,21 @@ import { TagBar } from './components/TagBar'
 import { QueueBanner } from './components/QueueBanner'
 import { EditModal } from './components/EditModal'
 import { TransformPicker } from './components/TransformPicker'
+import { OnboardingWizard } from './components/OnboardingWizard'
+import { WorkflowPanel } from './components/WorkflowPanel'
+import { FormFillPanel } from './components/FormFillPanel'
+import { SuggestionBanner } from './components/SuggestionBanner'
 import { scoreItem } from './fuzzy-search'
+
+// ─── Suggestion type ─────────────────────────────────────────────────────────
+
+interface AiSuggestion {
+  id: string
+  type: 'pin_template' | 'create_tag' | 'create_workflow' | 'add_trigger'
+  reason: string
+  action: Record<string, unknown>
+  label: string
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -71,6 +86,10 @@ export function QuickBoard(): React.JSX.Element {
   // Transform picker state
   const [transformItem, setTransformItem] = useState<ClipboardItem | null>(null)
 
+  // AI suggestions state
+  const [suggestions, setSuggestions] = useState<AiSuggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+
   // ── Load history + tags on mount ──────────────────────────────────────────
 
   useEffect(() => {
@@ -84,6 +103,38 @@ export function QuickBoard(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS).then((data) => {
       if (Array.isArray(data)) setAllTags(data as string[])
     }).catch(() => {})
+  }, [])
+
+  // ── Check onboarding + suggestions on mount ────────────────────────────────
+
+  useEffect(() => {
+    // Check if onboarding should show
+    window.peakflow.invoke(IPC_INVOKE.CONFIG_GET, { tool: 'quickboard' })
+      .then((conf: unknown) => {
+        if (conf && typeof conf === 'object') {
+          const c = conf as Record<string, unknown>
+          if (c.ai_onboarding_complete !== true) {
+            // Check if user has AI access (licensed, not trial)
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
+              .then((res: unknown) => {
+                const r = res as { allowed: boolean }
+                if (r.allowed) setView('onboarding')
+              })
+              .catch(() => {})
+          }
+        }
+      })
+      .catch(() => {})
+
+    // Load pending suggestions
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_SUGGEST)
+      .then((data: unknown) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setSuggestions(data as AiSuggestion[])
+          setShowSuggestions(true)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // ── Listen for clipboard changes from main process ─────────────────────
@@ -245,6 +296,10 @@ export function QuickBoard(): React.JSX.Element {
     setQueueStatus({ active: true, current: 1, total: ids.length })
     setMultiSelectMode(false)
     setSelectedIds(new Set())
+    // Close QuickBoard so focus returns to target app for Ctrl+Shift+N pasting
+    setTimeout(() => {
+      window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+    }, 300)
   }, [selectedIds, filteredHistory])
 
   const handleCancelQueue = useCallback(() => {
@@ -259,6 +314,35 @@ export function QuickBoard(): React.JSX.Element {
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
     )
     setSelectedIndex(0)
+  }, [])
+
+  // ── Suggestion handlers ─────────────────────────────────────────────────
+
+  const handleApplySuggestion = useCallback((sug: AiSuggestion) => {
+    // Apply the suggestion action
+    if (sug.type === 'pin_template' && sug.action.text) {
+      window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, sug.action.text as string)
+        .then(() => {
+          return window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_HISTORY)
+        })
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setHistory(data as ClipboardItem[])
+            // Pin the newly added item
+            if (data.length > 0) {
+              window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_PIN_ITEM, (data[0] as ClipboardItem).id)
+            }
+          }
+        })
+    }
+    // Dismiss after applying
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_DISMISS_SUGGESTION, sug.id)
+    setSuggestions((prev) => prev.filter((s) => s.id !== sug.id))
+  }, [])
+
+  const handleDismissSuggestion = useCallback((sugId: string) => {
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_DISMISS_SUGGESTION, sugId)
+    setSuggestions((prev) => prev.filter((s) => s.id !== sugId))
   }, [])
 
   // ── Keyboard navigation ────────────────────────────────────────────────
@@ -325,19 +409,16 @@ export function QuickBoard(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.WINDOW_MINIMIZE)
   }, [])
 
-  // ── Icon helper ─────────────────────────────────────────────────────────
+  // ── Queue number helper ──────────────────────────────────────────────────
 
-  const getItemIcon = (item: ClipboardItem): string => {
-    if (item.type === 'image') return '\uD83D\uDCF7' // camera
-    if (item.text && /^https?:\/\//.test(item.text)) return '\uD83D\uDD17' // link
-    if (
-      item.text &&
-      ['function', 'def ', 'class ', 'import ', 'const ', 'let ', 'var ', '=>', '{'].some(
-        (ind) => item.text!.includes(ind)
-      )
-    )
-      return '\uD83D\uDCBB' // laptop (code)
-    return '\uD83D\uDCDD' // memo (text)
+  const getQueueNumber = (itemId: string): number | undefined => {
+    if (!multiSelectMode || !selectedIds.has(itemId)) return undefined
+    // Compute position: order by how they appear in filtered list
+    const orderedSelected = filteredHistory
+      .filter((h) => selectedIds.has(h.id))
+      .map((h) => h.id)
+    const idx = orderedSelected.indexOf(itemId)
+    return idx >= 0 ? idx + 1 : undefined
   }
 
   // ── Format time ─────────────────────────────────────────────────────────
@@ -383,7 +464,26 @@ export function QuickBoard(): React.JSX.Element {
         />
       )}
 
-      {view === 'main' ? (
+      {view === 'onboarding' ? (
+        /* ═══════════════ ONBOARDING VIEW ═══════════════ */
+        <OnboardingWizard
+          onComplete={() => setView('main')}
+          onSkip={() => {
+            window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
+              tool: 'quickboard',
+              key: 'ai_onboarding_complete',
+              value: true
+            })
+            setView('main')
+          }}
+        />
+      ) : view === 'workflows' ? (
+        /* ═══════════════ WORKFLOWS VIEW ═══════════════ */
+        <WorkflowPanel onBack={() => setView('main')} />
+      ) : view === 'formfill' ? (
+        /* ═══════════════ FORM FILL VIEW ═══════════════ */
+        <FormFillPanel onBack={() => setView('main')} />
+      ) : view === 'main' ? (
         /* ═══════════════ MAIN VIEW ═══════════════ */
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
           {/* Queue banner */}
@@ -404,6 +504,24 @@ export function QuickBoard(): React.JSX.Element {
               <span style={{ fontSize: 10, color: DS.textDim }}>
                 {filteredHistory.length} items
               </span>
+              {suggestions.length > 0 && !showSuggestions && (
+                <button
+                  onClick={() => setShowSuggestions(true)}
+                  style={{
+                    background: DS.accent,
+                    color: DS.bg,
+                    border: 'none',
+                    borderRadius: 8,
+                    fontSize: 8,
+                    fontWeight: 700,
+                    padding: '1px 5px',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  {suggestions.length}
+                </button>
+              )}
             </div>
             {/* @ts-expect-error -- Electron-specific CSS */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' }}>
@@ -421,6 +539,16 @@ export function QuickBoard(): React.JSX.Element {
             </div>
           </div>
 
+          {/* Suggestion banner */}
+          {showSuggestions && suggestions.length > 0 && (
+            <SuggestionBanner
+              suggestions={suggestions}
+              onApply={handleApplySuggestion}
+              onDismiss={handleDismissSuggestion}
+              onClose={() => setShowSuggestions(false)}
+            />
+          )}
+
           {/* Search box */}
           <SearchBar
             ref={searchRef}
@@ -437,7 +565,7 @@ export function QuickBoard(): React.JSX.Element {
           {/* Tag filter bar */}
           <TagBar tags={allTags} activeTags={activeTags} onToggleTag={handleToggleTag} />
 
-          {/* Sort toggle + multi-select actions */}
+          {/* Sort toggle + multi-select actions + quick nav */}
           <div style={{ padding: '10px 24px', display: 'flex', gap: 2 }}>
             {multiSelectMode ? (
               <>
@@ -474,6 +602,16 @@ export function QuickBoard(): React.JSX.Element {
                   active={sortMode === 'frequency'}
                   onClick={() => { setSortMode('frequency'); setSelectedIndex(0) }}
                 />
+                <SortButton
+                  label="WORKFLOWS"
+                  active={false}
+                  onClick={() => setView('workflows')}
+                />
+                <SortButton
+                  label="FORMS"
+                  active={false}
+                  onClick={() => setView('formfill')}
+                />
               </>
             )}
           </div>
@@ -485,10 +623,10 @@ export function QuickBoard(): React.JSX.Element {
             renderRow={(item, idx) => (
               <ClipRow
                 item={item}
-                icon={multiSelectMode && selectedIds.has(item.id) ? '\u2611' : getItemIcon(item)}
                 time={formatTime(item.timestamp)}
                 showBadge={sortMode === 'frequency'}
                 isSelected={idx === selectedIndex}
+                queueNumber={getQueueNumber(item.id)}
                 onSelect={() => handleSelectItem(item)}
                 onPin={(e) => handlePinItem(e, item.id)}
                 onDelete={(e) => handleDeleteItem(e, item.id)}
@@ -504,11 +642,14 @@ export function QuickBoard(): React.JSX.Element {
           maxItems={settingsMaxItems}
           plainText={settingsPlainText}
           encrypt={settingsEncrypt}
+          historyCount={history.length}
+          tagCount={allTags.length}
           onMaxItemsChange={setSettingsMaxItems}
           onPlainTextChange={() => setSettingsPlainText(!settingsPlainText)}
           onEncryptChange={() => setSettingsEncrypt(!settingsEncrypt)}
           onClearHistory={handleClearHistory}
           onBack={switchToMain}
+          onRerunOnboarding={() => setView('onboarding')}
         />
       )}
     </div>
