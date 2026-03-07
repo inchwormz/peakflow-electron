@@ -121,15 +121,7 @@ export interface AiOnboardResult {
 }
 
 export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResult> {
-  const access = await checkAiAccess()
-  if (!access.allowed) {
-    return { ok: false, error: 'not_licensed' }
-  }
-
-  const licenseKey = getLicenseKey()
-  if (!licenseKey) {
-    return { ok: false, error: 'no_license_key' }
-  }
+  const licenseKey = getLicenseKey() || 'trial'
 
   try {
     const controller = new AbortController()
