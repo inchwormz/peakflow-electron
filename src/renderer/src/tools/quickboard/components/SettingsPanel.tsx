@@ -65,6 +65,7 @@ export function SettingsPanel({
         display: 'flex',
         flexDirection: 'column',
         flex: 1,
+        minHeight: 0,
         animation: 'fadeIn 0.2s ease'
       }}
     >
@@ -95,7 +96,7 @@ export function SettingsPanel({
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             style={{
-              padding: '8px 10px',
+              padding: '8px 6px',
               border: 'none',
               borderBottom: `2px solid ${activeTab === tab.id ? DS.accent : 'transparent'}`,
               background: 'transparent',
@@ -114,7 +115,7 @@ export function SettingsPanel({
       </div>
 
       {/* Tab content */}
-      <div style={{ padding: '12px 24px 24px', flex: 1, overflowY: 'auto' }}>
+      <div style={{ padding: '12px 24px 24px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {activeTab === 'general' && (
           <>
             <SectionLabel>History</SectionLabel>

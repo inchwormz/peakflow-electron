@@ -14,7 +14,7 @@ import type { AiSuggestion, HistoryStats } from './clipboard-ai'
 // ─── Clipboard capture counter ───────────────────────────────────────────────
 
 let captureCount = 0
-const SUGGEST_EVERY = 50
+const SUGGEST_EVERY = 25
 
 export function incrementCaptureCount(): void {
   captureCount++
@@ -109,11 +109,33 @@ export function buildHistoryStats(): HistoryStats {
   // We'd need to import workflows here but to keep it simple, pass empty
   const existingWorkflows: string[] = []
 
+  // Detect paste sequences (items pasted within 60s of each other)
+  const pasteLog = svc.getPasteLog()
+  const seqMap = new Map<string, number>()
+  for (let i = 0; i < pasteLog.length; i++) {
+    const seq: string[] = [pasteLog[i].preview]
+    for (let j = i + 1; j < pasteLog.length; j++) {
+      if (pasteLog[j].timestamp - pasteLog[j - 1].timestamp > 60_000) break
+      seq.push(pasteLog[j].preview)
+      if (seq.length > 5) break
+    }
+    if (seq.length >= 2) {
+      const key = seq.join(' \u2192 ')
+      seqMap.set(key, (seqMap.get(key) || 0) + 1)
+    }
+  }
+  const pasteSequences = Array.from(seqMap.entries())
+    .filter(([, count]) => count >= 2)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+    .map(([items, count]) => ({ items: items.split(' \u2192 '), count }))
+
   return {
     totalItems: history.length,
     contentTypes,
     topSourceApps,
     repeatedItems,
+    pasteSequences,
     existingTags: Array.from(tagSet),
     existingWorkflows
   }

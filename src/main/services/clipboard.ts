@@ -79,6 +79,8 @@ class ClipboardService {
   private lastImageHash = ''
   private lastFormats = ''
   private history: ClipboardItem[] = []
+  private pasteLog: Array<{ id: string; preview: string; timestamp: number }> = []
+  private readonly PASTE_LOG_MAX = 500
   private store: Store
   private skippedCount = 0
   private imagesDir: string
@@ -572,6 +574,10 @@ class ClipboardService {
     item.timestamp = new Date().toISOString()
     this.saveHistory()
 
+    // Record paste event for sequence detection
+    this.pasteLog.push({ id: item.id, preview: (item.text ?? '').slice(0, 50), timestamp: Date.now() })
+    if (this.pasteLog.length > this.PASTE_LOG_MAX) this.pasteLog.shift()
+
     // Wait for the QuickBoard window to close and OS to restore focus to the
     // target app before simulating Ctrl+V. The renderer closes after ~400ms
     // (toast animation), so 500ms ensures focus has returned.
@@ -579,6 +585,11 @@ class ClipboardService {
       const success = simulateCtrlV()
       console.log(`[QuickBoard] Paste ${success ? 'sent' : 'failed'} for item ${itemId}`)
     }, 500)
+  }
+
+  /** Get paste event log for sequence detection. */
+  getPasteLog(): Array<{ id: string; preview: string; timestamp: number }> {
+    return this.pasteLog
   }
 
   /** Delete a single item from history by ID. */
@@ -705,6 +716,47 @@ class ClipboardService {
       this.broadcastChange()
     }
     return this.history
+  }
+
+  /**
+   * Create or update a text item directly in history without mutating the
+   * live system clipboard. Used for onboarding templates and other internal
+   * QuickBoard-generated entries.
+   */
+  upsertTextItem(text: string, options?: { pinned?: boolean; sourceApp?: string | null }): ClipboardItem | null {
+    if (!text || text.trim().length === 0) return null
+
+    const existing = this.history.find((item) => item.type === 'text' && item.text === text)
+    if (existing) {
+      existing.timestamp = new Date().toISOString()
+      if (options?.pinned) existing.pinned = true
+      if (options?.sourceApp !== undefined) existing.sourceApp = options.sourceApp
+      this.history = [existing, ...this.history.filter((item) => item.id !== existing.id)]
+      this.saveHistory()
+      this.broadcastChange()
+      return existing
+    }
+
+    const preview = text.replace(/\n/g, ' ').trim().slice(0, 120)
+    const item: ClipboardItem = {
+      id: this.generateId(),
+      text,
+      type: 'text',
+      timestamp: new Date().toISOString(),
+      copyCount: 1,
+      pinned: options?.pinned ?? false,
+      preview: preview + (text.length > 120 ? '...' : ''),
+      tags: [],
+      sourceApp: options?.sourceApp ?? 'QuickBoard',
+      contentType: this.detectContentType({ text, type: 'text' }),
+      ocrText: null
+    }
+
+    this.history.unshift(item)
+    this.trimHistory()
+    this.saveHistory()
+    this.broadcastChange()
+    return item
   }
 }
 

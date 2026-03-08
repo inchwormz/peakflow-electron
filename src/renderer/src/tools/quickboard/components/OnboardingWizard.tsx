@@ -42,7 +42,19 @@ const COPY_PATTERNS = [
   'File paths'
 ]
 
-const STEP_LABELS = ['Role', 'Apps', 'Patterns', 'Setup']
+const DEV_LANGUAGES = ['TypeScript', 'JavaScript', 'Python', 'Go', 'Rust', 'Java', 'C#', 'Ruby', 'PHP', 'Swift']
+const DEV_AI_TOOLS = ['Claude Code', 'Cursor', 'GitHub Copilot', 'ChatGPT', 'Windsurf', 'Aider']
+const DEV_FRAMEWORKS = ['React', 'Next.js', 'Node.js', 'Django', 'FastAPI', 'Rails', 'Spring', '.NET', 'Vue', 'Svelte']
+const DEV_GIT_HOSTS = ['GitHub', 'GitLab', 'Bitbucket']
+
+type StepId = 'role' | 'devtools' | 'apps' | 'patterns' | 'setup'
+
+function getSteps(isDev: boolean): { id: StepId; label: string }[] {
+  const steps: { id: StepId; label: string }[] = [{ id: 'role', label: 'Role' }]
+  if (isDev) steps.push({ id: 'devtools', label: 'Stack' })
+  steps.push({ id: 'apps', label: 'Apps' }, { id: 'patterns', label: 'Patterns' }, { id: 'setup', label: 'Setup' })
+  return steps
+}
 
 /** Chip button with hover interaction */
 function HoverChip({
@@ -142,6 +154,10 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
   const [selectedApps, setSelectedApps] = useState<string[]>([])
   const [selectedPatterns, setSelectedPatterns] = useState<string[]>([])
   const [repetitiveText, setRepetitiveText] = useState('')
+  const [devLanguages, setDevLanguages] = useState<string[]>([])
+  const [devAiTools, setDevAiTools] = useState<string[]>([])
+  const [devFrameworks, setDevFrameworks] = useState<string[]>([])
+  const [devGitHost, setDevGitHost] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previewConfig, setPreviewConfig] = useState<{
@@ -152,6 +168,15 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
   } | null>(null)
 
   const effectiveRole = role === 'Other' ? customRole : role
+  const isDev = effectiveRole === 'Software Developer'
+  const steps = getSteps(isDev)
+  const currentStepId = steps[step]?.id ?? 'role'
+  const generateStepIndex = steps.findIndex((s) => s.id === 'patterns')
+  const previewStepIndex = steps.findIndex((s) => s.id === 'setup')
+  const previewTags = Array.isArray(previewConfig?.tags) ? previewConfig.tags : []
+  const previewTemplates = Array.isArray(previewConfig?.pinnedTemplates) ? previewConfig.pinnedTemplates : []
+  const previewWorkflows = Array.isArray(previewConfig?.workflows) ? previewConfig.workflows : []
+  const previewProfiles = Array.isArray(previewConfig?.formProfiles) ? previewConfig.formProfiles : []
 
   const toggleMulti = (list: string[], item: string, setter: (v: string[]) => void): void => {
     setter(list.includes(item) ? list.filter((i) => i !== item) : [...list, item])
@@ -161,16 +186,32 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
     setLoading(true)
     setError(null)
     try {
-      const res = await window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_ONBOARD, {
+      const payload: Record<string, unknown> = {
         role: effectiveRole,
         apps: selectedApps,
         copyPatterns: selectedPatterns,
         repetitiveText
-      }) as { ok: boolean; config?: typeof previewConfig; error?: string }
+      }
+      if (isDev) {
+        payload.devContext = {
+          languages: devLanguages,
+          frameworks: devFrameworks,
+          infra: [],
+          gitHost: devGitHost,
+          packageManagers: [],
+          terminal: [],
+          deployment: [],
+          commonCommands: ''
+        }
+        if (devAiTools.length) payload.aiTools = devAiTools
+      }
+      const res = await window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_ONBOARD, payload) as {
+        ok: boolean; config?: typeof previewConfig; error?: string
+      }
 
       if (res.ok && res.config) {
         setPreviewConfig(res.config)
-        setStep(3)
+        setStep(previewStepIndex)
       } else {
         setError(res.error || 'Failed to generate configuration')
       }
@@ -194,8 +235,9 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
   }
 
   const canProceed = (): boolean => {
-    if (step === 0) return !!effectiveRole
-    if (step === 1) return selectedApps.length > 0
+    if (currentStepId === 'role') return !!effectiveRole
+    if (currentStepId === 'devtools') return devLanguages.length > 0
+    if (currentStepId === 'apps') return selectedApps.length > 0
     return true
   }
 
@@ -250,8 +292,8 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
           gap: 0,
           marginTop: 16
         }}>
-          {STEP_LABELS.map((label, i) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center' }}>
+          {steps.map((s, i) => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
               <div style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -274,12 +316,12 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
                   letterSpacing: '0.5px',
                   transition: 'color 0.3s'
                 }}>
-                  {label}
+                  {s.label}
                 </span>
               </div>
-              {i < STEP_LABELS.length - 1 && (
+              {i < steps.length - 1 && (
                 <div style={{
-                  width: 28,
+                  width: isDev ? 20 : 28,
                   height: 1,
                   background: i < step ? DS.accent + '66' : DS.textGhost + '44',
                   marginBottom: 16,
@@ -293,7 +335,7 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
 
       {/* Step content */}
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        {step === 0 && (
+        {currentStepId === 'role' && (
           <div style={{ animation: 'fadeIn 0.2s ease' }}>
             <div style={{ fontSize: 12, color: DS.textSecondary, marginBottom: 12 }}>
               What do you do?
@@ -328,7 +370,39 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
           </div>
         )}
 
-        {step === 1 && (
+        {currentStepId === 'devtools' && (
+          <div style={{ animation: 'fadeIn 0.2s ease' }}>
+            <div style={{ fontSize: 12, color: DS.textSecondary, marginBottom: 10 }}>
+              What's your stack?
+            </div>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase' as const, color: DS.textLabel, marginBottom: 5 }}>Languages</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+              {DEV_LANGUAGES.map((l) => (
+                <HoverChip key={l} label={l} active={devLanguages.includes(l)} onClick={() => toggleMulti(devLanguages, l, setDevLanguages)} />
+              ))}
+            </div>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase' as const, color: DS.textLabel, marginBottom: 5 }}>AI Tools</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+              {DEV_AI_TOOLS.map((t) => (
+                <HoverChip key={t} label={t} active={devAiTools.includes(t)} onClick={() => toggleMulti(devAiTools, t, setDevAiTools)} />
+              ))}
+            </div>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase' as const, color: DS.textLabel, marginBottom: 5 }}>Frameworks</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+              {DEV_FRAMEWORKS.map((f) => (
+                <HoverChip key={f} label={f} active={devFrameworks.includes(f)} onClick={() => toggleMulti(devFrameworks, f, setDevFrameworks)} />
+              ))}
+            </div>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase' as const, color: DS.textLabel, marginBottom: 5 }}>Git Host</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {DEV_GIT_HOSTS.map((g) => (
+                <HoverChip key={g} label={g} active={devGitHost.includes(g)} onClick={() => toggleMulti(devGitHost, g, setDevGitHost)} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {currentStepId === 'apps' && (
           <div style={{ animation: 'fadeIn 0.2s ease' }}>
             <div style={{ fontSize: 12, color: DS.textSecondary, marginBottom: 12 }}>
               Which apps do you use daily?
@@ -346,7 +420,7 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
           </div>
         )}
 
-        {step === 2 && (
+        {currentStepId === 'patterns' && (
           <div style={{ animation: 'fadeIn 0.2s ease' }}>
             <div style={{ fontSize: 12, color: DS.textSecondary, marginBottom: 12 }}>
               What do you copy most?
@@ -386,17 +460,17 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
           </div>
         )}
 
-        {step === 3 && previewConfig && (
+        {currentStepId === 'setup' && previewConfig && (
           <div style={{ animation: 'fadeIn 0.25s ease' }}>
             <div style={{ fontSize: 12, color: DS.textSecondary, marginBottom: 14 }}>
               Your personalized setup:
             </div>
 
-            {previewConfig.tags && previewConfig.tags.length > 0 && (
+            {previewTags.length > 0 && (
               <div style={categoryStyle(DS.accent + '66')}>
                 <div style={categoryLabelStyle}>Tags</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {previewConfig.tags.map((tag) => (
+                  {previewTags.map((tag) => (
                     <span key={tag} style={{
                       fontSize: 10,
                       padding: '2px 8px',
@@ -412,10 +486,10 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
               </div>
             )}
 
-            {previewConfig.pinnedTemplates && previewConfig.pinnedTemplates.length > 0 && (
+            {previewTemplates.length > 0 && (
               <div style={categoryStyle(DS.yellow + '66')}>
                 <div style={categoryLabelStyle}>Pinned Templates</div>
-                {previewConfig.pinnedTemplates.map((t, i) => (
+                {previewTemplates.map((t, i) => (
                   <div key={i} style={previewItemStyle}>
                     <span style={{ color: DS.textDim, fontWeight: 600 }}>{t.label}</span>
                     {' '}{t.text.slice(0, 40)}{t.text.length > 40 ? '\u2026' : ''}
@@ -424,23 +498,23 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
               </div>
             )}
 
-            {previewConfig.workflows && previewConfig.workflows.length > 0 && (
+            {previewWorkflows.length > 0 && (
               <div style={categoryStyle(DS.textMuted + '66')}>
                 <div style={categoryLabelStyle}>Workflows</div>
-                {previewConfig.workflows.map((w, i) => (
+                {previewWorkflows.map((w, i) => (
                   <div key={i} style={previewItemStyle}>
-                    {w.name} <span style={{ color: DS.textDim }}>({w.items.length} steps)</span>
+                    {w.name} <span style={{ color: DS.textDim }}>({Array.isArray(w.items) ? w.items.length : 0} steps)</span>
                   </div>
                 ))}
               </div>
             )}
 
-            {previewConfig.formProfiles && previewConfig.formProfiles.length > 0 && (
+            {previewProfiles.length > 0 && (
               <div style={categoryStyle(DS.red + '44')}>
                 <div style={categoryLabelStyle}>Form Profiles</div>
-                {previewConfig.formProfiles.map((p, i) => (
+                {previewProfiles.map((p, i) => (
                   <div key={i} style={previewItemStyle}>
-                    {p.name} <span style={{ color: DS.textDim }}>({p.fields.length} fields)</span>
+                    {p.name} <span style={{ color: DS.textDim }}>({Array.isArray(p.fields) ? p.fields.length : 0} fields)</span>
                   </div>
                 ))}
               </div>
@@ -479,11 +553,11 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
       <div style={{ display: 'flex', gap: 8, paddingTop: 16 }}>
         <FooterButton label="Skip" onClick={onSkip} />
 
-        {step > 0 && step < 3 && (
+        {step > 0 && step < previewStepIndex && (
           <FooterButton label="Back" onClick={() => setStep(step - 1)} />
         )}
 
-        {step < 2 && (
+        {step < generateStepIndex && (
           <FooterButton
             label="Next"
             onClick={() => setStep(step + 1)}
@@ -493,7 +567,7 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
           />
         )}
 
-        {step === 2 && (
+        {step === generateStepIndex && (
           <FooterButton
             label={loading ? 'Generating\u2026' : 'Generate Setup'}
             onClick={generateConfig}
@@ -503,11 +577,11 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps):
           />
         )}
 
-        {step === 3 && (
+        {step === previewStepIndex && (
           <>
             <FooterButton
               label="Re-generate"
-              onClick={() => { setStep(2); setPreviewConfig(null) }}
+              onClick={() => { setStep(generateStepIndex); setPreviewConfig(null) }}
             />
             <FooterButton
               label="Apply & Start"

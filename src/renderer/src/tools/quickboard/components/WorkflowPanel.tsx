@@ -187,6 +187,7 @@ export function WorkflowPanel({ onBack }: WorkflowPanelProps): React.JSX.Element
       display: 'flex',
       flexDirection: 'column',
       flex: 1,
+      minHeight: 0,
       animation: 'fadeIn 0.2s ease'
     }}>
       {/* Nav */}
@@ -211,7 +212,7 @@ export function WorkflowPanel({ onBack }: WorkflowPanelProps): React.JSX.Element
         </div>
       </div>
 
-      <div style={{ padding: '12px 24px 24px', flex: 1, overflowY: 'auto' }}>
+      <div style={{ padding: '12px 24px 24px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {isEditing ? (
           /* ─── Editor ─── */
           <>

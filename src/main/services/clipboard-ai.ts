@@ -120,6 +120,124 @@ export interface AiOnboardResult {
   error?: string
 }
 
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeOnboardConfig(raw: unknown): OnboardConfig {
+  const data = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+
+  const tags = Array.isArray(data.tags)
+    ? data.tags
+      .map((tag) => normalizeText(tag))
+      .filter((tag) => tag.length > 0)
+    : []
+
+  const transforms = Array.isArray(data.transforms)
+    ? data.transforms
+      .map((transform) => {
+        const item = transform && typeof transform === 'object' ? transform as Record<string, unknown> : {}
+        const steps = Array.isArray(item.steps)
+          ? item.steps
+            .map((step) => {
+              const stepItem = step && typeof step === 'object' ? step as Record<string, unknown> : {}
+              const type = normalizeText(stepItem.type)
+              const label = normalizeText(stepItem.label)
+              if (!type || !label) return null
+              return { type, label }
+            })
+            .filter((step): step is { type: string; label: string } => step !== null)
+          : []
+
+        const name = normalizeText(item.name)
+        if (!name || steps.length === 0) return null
+        return { name, steps }
+      })
+      .filter((transform): transform is OnboardConfig['transforms'][number] => transform !== null)
+    : []
+
+  const pinnedTemplates = Array.isArray(data.pinnedTemplates)
+    ? data.pinnedTemplates
+      .map((template) => {
+        const item = template && typeof template === 'object' ? template as Record<string, unknown> : {}
+        const text = typeof item.text === 'string' ? item.text : ''
+        const label = normalizeText(item.label)
+        if (!text.trim() || !label) return null
+        return { text, label }
+      })
+      .filter((template): template is OnboardConfig['pinnedTemplates'][number] => template !== null)
+    : []
+
+  const autoTriggers = Array.isArray(data.autoTriggers)
+    ? data.autoTriggers
+      .map((trigger) => {
+        const item = trigger && typeof trigger === 'object' ? trigger as Record<string, unknown> : {}
+        const pattern = typeof item.pattern === 'string' ? item.pattern : ''
+        const action = normalizeText(item.action)
+        if (!pattern.trim() || !action) return null
+        return { pattern, action }
+      })
+      .filter((trigger): trigger is OnboardConfig['autoTriggers'][number] => trigger !== null)
+    : []
+
+  const workflows = Array.isArray(data.workflows)
+    ? data.workflows
+      .map((workflow) => {
+        const item = workflow && typeof workflow === 'object' ? workflow as Record<string, unknown> : {}
+        const items = Array.isArray(item.items)
+          ? item.items
+            .map((workflowItem) => {
+              const step = workflowItem && typeof workflowItem === 'object' ? workflowItem as Record<string, unknown> : {}
+              const label = normalizeText(step.label)
+              const text = typeof step.text === 'string' ? step.text : ''
+              if (!label || !text.trim()) return null
+              return { label, text }
+            })
+            .filter((step): step is OnboardConfig['workflows'][number]['items'][number] => step !== null)
+          : []
+
+        const name = normalizeText(item.name)
+        const description = normalizeText(item.description)
+        if (!name || !description || items.length === 0) return null
+        return { name, description, items }
+      })
+      .filter((workflow): workflow is OnboardConfig['workflows'][number] => workflow !== null)
+    : []
+
+  const formProfiles = Array.isArray(data.formProfiles)
+    ? data.formProfiles
+      .map((profile) => {
+        const item = profile && typeof profile === 'object' ? profile as Record<string, unknown> : {}
+        const fields = Array.isArray(item.fields)
+          ? item.fields
+            .map((field) => {
+              const fieldItem = field && typeof field === 'object' ? field as Record<string, unknown> : {}
+              const label = normalizeText(fieldItem.label)
+              const value = typeof fieldItem.value === 'string' ? fieldItem.value : ''
+              const type = normalizeText(fieldItem.type) === 'template' ? 'template' : 'text'
+              if (!label || !value.trim()) return null
+              return { label, value, type }
+            })
+            .filter((field): field is OnboardConfig['formProfiles'][number]['fields'][number] => field !== null)
+          : []
+
+        const name = normalizeText(item.name)
+        if (!name || fields.length === 0) return null
+        return { name, fields }
+      })
+      .filter((profile): profile is OnboardConfig['formProfiles'][number] => profile !== null)
+    : []
+
+  return {
+    tags,
+    transforms,
+    pinnedTemplates,
+    autoTriggers,
+    workflows,
+    formProfiles
+  }
+}
+
 export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResult> {
   const licenseKey = getLicenseKey() || 'trial'
 
@@ -148,7 +266,7 @@ export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResul
 
     return {
       ok: true,
-      config: data.config as OnboardConfig
+      config: normalizeOnboardConfig(data.config)
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -165,6 +283,7 @@ export interface HistoryStats {
   contentTypes: Record<string, number>
   topSourceApps: string[]
   repeatedItems: Array<{ preview: string; count: number }>
+  pasteSequences: Array<{ items: string[]; count: number }>
   existingTags: string[]
   existingWorkflows: string[]
 }
