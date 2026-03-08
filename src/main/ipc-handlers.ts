@@ -529,7 +529,12 @@ export function registerIpcHandlers(): void {
       // Pin templates (write to clipboard as pinned items)
       if (config.pinnedTemplates) {
         for (const tmpl of config.pinnedTemplates) {
-          clipService.upsertTextItem(tmpl.text, { pinned: true, sourceApp: 'QuickBoard' })
+          clipService.writeText(tmpl.text)
+          // Pin the most recently added item
+          const history = clipService.getHistory()
+          if (history.length > 0) {
+            clipService.pinItem(history[0].id)
+          }
         }
       }
 

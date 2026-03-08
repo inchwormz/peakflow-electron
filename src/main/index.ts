@@ -148,18 +148,7 @@ if (!gotLock) {
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
       window.webContents.on('render-process-gone', (_event, details) => {
-        let currentUrl = ''
-        let toolId = ''
-        try {
-          currentUrl = window.webContents.getURL()
-          toolId = new URL(currentUrl).searchParams.get('toolId') ?? ''
-        } catch {
-          // Ignore URL parse failures during crash logging
-        }
-        crashWrite(
-          'FATAL',
-          `Renderer crashed: title=${window.getTitle()} toolId=${toolId || 'unknown'} url=${currentUrl || 'unknown'} reason=${details.reason}, exitCode=${details.exitCode}`
-        )
+        crashWrite('FATAL', `Renderer crashed: ${window.getTitle()} — reason=${details.reason}, exitCode=${details.exitCode}`)
       })
     })
 
