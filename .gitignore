@@ -19,4 +19,6 @@ Thumbs.db
 sidecar/dist/
 sidecar/build/
 sidecar/__pycache__/
+sidecar/darwin/PeakFlowHelper/.build/
+resources/darwin/peakflow-helper
 nul

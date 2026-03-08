@@ -3,6 +3,7 @@ productName: PeakFlow
 directories:
   buildResources: resources
   output: release
+afterSign: scripts/notarize.js
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -10,6 +11,19 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!sidecar/*'
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  target:
+    - dmg
+    - zip
+  extendInfo:
+    NSCameraUsageDescription: PeakFlow needs camera access for meeting prep and focus tools.
+    NSMicrophoneUsageDescription: PeakFlow needs microphone access for meeting prep and mic mute controls.
+    NSAppleEventsUsageDescription: PeakFlow needs automation access to send paste shortcuts and control supported workflows.
 win:
   target:
     - target: nsis
@@ -31,6 +45,8 @@ extraResources:
     to: icon.png
   - from: resources/tray-icon.png
     to: tray-icon.png
+  - from: resources/darwin/peakflow-helper
+    to: peakflow-helper
 asarUnpack:
   - "**/*.node"
   - "node_modules/koffi/**/*"
