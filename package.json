@@ -10,7 +10,10 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
+    "build:mac:helper": "node scripts/prepare-mac-helper.js",
     "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && npm run build:mac:helper && electron-builder --mac",
+    "build:mac:dir": "npm run build && npm run build:mac:helper && electron-builder --mac --dir",
     "build:unpack": "npm run build && electron-builder --dir",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
@@ -26,6 +29,7 @@
     "node-ical": "^0.25.4"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "@electron-toolkit/eslint-config-ts": "^3.0.0",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
