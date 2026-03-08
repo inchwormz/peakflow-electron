@@ -114,7 +114,13 @@ export function QuickBoard(): React.JSX.Element {
         if (conf && typeof conf === 'object') {
           const c = conf as Record<string, unknown>
           if (c.ai_onboarding_complete !== true) {
-            setView('onboarding')
+            // Check if user has AI access (licensed, not trial)
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
+              .then((res: unknown) => {
+                const r = res as { allowed: boolean }
+                if (r.allowed) setView('onboarding')
+              })
+              .catch(() => {})
           }
         }
       })
