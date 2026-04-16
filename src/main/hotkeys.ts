@@ -14,6 +14,7 @@ import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
 import { toggleMicMute } from './services/mic-mute'
+import { pasteNext, cancelQueue } from './services/clipboard-sequential'
 import { isToolInstalled } from './security/trial'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
@@ -183,7 +184,6 @@ function registerQueueHotkeys(): void {
       accel: 'CommandOrControl+Shift+N',
       id: 'quickboard:paste-next',
       action: () => {
-        const { pasteNext } = require('./services/clipboard-sequential')
         pasteNext()
       }
     },
@@ -191,7 +191,6 @@ function registerQueueHotkeys(): void {
       accel: 'CommandOrControl+Shift+Q',
       id: 'quickboard:cancel-queue',
       action: () => {
-        const { cancelQueue } = require('./services/clipboard-sequential')
         cancelQueue()
       }
     }
