@@ -22,6 +22,11 @@ export const TRIAL_DAYS = 14
 /** Dedicated store for license / trial data — kept separate from tool configs. */
 const licenseStore = new Store({ name: 'peakflow-license' })
 
+function tryParseDate(value: string): Date | null {
+  const parsed = new Date(value)
+  return isNaN(parsed.getTime()) ? null : parsed
+}
+
 // ─── Install Date ───────────────────────────────────────────────────────────
 
 /**
@@ -39,16 +44,16 @@ export function getInstallDate(): Date {
     if (stored) {
       // Attempt to decrypt
       if (isAvailable()) {
-        const decrypted = decryptString(stored)
+        const decrypted = decryptString(stored, false)
         if (decrypted !== null) {
-          const parsed = new Date(decrypted)
-          if (!isNaN(parsed.getTime())) return parsed
+          const parsed = tryParseDate(decrypted)
+          if (parsed) return parsed
         }
       }
 
       // Fallback: try parsing as a raw ISO string (unencrypted dev env)
-      const raw = new Date(stored)
-      if (!isNaN(raw.getTime())) return raw
+      const raw = tryParseDate(stored)
+      if (raw) return raw
 
       console.warn('[PeakFlow:Trial] Could not parse stored install date, resetting')
     }
@@ -178,16 +183,16 @@ export function getToolTrialStart(toolId: ToolId | string): Date | null {
 
     // Try decrypting
     if (isAvailable()) {
-      const decrypted = decryptString(stored)
+      const decrypted = decryptString(stored, false)
       if (decrypted !== null) {
-        const parsed = new Date(decrypted)
-        if (!isNaN(parsed.getTime())) return parsed
+        const parsed = tryParseDate(decrypted)
+        if (parsed) return parsed
       }
     }
 
     // Fallback: try parsing as raw ISO string
-    const raw = new Date(stored)
-    if (!isNaN(raw.getTime())) return raw
+    const raw = tryParseDate(stored)
+    if (raw) return raw
 
     return null
   } catch {

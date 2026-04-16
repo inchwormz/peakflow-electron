@@ -22,6 +22,13 @@ function makeKey(tool: string, type: string): string {
   return `PeakFlow_${tool}_${type}`
 }
 
+function isPlaintextCredential(type: string, raw: string): boolean {
+  if (type === 'product_id') return /^\d+$/.test(raw)
+  if (type === 'key') return /^[A-Z0-9-]{20,}$/.test(raw)
+  if (type === 'oauth_token') return raw.startsWith('{') || raw.startsWith('http')
+  return false
+}
+
 /**
  * Store an encrypted credential.
  * Returns `true` on success, `false` if encryption is unavailable or fails.
@@ -62,9 +69,11 @@ export function getCredential(tool: string, type: string): string | null {
     if (raw === undefined) return null
 
     if (isAvailable()) {
-      const decrypted = decryptString(raw)
+      const decrypted = decryptString(raw, false)
       if (decrypted === null) {
-        // May be a plaintext fallback from a previous run — try returning as-is
+        if (isPlaintextCredential(type, raw)) {
+          return raw
+        }
         console.warn(`[PeakFlow:Credentials] Decrypt failed for ${key}, returning raw`)
         return raw
       }

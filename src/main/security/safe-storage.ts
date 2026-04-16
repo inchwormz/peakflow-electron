@@ -46,7 +46,7 @@ export function encryptString(data: string): string | null {
  * Decrypt a base64-encoded encrypted string back to plaintext.
  * Returns `null` if decryption fails or the input is invalid.
  */
-export function decryptString(encrypted: string): string | null {
+export function decryptString(encrypted: string, warnOnFailure = true): string | null {
   try {
     if (!isAvailable()) {
       console.warn('[PeakFlow:SafeStorage] Encryption not available')
@@ -55,7 +55,9 @@ export function decryptString(encrypted: string): string | null {
     const buffer = Buffer.from(encrypted, 'base64')
     return safeStorage.decryptString(buffer)
   } catch (error) {
-    console.warn('[PeakFlow:SafeStorage] decryptString failed:', error)
+    if (warnOnFailure) {
+      console.warn('[PeakFlow:SafeStorage] decryptString failed:', error)
+    }
     return null
   }
 }
