@@ -288,7 +288,6 @@ export const navBarStyle: CSSProperties = {
   justifyContent: 'space-between',
   padding: '20px 24px 0',
   flexShrink: 0,
-  // @ts-expect-error -- Electron-specific CSS property for window dragging
   WebkitAppRegion: 'drag'
 }
 

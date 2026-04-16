@@ -123,8 +123,10 @@ export function HotkeySettings(): React.JSX.Element {
 
   // Fetch registered hotkeys on mount for conflict detection
   useEffect(() => {
-    window.peakflow.invoke(IPC_INVOKE.HOTKEY_GET_REGISTERED).then((hotkeys: RegisteredHotkey[]) => {
-      setRegisteredHotkeys(hotkeys)
+    window.peakflow.invoke(IPC_INVOKE.HOTKEY_GET_REGISTERED).then((hotkeys) => {
+      if (Array.isArray(hotkeys)) {
+        setRegisteredHotkeys(hotkeys as RegisteredHotkey[])
+      }
     }).catch(() => {})
   }, [])
 

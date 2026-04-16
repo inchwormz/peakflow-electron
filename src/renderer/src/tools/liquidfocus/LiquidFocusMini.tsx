@@ -14,7 +14,7 @@ import { ToolId } from '@shared/tool-ids'
 const RING = { size: 40, r: 15, cx: 20, cy: 20 }
 const RING_C = 2 * Math.PI * RING.r
 
-const noDrag: CSSProperties = { WebkitAppRegion: 'no-drag' as unknown as string }
+const noDrag: CSSProperties = { WebkitAppRegion: 'no-drag' }
 
 export function LiquidFocusMini(): React.JSX.Element {
   const [timer, setTimer] = useState<TimerState>({
@@ -111,7 +111,7 @@ export function LiquidFocusMini(): React.JSX.Element {
         borderRadius: 0,
         fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
         cursor: 'default',
-        WebkitAppRegion: 'drag' as unknown as string,
+        WebkitAppRegion: 'drag',
         overflow: 'hidden'
       }}
     >

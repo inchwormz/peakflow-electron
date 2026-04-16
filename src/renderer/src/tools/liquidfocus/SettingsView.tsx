@@ -66,6 +66,7 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
     auto_start_breaks: false,
     focus_detection_enabled: false,
     focus_away_threshold_secs: 5,
+    todoist_project_filter: '',
     distraction_sites: Object.values(DISTRACTION_SITES)
   })
 

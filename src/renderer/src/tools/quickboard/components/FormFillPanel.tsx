@@ -184,7 +184,6 @@ export function FormFillPanel({ onBack }: FormFillPanelProps): React.JSX.Element
     }}>
       {/* Nav */}
       <div style={navBarStyle}>
-        {/* @ts-expect-error -- Electron CSS */}
         <div style={{
           display: 'flex',
           alignItems: 'center',

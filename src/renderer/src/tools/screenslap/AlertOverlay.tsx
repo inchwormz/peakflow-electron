@@ -215,7 +215,7 @@ export function AlertOverlay(): React.JSX.Element {
   const countdownText = alert ? formatRelative(diff) : ''
 
   // Urgency class: blue → yellow (< 3 min) → red (< 1 min)
-  let countdownColor = DS.textSecondary
+  let countdownColor: string = DS.textSecondary
   let countdownAnimation: string | undefined
   if (diff < 60_000) {
     countdownColor = DS.red

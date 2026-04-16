@@ -880,7 +880,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'all 0.25s',
-    WebkitAppRegion: 'no-drag' as unknown as string
+    WebkitAppRegion: 'no-drag'
   },
 
   centerContent: {
@@ -1331,7 +1331,7 @@ const styles: Record<string, CSSProperties> = {
     left: 0,
     right: 200,
     height: 60,
-    WebkitAppRegion: 'drag' as unknown as string,
+    WebkitAppRegion: 'drag',
     zIndex: 1
   }
 }

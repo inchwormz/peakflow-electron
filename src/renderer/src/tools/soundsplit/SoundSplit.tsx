@@ -300,7 +300,7 @@ function EmptyState(): React.JSX.Element {
 function VUMeter({ level }: { level: number }): React.JSX.Element {
   const percent = Math.min(100, Math.max(0, level * 100))
 
-  let color = DS.accent
+  let color: string = DS.accent
   if (percent > 80) color = DS.red
   else if (percent > 55) color = DS.yellow
 

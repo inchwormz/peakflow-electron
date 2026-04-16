@@ -523,7 +523,6 @@ export function QuickBoard(): React.JSX.Element {
                 </button>
               )}
             </div>
-            {/* @ts-expect-error -- Electron-specific CSS */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' }}>
               {/* Multi-select toggle */}
               <NavButton
