@@ -28,21 +28,39 @@ Head: `f9613a2`
   - app launches
   - updater completes
   - no module-not-found crash on startup
+- License/test state:
+  - `%APPDATA%\\peakflow-electron` was reset and reseeded with a clean all-tools local profile
+  - product `863806` now resolves cleanly as `all`
+  - no `safeStorage.decryptString` warning spam in the clean session
 - QuickBoard:
-  - hotkey path reaches access gate
-  - current local machine state denies access with `tool_not_licensed`
-  - this is expected after fail-closed license hardening because the local stored product ID blob is corrupt
+  - opens via hotkey
+  - onboarding can be skipped
+  - main surface renders with history
 - FocusDim:
   - hotkey toggles on
   - overlays create on both displays
   - hotkey toggles off cleanly
+- MeetReady:
+  - opens from dashboard card
+  - media permission path fires cleanly
+- ScreenSlap:
+  - opens from dashboard card
+- SoundSplit:
+  - sidecar starts
+  - opens from dashboard card
+- LiquidFocus:
+  - opens from dashboard card
 
 ## Remaining Blockers
 
-- Local license/test state is still dirty on this machine. `peakflow.log` shows repeated `safeStorage.decryptString` warnings from old manually edited credential blobs in `%APPDATA%\\peakflow-electron`.
-- Full all-tools E2E cannot be trusted until license state is normalized through a clean activation path or a fresh app-data profile.
+- Full deep interaction QA is still unfinished for each tool surface.
+- QuickBoard primary interaction beyond open/render still needs explicit checks for search, tags, workflows, forms, OCR, and AI suggestions.
+- ScreenSlap still needs alert/snooze/dismiss/join flow verification.
+- SoundSplit still needs slider/mute interaction verification.
+- LiquidFocus still needs timer/tasks/mini-mode verification.
+- MeetReady still needs camera preview, mic meter, and denied-permission recovery verification.
 
 ## Verdict
 
-This branch is now build-clean, typecheck-clean, and packaging-clean.  
-The next highest-value step is license-state normalization, then a full per-surface binary QA pass under a clean entitlement state.
+This branch is now build-clean, typecheck-clean, packaging-clean, and running under a clean paid all-tools profile.  
+The next highest-value step is finishing the per-surface interaction QA pass and fixing any runtime issues that only appear once each tool is used, not just opened.

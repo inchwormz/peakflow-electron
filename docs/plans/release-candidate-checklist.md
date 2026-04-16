@@ -6,28 +6,28 @@ Use this checklist against the actual packaged binary, not `npm run dev`.
 
 ## Build Gate
 
-- [ ] `npm run typecheck`
-- [ ] `npm run build`
-- [ ] `npm run build:unpack`
+- [x] `npm run typecheck`
+- [x] `npm run build`
+- [x] `npm run build:unpack`
 - [ ] Installer build succeeds, or the only blocker is signing
-- [ ] Record binary path, size, timestamp, and git SHA
+- [x] Record binary path, size, timestamp, and git SHA
 
 ## Startup Gate
 
-- [ ] App starts with no crash dialog
-- [ ] Tray icon loads without fallback warning spam
-- [ ] Dashboard/tray hub opens
-- [ ] Updater check completes
-- [ ] No `Cannot find module` errors in `peakflow.log`
+- [x] App starts with no crash dialog
+- [x] Tray icon loads without fallback warning spam
+- [x] Dashboard/tray hub opens
+- [x] Updater check completes
+- [x] No `Cannot find module` errors in `peakflow.log`
 
 ## License Gate
 
 - [ ] No-license state blocks paid surfaces cleanly
 - [ ] Single-tool license unlocks only the mapped tool
-- [ ] All-tools license unlocks every surface
+- [x] All-tools license unlocks every surface
 - [ ] Corrupt product ID does not unlock the suite
 - [ ] Unknown product ID does not unlock the suite
-- [ ] No `safeStorage.decryptString` warning spam during normal startup
+- [x] No `safeStorage.decryptString` warning spam during normal startup
 
 ## Revenue Gate
 
@@ -38,11 +38,11 @@ Use this checklist against the actual packaged binary, not `npm run dev`.
 ## Surface Gate
 
 - [ ] QuickBoard
-- [ ] FocusDim
-- [ ] MeetReady
-- [ ] ScreenSlap
-- [ ] SoundSplit
-- [ ] LiquidFocus
+- [x] FocusDim
+- [x] MeetReady
+- [x] ScreenSlap
+- [x] SoundSplit
+- [x] LiquidFocus
 
 ## Release Decision
 
