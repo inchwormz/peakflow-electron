@@ -7,8 +7,13 @@
 import { checkAccess } from '../security/access-check'
 import { ToolId } from '@shared/tool-ids'
 
+const env = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? process.env)
 const PROXY_URL =
-  import.meta.env.MAIN_VITE_AI_PROXY_URL || 'https://getpeakflow.pro/api/ai'
+  env.MAIN_VITE_AI_PROXY_URL || 'https://getpeakflow.pro/api/ai'
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {}
+}
 
 // ─── License key retrieval ───────────────────────────────────────────────────
 
@@ -70,16 +75,18 @@ export async function aiTransform(
 
     clearTimeout(timeout)
 
-    const data = await res.json()
+    const data = asRecord(await res.json())
 
     if (!res.ok) {
-      return { ok: false, error: data.error || `http_${res.status}` }
+      return { ok: false, error: typeof data.error === 'string' ? data.error : `http_${res.status}` }
     }
 
     return {
       ok: true,
-      result: data.result,
-      usage: data.usage
+      result: typeof data.result === 'string' ? data.result : undefined,
+      usage: asRecord(data.usage).remaining && typeof asRecord(data.usage).remaining === 'number'
+        ? { remaining: asRecord(data.usage).remaining as number }
+        : undefined
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -148,15 +155,15 @@ export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResul
 
     clearTimeout(timeout)
 
-    const data = await res.json()
+    const data = asRecord(await res.json())
 
     if (!res.ok) {
-      return { ok: false, error: data.error || `http_${res.status}` }
+      return { ok: false, error: typeof data.error === 'string' ? data.error : `http_${res.status}` }
     }
 
     return {
       ok: true,
-      config: data.config as OnboardConfig
+      config: asRecord(data.config) as unknown as OnboardConfig
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -219,15 +226,15 @@ export async function aiSuggest(historyStats: HistoryStats): Promise<AiSuggestRe
 
     clearTimeout(timeout)
 
-    const data = await res.json()
+    const data = asRecord(await res.json())
 
     if (!res.ok) {
-      return { ok: false, error: data.error || `http_${res.status}` }
+      return { ok: false, error: typeof data.error === 'string' ? data.error : `http_${res.status}` }
     }
 
     return {
       ok: true,
-      suggestions: data.suggestions as AiSuggestion[]
+      suggestions: Array.isArray(data.suggestions) ? data.suggestions as AiSuggestion[] : []
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

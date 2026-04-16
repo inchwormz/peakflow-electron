@@ -699,8 +699,8 @@ class ClipboardService {
   setLinkPreview(itemId: string, title: string | null, favicon: string | null): ClipboardItem[] {
     const item = this.history.find((h) => h.id === itemId)
     if (item) {
-      item.linkTitle = title
-      item.linkFavicon = favicon
+      item.linkTitle = title ?? undefined
+      item.linkFavicon = favicon ?? undefined
       this.saveHistory()
       this.broadcastChange()
     }

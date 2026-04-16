@@ -19,11 +19,12 @@ import * as ical from 'node-ical'
 
 // ─── Google OAuth Constants ─────────────────────────────────────────────────
 
+const env = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? process.env)
 const GOOGLE_CLIENT_ID =
   '366059555078-cqgu209k7m9knq9qm9b2oftfk1cmbcn9.apps.googleusercontent.com'
 // Google requires client_secret for Desktop app token exchange, even with PKCE.
 // Store in .env as MAIN_VITE_GOOGLE_CLIENT_SECRET (gitignored).
-const GOOGLE_CLIENT_SECRET = import.meta.env.MAIN_VITE_GOOGLE_CLIENT_SECRET || ''
+const GOOGLE_CLIENT_SECRET = env.MAIN_VITE_GOOGLE_CLIENT_SECRET || ''
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const REDIRECT_PORT = 28755
@@ -467,6 +468,10 @@ class GoogleCalendarService {
 
         // Exchange auth code for tokens
         try {
+          if (!code) {
+            throw new Error('Missing authorization code')
+          }
+
           const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

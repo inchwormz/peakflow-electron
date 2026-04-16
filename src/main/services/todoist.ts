@@ -13,12 +13,13 @@ import { storeOAuthToken, getOAuthToken, deleteOAuthToken } from '../security/cr
 
 // ─── Todoist OAuth Constants ────────────────────────────────────────────────
 
+const env = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? process.env)
 const TODOIST_CLIENT_ID = 'c69c55b9691e401aad7738af4eae5709'
 // SECURITY: Todoist API does not support PKCE — client_secret is required for token exchange.
 // This is an inherent limitation for desktop/native OAuth apps (RFC 8252 §8.5).
 // The secret MUST be rotated after being exposed in git history.
 // Set MAIN_VITE_TODOIST_CLIENT_SECRET in .env (gitignored) for dev/build.
-const TODOIST_CLIENT_SECRET = import.meta.env.MAIN_VITE_TODOIST_CLIENT_SECRET || ''
+const TODOIST_CLIENT_SECRET = env.MAIN_VITE_TODOIST_CLIENT_SECRET || ''
 const TODOIST_AUTH_URL = 'https://app.todoist.com/oauth/authorize'
 const TODOIST_TOKEN_URL = 'https://api.todoist.com/oauth/access_token'
 const REDIRECT_PORT = 28754
