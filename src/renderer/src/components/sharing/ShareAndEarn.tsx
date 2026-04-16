@@ -35,8 +35,6 @@ const SHARE_LINKS = [
   }
 ]
 
-const MAILTO_URL = 'https://mailto:contact@getpeakflow.pro?subject=PeakFlow%20Share%20%26%20Earn&body=Hi!%20I%20shared%20PeakFlow%20on%20%5Bplatform%5D.%20I%27d%20like%20%5Btool%20name%5D%20for%20free.%20Screenshot%20attached.'
-
 const ALL_TOOLS = Object.values(ToolId)
 
 // ─── Tool accent colors ─────────────────────────────────────────────────────

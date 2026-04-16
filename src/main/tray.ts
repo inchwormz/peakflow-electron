@@ -23,19 +23,21 @@ let tray: Tray | null = null
  * Load the PeakFlow tray icon from resources.
  */
 function getTrayIcon(): Electron.NativeImage {
-  const iconPath = join(app.getAppPath(), 'resources', 'tray-icon.png')
-  const icon = nativeImage.createFromPath(iconPath)
-  if (icon.isEmpty()) {
-    console.warn('[PeakFlow] Tray icon not found at', iconPath, '— using fallback')
-    // Fallback: try the full-size icon and resize it
-    const fallbackPath = join(app.getAppPath(), 'resources', 'icon.png')
-    const fallback = nativeImage.createFromPath(fallbackPath)
-    if (!fallback.isEmpty()) return fallback.resize({ width: 32, height: 32 })
-    // Last resort: try from process.resourcesPath (packaged app)
-    const pkgPath = join(process.resourcesPath, 'tray-icon.png')
-    return nativeImage.createFromPath(pkgPath)
-  }
-  return icon
+  const primaryPath = is.dev
+    ? join(app.getAppPath(), 'resources', 'tray-icon.png')
+    : join(process.resourcesPath, 'tray-icon.png')
+  const primary = nativeImage.createFromPath(primaryPath)
+  if (!primary.isEmpty()) return primary
+
+  console.warn('[PeakFlow] Tray icon not found at', primaryPath, '— using fallback')
+
+  const fallbackPath = is.dev
+    ? join(app.getAppPath(), 'resources', 'icon.png')
+    : join(process.resourcesPath, 'icon.png')
+  const fallback = nativeImage.createFromPath(fallbackPath)
+  if (!fallback.isEmpty()) return fallback.resize({ width: 32, height: 32 })
+
+  return primary
 }
 
 /**
