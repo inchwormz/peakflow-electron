@@ -45,6 +45,19 @@ const KEYEVENTF_KEYUP = 0x0002
 const VK_CONTROL = 0x11
 const VK_V = 0x56
 
+interface KeyboardInput {
+  type: number
+  _padding1: number
+  ki: {
+    wVk: number
+    wScan: number
+    dwFlags: number
+    time: number
+    dwExtraInfo: number
+  }
+  _padding2: number[]
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -74,7 +87,7 @@ export function simulateCtrlV(): boolean {
   }
 }
 
-function makeKeyInput(vk: number, flags: number): InstanceType<typeof INPUT_KEYBOARD> {
+function makeKeyInput(vk: number, flags: number): KeyboardInput {
   return {
     type: INPUT_TYPE_KEYBOARD,
     _padding1: 0,
@@ -86,5 +99,5 @@ function makeKeyInput(vk: number, flags: number): InstanceType<typeof INPUT_KEYB
       dwExtraInfo: 0
     },
     _padding2: [0, 0, 0, 0, 0, 0, 0, 0]
-  } as unknown as InstanceType<typeof INPUT_KEYBOARD>
+  }
 }
