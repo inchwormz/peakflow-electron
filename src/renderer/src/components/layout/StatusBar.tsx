@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { useLicense } from '@renderer/hooks/useLicense'
+import { IPC_INVOKE } from '@shared/ipc-types'
 
 const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
 
@@ -13,7 +14,7 @@ export function StatusBar(): React.JSX.Element {
 
   const handleClick = useCallback(() => {
     if (!isLicensed) {
-      window.open(CHECKOUT_URL, '_blank')
+      void window.peakflow.invoke(IPC_INVOKE.SHELL_OPEN_EXTERNAL, CHECKOUT_URL)
     }
   }, [isLicensed])
 

@@ -31,7 +31,7 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleSubscribe = useCallback(() => {
-    window.open(CHECKOUT_URL, '_blank')
+    void window.peakflow.invoke(IPC_INVOKE.SHELL_OPEN_EXTERNAL, CHECKOUT_URL)
   }, [])
 
   const handleClose = useCallback(() => {

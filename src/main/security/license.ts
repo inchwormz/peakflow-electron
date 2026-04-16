@@ -25,13 +25,14 @@ export const LICENSE_CACHE_DAYS = 30
  * Map LemonSqueezy product_id → which tool(s) the license covers.
  * 'all' = subscription or bundle (every tool).
  * Individual tool IDs = perpetual single-tool license.
- * Unknown product_ids default to 'all' for backwards compatibility.
+ * Unknown product_ids default to null so we fail closed, not open.
  */
 const PRODUCT_TOOL_MAP: Record<number, ToolId | 'all'> = {
   // Individual perpetual licenses ($9.99 one-time)
   861329: ToolId.FocusDim, // live
   861493: ToolId.FocusDim, // test mode
-  // All other product IDs (subscriptions, etc.) default to 'all' via getToolsForProduct()
+  // All-tools bundle / subscription product
+  863806: 'all'
 }
 
 /** Pricing page URL shown when the trial expires. */
@@ -95,10 +96,10 @@ function storeProductId(productId: number): void {
 
 /**
  * Look up which tool(s) a product_id grants access to.
- * Unknown IDs default to 'all' (backwards compat for subscription keys).
+ * Unknown IDs return null so an unmapped product cannot unlock extra tools.
  */
-function getToolsForProduct(productId: number): ToolId | 'all' {
-  return PRODUCT_TOOL_MAP[productId] ?? 'all'
+function getToolsForProduct(productId: number): ToolId | 'all' | null {
+  return PRODUCT_TOOL_MAP[productId] ?? null
 }
 
 /**
@@ -271,10 +272,11 @@ export function isToolLicensed(toolId: string): boolean {
   if (!stored) return true // No product_id = legacy key, allow all
 
   const productId = parseInt(stored, 10)
-  console.log(`[PeakFlow:License] parsed productId: ${productId}, map lookup: ${PRODUCT_TOOL_MAP[productId] ?? 'NOT IN MAP → defaults to all'}`)
-  if (isNaN(productId)) return true // Corrupt data, fail open
+  console.log(`[PeakFlow:License] parsed productId: ${productId}, map lookup: ${PRODUCT_TOOL_MAP[productId] ?? 'NOT IN MAP → deny'}`)
+  if (isNaN(productId)) return false // Corrupt data, fail closed
 
   const covers = getToolsForProduct(productId)
+  if (covers === null) return false
   if (covers === 'all') return true
   return covers === toolId
 }
