@@ -5,21 +5,31 @@
  */
 
 import { checkAccess } from '../security/access-check'
+import { getCredential } from '../security/credentials'
 import { ToolId } from '@shared/tool-ids'
 
 const PROXY_URL =
   import.meta.env.MAIN_VITE_AI_PROXY_URL || 'https://getpeakflow.pro/api/ai'
 
+type ProxyErrorBody = { error?: string }
+
+type TransformProxyBody = ProxyErrorBody & {
+  result?: string
+  usage?: { remaining: number }
+}
+
+type OnboardProxyBody = ProxyErrorBody & {
+  config?: OnboardConfig
+}
+
+type SuggestProxyBody = ProxyErrorBody & {
+  suggestions?: AiSuggestion[]
+}
+
 // ─── License key retrieval ───────────────────────────────────────────────────
 
 function getLicenseKey(): string | null {
-  try {
-    const Store = require('electron-store')
-    const store = new Store({ name: 'peakflow-license' })
-    return store.get('license_key', null) as string | null
-  } catch {
-    return null
-  }
+  return getCredential('license', 'key')
 }
 
 // ─── Access check ────────────────────────────────────────────────────────────
@@ -70,7 +80,7 @@ export async function aiTransform(
 
     clearTimeout(timeout)
 
-    const data = await res.json()
+    const data = (await res.json()) as TransformProxyBody
 
     if (!res.ok) {
       return { ok: false, error: data.error || `http_${res.status}` }
@@ -148,7 +158,7 @@ export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResul
 
     clearTimeout(timeout)
 
-    const data = await res.json()
+    const data = (await res.json()) as OnboardProxyBody
 
     if (!res.ok) {
       return { ok: false, error: data.error || `http_${res.status}` }
@@ -156,7 +166,7 @@ export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResul
 
     return {
       ok: true,
-      config: data.config as OnboardConfig
+      config: data.config
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -219,7 +229,7 @@ export async function aiSuggest(historyStats: HistoryStats): Promise<AiSuggestRe
 
     clearTimeout(timeout)
 
-    const data = await res.json()
+    const data = (await res.json()) as SuggestProxyBody
 
     if (!res.ok) {
       return { ok: false, error: data.error || `http_${res.status}` }
@@ -227,7 +237,7 @@ export async function aiSuggest(historyStats: HistoryStats): Promise<AiSuggestRe
 
     return {
       ok: true,
-      suggestions: data.suggestions as AiSuggestion[]
+      suggestions: data.suggestions
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

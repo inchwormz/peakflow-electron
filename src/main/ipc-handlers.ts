@@ -17,14 +17,17 @@ import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWind
 import { rebuildTray } from './tray'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
-import { startQueue, pasteNext, cancelQueue } from './services/clipboard-sequential'
+import { startQueue, pasteNext, cancelQueue, getQueueStatus } from './services/clipboard-sequential'
 import {
   getSavedPipelines,
   AVAILABLE_TRANSFORMS,
   savePipeline,
   deletePipeline,
-  applyPipeline
+  applyPipeline,
+  type TransformPipeline,
+  type TransformStep
 } from './services/clipboard-transforms'
+import type { FormField } from './services/clipboard-forms'
 import { checkAiAccess, aiTransform, aiOnboard } from './services/clipboard-ai'
 import { getSuggestions, dismissSuggestion } from './services/clipboard-suggestions'
 import {
@@ -46,7 +49,6 @@ import {
   saveBulkFormProfiles
 } from './services/clipboard-forms'
 import { runOcr } from './services/clipboard-ocr'
-import { simulateCtrlV } from './native/keyboard'
 import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
@@ -387,8 +389,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE,
-    (_event, itemId: string, plainText?: boolean): void => {
-      getClipboardService().simulatePaste(itemId, plainText ?? false)
+    (_event, itemId: string, plainText?: boolean, textOverride?: string): void => {
+      getClipboardService().simulatePaste(itemId, plainText ?? false, textOverride)
     }
   )
 
@@ -403,6 +405,14 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.CLIPBOARD_PIN_ITEM,
     (_event, itemId: string): ClipboardItem[] => {
       return getClipboardService().pinItem(itemId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_ADD_PINNED_ITEM,
+    (_event, text: string): ClipboardItem[] => {
+      getClipboardService().addPinnedTextItem(text)
+      return getClipboardService().getHistory()
     }
   )
 
@@ -432,7 +442,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_MANAGE_TAGS,
-    (_event, action: string, payload: Record<string, unknown>): string[] => {
+    (
+      _event,
+      action: 'create' | 'rename' | 'delete' | 'reorder',
+      payload: { oldName?: string; newName?: string; name?: string; tags?: string[] }
+    ): string[] => {
       return manageTags(action, payload)
     }
   )
@@ -469,6 +483,13 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_QUEUE_STATUS,
+    (): { active: boolean; current: number; total: number } => {
+      return getQueueStatus()
+    }
+  )
+
   // ─── QuickBoard: Transforms ──────────────────────────────────────────────────
 
   ipcMain.handle(
@@ -480,7 +501,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SAVE_TRANSFORM,
-    (_event, pipeline: { id: string; name: string; steps: { type: string; label: string }[] }) => {
+    (_event, pipeline: TransformPipeline) => {
       return savePipeline(pipeline)
     }
   )
@@ -494,17 +515,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_PASTE_WITH_TRANSFORM,
-    (_event, itemId: string, steps: { type: string; label: string }[]) => {
+    (_event, itemId: string, steps: TransformStep[]) => {
       const clipService = getClipboardService()
       const history = clipService.getHistory()
       const item = history.find((h: ClipboardItem) => h.id === itemId)
       if (!item || item.type !== 'text') return
       const text = item.editedText ?? item.text ?? ''
       const transformed = applyPipeline(steps, text)
-      clipService.writeText(transformed)
-      setTimeout(() => {
-        simulateCtrlV()
-      }, 500)
+      clipService.simulatePaste(itemId, false, transformed)
     }
   )
 
@@ -537,7 +555,7 @@ export function registerIpcHandlers(): void {
       tags?: string[]
       pinnedTemplates?: Array<{ text: string; label: string }>
       workflows?: Array<{ name: string; description: string; items: Array<{ label: string; text: string }> }>
-      formProfiles?: Array<{ name: string; fields: Array<{ label: string; value: string; type: string }> }>
+      formProfiles?: Array<{ name: string; fields: FormField[] }>
     }) => {
       const clipService = getClipboardService()
 
@@ -548,15 +566,10 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      // Pin templates (write to clipboard as pinned items)
+      // Pin templates directly in history (writeText does not create entries)
       if (config.pinnedTemplates) {
         for (const tmpl of config.pinnedTemplates) {
-          clipService.writeText(tmpl.text)
-          // Pin the most recently added item
-          const history = clipService.getHistory()
-          if (history.length > 0) {
-            clipService.pinItem(history[0].id)
-          }
+          clipService.addPinnedTextItem(tmpl.text)
         }
       }
 
@@ -602,7 +615,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SAVE_WORKFLOW,
-    (_event, workflow: { name: string; description: string; items: Array<{ label: string; text: string }>; isAiGenerated?: boolean }) => {
+    (_event, workflow: {
+      id?: string
+      name: string
+      description: string
+      items: Array<{ label: string; text: string }>
+      isAiGenerated?: boolean
+    }) => {
       return saveWorkflow({ ...workflow, isAiGenerated: workflow.isAiGenerated ?? false })
     }
   )
@@ -646,7 +665,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SAVE_FORM_PROFILE,
-    (_event, profile: { id?: string; name: string; fields: Array<{ label: string; value: string; type: string }>; isAiGenerated?: boolean }) => {
+    (_event, profile: { id?: string; name: string; fields: FormField[]; isAiGenerated?: boolean }) => {
       return saveFormProfile({ ...profile, isAiGenerated: profile.isAiGenerated ?? false })
     }
   )

@@ -103,6 +103,13 @@ export function QuickBoard(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS).then((data) => {
       if (Array.isArray(data)) setAllTags(data as string[])
     }).catch(() => {})
+
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_QUEUE_STATUS).then((data) => {
+      if (data && typeof data === 'object') {
+        const s = data as { active: boolean; current: number; total: number }
+        setQueueStatus(s)
+      }
+    }).catch(() => {})
   }, [])
 
   // ── Check onboarding + suggestions on mount ────────────────────────────────
@@ -140,13 +147,25 @@ export function QuickBoard(): React.JSX.Element {
   // ── Listen for clipboard changes from main process ─────────────────────
 
   useEffect(() => {
-    const unsub = window.peakflow.on(
+    const unsubChange = window.peakflow.on(
       IPC_SEND.CLIPBOARD_ON_CHANGE,
       (data: unknown) => {
         if (Array.isArray(data)) setHistory(data as ClipboardItem[])
       }
     )
-    return unsub
+    const unsubSuggestions = window.peakflow.on(
+      IPC_SEND.CLIPBOARD_AI_SUGGESTIONS_READY,
+      (data: unknown) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setSuggestions(data as AiSuggestion[])
+          setShowSuggestions(true)
+        }
+      }
+    )
+    return () => {
+      unsubChange()
+      unsubSuggestions()
+    }
   }, [])
 
   // ── Load settings from config on mount ─────────────────────────────────
@@ -319,23 +338,37 @@ export function QuickBoard(): React.JSX.Element {
   // ── Suggestion handlers ─────────────────────────────────────────────────
 
   const handleApplySuggestion = useCallback((sug: AiSuggestion) => {
-    // Apply the suggestion action
-    if (sug.type === 'pin_template' && sug.action.text) {
-      window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, sug.action.text as string)
-        .then(() => {
-          return window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_HISTORY)
-        })
+    if (sug.type === 'pin_template' && typeof sug.action.text === 'string') {
+      window.peakflow
+        .invoke(IPC_INVOKE.CLIPBOARD_ADD_PINNED_ITEM, sug.action.text)
         .then((data) => {
-          if (Array.isArray(data)) {
-            setHistory(data as ClipboardItem[])
-            // Pin the newly added item
-            if (data.length > 0) {
-              window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_PIN_ITEM, (data[0] as ClipboardItem).id)
-            }
-          }
+          if (Array.isArray(data)) setHistory(data as ClipboardItem[])
         })
+        .catch(() => {})
+    } else if (sug.type === 'create_tag') {
+      const name = (sug.action.name ?? sug.action.tag) as string | undefined
+      if (name) {
+        window.peakflow
+          .invoke(IPC_INVOKE.CLIPBOARD_MANAGE_TAGS, 'create', { name })
+          .then((data) => {
+            if (Array.isArray(data)) setAllTags(data as string[])
+          })
+          .catch(() => {})
+      }
+    } else if (sug.type === 'create_workflow') {
+      const name = sug.action.name as string | undefined
+      const items = sug.action.items as Array<{ label: string; text: string }> | undefined
+      if (name && Array.isArray(items)) {
+        window.peakflow
+          .invoke(IPC_INVOKE.CLIPBOARD_SAVE_WORKFLOW, {
+            name,
+            description: (sug.action.description as string) ?? '',
+            items,
+            isAiGenerated: true
+          })
+          .catch(() => {})
+      }
     }
-    // Dismiss after applying
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_DISMISS_SUGGESTION, sug.id)
     setSuggestions((prev) => prev.filter((s) => s.id !== sug.id))
   }, [])
@@ -467,7 +500,15 @@ export function QuickBoard(): React.JSX.Element {
       {view === 'onboarding' ? (
         /* ═══════════════ ONBOARDING VIEW ═══════════════ */
         <OnboardingWizard
-          onComplete={() => setView('main')}
+          onComplete={() => {
+            setView('main')
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_HISTORY).then((data) => {
+              if (Array.isArray(data)) setHistory(data as ClipboardItem[])
+            }).catch(() => {})
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS).then((data) => {
+              if (Array.isArray(data)) setAllTags(data as string[])
+            }).catch(() => {})
+          }}
           onSkip={() => {
             window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
               tool: 'quickboard',

@@ -135,14 +135,11 @@ export function WorkflowPanel({ onBack }: WorkflowPanelProps): React.JSX.Element
   const saveEdit = async (): Promise<void> => {
     if (!editName.trim() || editItems.length === 0) return
     const payload = {
+      id: editingId || undefined,
       name: editName,
       description: editDesc,
       items: editItems.filter((i) => i.text.trim()),
       isAiGenerated: false
-    }
-
-    if (editingId) {
-      await window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_DELETE_WORKFLOW, editingId)
     }
 
     await window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_SAVE_WORKFLOW, payload)

@@ -99,11 +99,16 @@ export function TransformPicker({ item, onClose }: TransformPickerProps): React.
       ) as { ok: boolean; result?: string; error?: string }
 
       if (res.ok && res.result) {
-        await window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, res.result)
-        setTimeout(async () => {
-          window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
-        }, 200)
+        window.peakflow.invoke(
+          IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE,
+          item.id,
+          false,
+          res.result
+        )
         onClose()
+        setTimeout(() => {
+          window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE)
+        }, 400)
       } else {
         setAiError(res.error || 'Transform failed')
         setTimeout(() => setAiError(null), 3000)

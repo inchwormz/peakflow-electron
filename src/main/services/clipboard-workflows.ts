@@ -5,8 +5,8 @@
  */
 
 import Store from 'electron-store'
-import { clipboard } from 'electron'
 import { simulateCtrlV } from '../native/keyboard'
+import { getClipboardService } from './clipboard'
 
 export interface WorkflowItem {
   label: string
@@ -37,14 +37,35 @@ export function getWorkflows(): Workflow[] {
   return store.get('workflows', [])
 }
 
-export function saveWorkflow(workflow: Omit<Workflow, 'id' | 'createdAt'>): Workflow {
+export function saveWorkflow(
+  workflow: Omit<Workflow, 'id' | 'createdAt'> & { id?: string }
+): Workflow {
+  const all = store.get('workflows', [])
+
+  if (workflow.id) {
+    const idx = all.findIndex((w) => w.id === workflow.id)
+    if (idx >= 0) {
+      all[idx] = {
+        ...all[idx],
+        name: workflow.name,
+        description: workflow.description,
+        items: workflow.items,
+        isAiGenerated: workflow.isAiGenerated
+      }
+      store.set('workflows', all)
+      return all[idx]
+    }
+  }
+
   const id = `wf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
   const full: Workflow = {
-    ...workflow,
+    name: workflow.name,
+    description: workflow.description,
+    items: workflow.items,
+    isAiGenerated: workflow.isAiGenerated,
     id,
     createdAt: new Date().toISOString()
   }
-  const all = store.get('workflows', [])
   all.push(full)
   store.set('workflows', all)
   return full
@@ -54,8 +75,8 @@ export function saveBulkWorkflows(
   workflows: Array<{ name: string; description: string; items: WorkflowItem[] }>
 ): Workflow[] {
   const existing = store.get('workflows', [])
-  const created: Workflow[] = workflows.map((w) => ({
-    id: `wf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  const created: Workflow[] = workflows.map((w, index) => ({
+    id: `wf_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 6)}`,
     name: w.name,
     description: w.description,
     items: w.items,
@@ -95,8 +116,8 @@ export function startWorkflow(workflowId: string): { active: boolean; current: n
     return { active: false, current: 0, total: 0, label: '' }
   }
   activeWorkflow = { workflow: wf, currentIndex: 0 }
-  // Write first item to clipboard
-  clipboard.writeText(wf.items[0].text)
+  // Write first item to clipboard (via service so poll loop does not re-capture)
+  getClipboardService().writeText(wf.items[0].text)
   return {
     active: true,
     current: 1,
@@ -121,7 +142,7 @@ export function workflowPasteNext(): { active: boolean; current: number; total: 
 
   // Write next item
   const next = activeWorkflow.workflow.items[activeWorkflow.currentIndex]
-  clipboard.writeText(next.text)
+  getClipboardService().writeText(next.text)
 
   return {
     active: true,

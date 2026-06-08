@@ -35,11 +35,16 @@ export function setItemTags(itemId: string, tags: string[]): void {
 }
 
 export function manageTags(
-  action: 'rename' | 'delete' | 'reorder',
-  payload: { oldName?: string; newName?: string; tags?: string[] }
+  action: 'create' | 'rename' | 'delete' | 'reorder',
+  payload: { oldName?: string; newName?: string; name?: string; tags?: string[] }
 ): string[] {
   const tags = store.get('tags')
-  if (action === 'delete' && payload.oldName) {
+  if (action === 'create') {
+    const name = (payload.newName ?? payload.name ?? '').trim()
+    if (name && !tags.includes(name)) {
+      store.set('tags', [...tags, name])
+    }
+  } else if (action === 'delete' && payload.oldName) {
     store.set('tags', tags.filter((t) => t !== payload.oldName))
     getClipboardService().removeTagFromAll(payload.oldName)
   } else if (action === 'rename' && payload.oldName && payload.newName) {

@@ -84,6 +84,8 @@ class ClipboardService {
   private imagesDir: string
   /** The app name captured at the start of each poll cycle */
   private currentSourceApp: string | null = null
+  /** Raw active window title for excluded-app filtering */
+  private currentWindowTitle = ''
 
   constructor() {
     this.imagesDir = join(app.getPath('userData'), 'quickboard-images')
@@ -213,13 +215,46 @@ class ClipboardService {
       const win = getActiveWindow()
       if (!win) {
         this.currentSourceApp = null
+        this.currentWindowTitle = ''
         return
       }
+      this.currentWindowTitle = win.title
       const exe = getProcessExeName(win.pid)
       this.currentSourceApp = this.formatAppName(exe, win.title)
     } catch {
       this.currentSourceApp = null
+      this.currentWindowTitle = ''
     }
+  }
+
+  private isCaptureBlocked(): boolean {
+    if (!this.currentWindowTitle) return false
+    return isExcludedApp(this.currentWindowTitle)
+  }
+
+  private maybeRunSuggestions(): void {
+    import('./clipboard-suggestions')
+      .then(({ incrementCaptureCount, shouldRunSuggestions, checkShouldSuggest, getSuggestions }) => {
+        incrementCaptureCount()
+        if (!shouldRunSuggestions()) return
+
+        void (async () => {
+          try {
+            if (!(await checkShouldSuggest())) return
+            const suggestions = await getSuggestions()
+            if (suggestions.length === 0) return
+
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) {
+                win.webContents.send(IPC_SEND.CLIPBOARD_AI_SUGGESTIONS_READY, suggestions)
+              }
+            }
+          } catch {
+            // Suggestions are best-effort
+          }
+        })()
+      })
+      .catch(() => {})
   }
 
   private formatAppName(exe: string | null, title: string): string {
@@ -296,6 +331,14 @@ class ClipboardService {
   }
 
   private handleNewText(text: string): void {
+    if (this.isCaptureBlocked()) {
+      this.skippedCount++
+      console.log(
+        `[QuickBoard] Skipped excluded app (total: ${this.skippedCount})`
+      )
+      return
+    }
+
     // Security: skip secrets/passwords
     if (looksLikeSecret(text)) {
       this.skippedCount++
@@ -347,6 +390,8 @@ class ClipboardService {
     if (item.contentType === 'url' && item.text) {
       this.fetchLinkPreviewAsync(item.id, item.text)
     }
+
+    this.maybeRunSuggestions()
   }
 
   /** Fetch link preview in background and update item when done. */
@@ -361,6 +406,14 @@ class ClipboardService {
   }
 
   private handleNewImage(img: Electron.NativeImage): void {
+    if (this.isCaptureBlocked()) {
+      this.skippedCount++
+      console.log(
+        `[QuickBoard] Skipped excluded app image (total: ${this.skippedCount})`
+      )
+      return
+    }
+
     const size = img.getSize()
     const imgHash = this.lastImageHash // already computed in checkClipboard
 
@@ -420,6 +473,7 @@ class ClipboardService {
 
     // Auto-run OCR on image clips (async, non-blocking)
     this.runOcrAsync(item.id, imagePath)
+    this.maybeRunSuggestions()
   }
 
   /** Run OCR in background and update item when done. */
@@ -523,6 +577,32 @@ class ClipboardService {
   }
 
   /**
+   * Add a pinned text template directly to history.
+   * Used by onboarding — writeText alone does not create a history entry.
+   */
+  addPinnedTextItem(text: string): ClipboardItem {
+    const preview = text.replace(/\n/g, ' ').trim().slice(0, 120)
+    const item: ClipboardItem = {
+      id: this.generateId(),
+      text,
+      type: 'text',
+      timestamp: new Date().toISOString(),
+      copyCount: 1,
+      pinned: true,
+      preview: preview + (text.length > 120 ? '...' : ''),
+      tags: [],
+      sourceApp: null,
+      contentType: this.detectContentType({ text, type: 'text' }),
+      ocrText: null
+    }
+    this.history.unshift(item)
+    this.trimHistory()
+    this.saveHistory()
+    this.broadcastChange()
+    return item
+  }
+
+  /**
    * Write an image to clipboard from its data URL.
    * Updates the lastImageHash so the poll loop doesn't re-capture it.
    */
@@ -548,7 +628,7 @@ class ClipboardService {
    * Write to clipboard and simulate Ctrl+V paste via Win32 SendInput.
    * If plainText is true, strips all formatting and writes as plain text.
    */
-  simulatePaste(itemId: string, plainText = false): void {
+  simulatePaste(itemId: string, plainText = false, textOverride?: string): void {
     const item = this.history.find((h) => h.id === itemId)
     if (!item) {
       console.warn(`[QuickBoard] simulatePaste: item not found: ${itemId}`)
@@ -556,15 +636,26 @@ class ClipboardService {
     }
 
     // Write to clipboard (prefer editedText if user has edited)
+    let wrote = false
     if (item.type === 'text') {
-      const textToWrite = item.editedText ?? item.text ?? ''
+      const textToWrite = textOverride ?? item.editedText ?? item.text ?? ''
       if (plainText) {
         this.writeText(textToWrite.replace(/[\r]/g, ''))
       } else {
         this.writeText(textToWrite)
       }
+      wrote = true
     } else if (item.type === 'image' && item.imagePath) {
       this.writeImage(item.imagePath)
+      wrote = true
+    } else if (item.type === 'file') {
+      console.warn(`[QuickBoard] simulatePaste: file clips are not supported yet: ${itemId}`)
+      return
+    }
+
+    if (!wrote) {
+      console.warn(`[QuickBoard] simulatePaste: nothing to paste for item ${itemId}`)
+      return
     }
 
     // Increment usage count
@@ -591,6 +682,16 @@ class ClipboardService {
       this.broadcastChange()
     }
     return this.history
+  }
+
+  /** Bump usage stats for a history item (e.g. sequential paste queue). */
+  recordItemUse(itemId: string): void {
+    const item = this.history.find((h) => h.id === itemId)
+    if (!item) return
+    item.copyCount += 1
+    item.timestamp = new Date().toISOString()
+    this.saveHistory()
+    this.broadcastChange()
   }
 
   /** Toggle pin status of an item. */
@@ -699,8 +800,8 @@ class ClipboardService {
   setLinkPreview(itemId: string, title: string | null, favicon: string | null): ClipboardItem[] {
     const item = this.history.find((h) => h.id === itemId)
     if (item) {
-      item.linkTitle = title
-      item.linkFavicon = favicon
+      item.linkTitle = title ?? undefined
+      item.linkFavicon = favicon ?? undefined
       this.saveHistory()
       this.broadcastChange()
     }

@@ -96,6 +96,7 @@ export const IPC_INVOKE = {
   CLIPBOARD_SIMULATE_PASTE: 'clipboard:simulate-paste',
   CLIPBOARD_DELETE_ITEM: 'clipboard:delete-item',
   CLIPBOARD_PIN_ITEM: 'clipboard:pin-item',
+  CLIPBOARD_ADD_PINNED_ITEM: 'clipboard:add-pinned-item',
   CLIPBOARD_CLEAR_HISTORY: 'clipboard:clear-history',
   CLIPBOARD_SET_TAGS: 'clipboard:set-tags',
   CLIPBOARD_GET_ALL_TAGS: 'clipboard:get-all-tags',
