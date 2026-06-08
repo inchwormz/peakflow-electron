@@ -9,7 +9,7 @@ const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
  * Clickable when in trial/expired state to open the pricing page.
  */
 export function StatusBar(): React.JSX.Element {
-  const { loading, isLicensed, daysRemaining, allowed } = useLicense()
+  const { loading, isLicensed, isSuiteLicense, daysRemaining, allowed } = useLicense()
 
   const handleClick = useCallback(() => {
     if (!isLicensed) {
@@ -29,7 +29,7 @@ export function StatusBar(): React.JSX.Element {
     label = ''
     color = 'var(--text-tertiary)'
   } else if (isLicensed) {
-    label = '\u2713 Pro'
+    label = isSuiteLicense ? '\u2713 Pro' : '\u2713 Licensed'
     color = 'var(--success)'
   } else if (trialExpired) {
     label = 'Trial expired'

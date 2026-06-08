@@ -283,7 +283,8 @@ export function LiquidFocus(): React.JSX.Element {
 
   const containerStyle: CSSProperties = {
     width: '100%',
-    height: '100%',
+    flex: 1,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
     background: DS.bg,
@@ -308,6 +309,7 @@ export function LiquidFocus(): React.JSX.Element {
 
   const contentStyle: CSSProperties = {
     flex: 1,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',

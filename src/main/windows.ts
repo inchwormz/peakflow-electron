@@ -53,13 +53,22 @@ interface WindowOverrides {
   focusable?: boolean
 }
 
+/** If a reused tool window is shorter than its target height, grow it so content is not clipped. */
+function ensureToolWindowSize(win: BrowserWindow, cfg: WindowOverrides | undefined): void {
+  if (!cfg?.width || !cfg?.height || win.isDestroyed()) return
+  const [, contentH] = win.getContentSize()
+  if (contentH < cfg.height) {
+    win.setContentSize(cfg.width, cfg.height)
+  }
+}
+
 const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
   [SystemWindowId.Dashboard]: { width: 420, height: 640, minWidth: 380, minHeight: 560 },
-  [ToolId.FocusDim]: { width: 340, height: 680, resizable: false },
+  [ToolId.FocusDim]: { width: 360, height: 740, minWidth: 320, minHeight: 580, resizable: true },
   [ToolId.QuickBoard]: { width: 340, height: 540, alwaysOnTop: true, skipTaskbar: true },
   [ToolId.MeetReady]: { width: 340, height: 540 },
   [ToolId.SoundSplit]: { width: 340, height: 540, minWidth: 340, minHeight: 400 },
-  [ToolId.LiquidFocus]: { width: 420, height: 640, minWidth: 340, minHeight: 540, alwaysOnTop: true },
+  [ToolId.LiquidFocus]: { width: 380, height: 740, minWidth: 340, minHeight: 580, alwaysOnTop: true },
   [ToolId.ScreenSlap]: { width: 400, height: 600 },
   [SystemWindowId.ScreenSlapAlert]: {
     width: 0,
@@ -103,6 +112,7 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
     const cfg = WINDOW_CONFIGS[toolId]
+    ensureToolWindowSize(existing, cfg)
     if (!existing.isVisible()) {
       // Defer alwaysOnTop until after the OS finishes restoring the window
       if (cfg?.alwaysOnTop) {
@@ -163,6 +173,8 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
     height: winHeight,
     x: winX,
     y: winY,
+    // Frameless tool windows: height/width must match renderer client area (innerHeight).
+    useContentSize: !overrides.fullscreen,
     minWidth: overrides.minWidth,
     minHeight: overrides.minHeight,
     resizable: overrides.resizable !== false,
@@ -186,6 +198,9 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
 
   // Show when the renderer has painted its first frame
   win.once('ready-to-show', () => {
+    if (!overrides.fullscreen && overrides.width && overrides.height) {
+      win.setContentSize(overrides.width, overrides.height)
+    }
     win.show()
     // 'screen-saver' level keeps windows above fullscreen apps (Chrome, etc.).
     // Re-assert on blur/show/restore because Windows can silently drop it.

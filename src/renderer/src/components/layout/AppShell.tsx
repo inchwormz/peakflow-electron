@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useWindowInnerHeight } from '../../hooks/useWindowInnerHeight'
 
 interface AppShellProps {
   children: ReactNode
@@ -10,10 +11,16 @@ interface AppShellProps {
  * - Base #0a0a0a background
  */
 export function AppShell({ children }: AppShellProps): React.JSX.Element {
+  useWindowInnerHeight()
+
   return (
     <div
-      className="relative flex flex-col h-screen overflow-hidden"
-      style={{ background: 'var(--bg-app)' }}
+      className="relative flex flex-col min-h-0 overflow-hidden"
+      style={{
+        background: 'var(--bg-app)',
+        width: 'var(--window-inner-width, 100%)',
+        height: 'var(--window-inner-height, 100%)'
+      }}
     >
       {/* Ambient glow — decorative radial gradient */}
       <div
@@ -31,7 +38,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
       />
 
       {/* Content layer */}
-      <div className="relative z-10 flex flex-col h-full">{children}</div>
+      <div className="relative z-10 flex flex-col flex-1 min-h-0 overflow-hidden">{children}</div>
     </div>
   )
 }

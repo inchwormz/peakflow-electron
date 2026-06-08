@@ -8,7 +8,7 @@
  *   - Stats row: Streak / Today (mini chart) / All Time
  */
 
-import { useState, useCallback, useMemo, type CSSProperties } from 'react'
+import { useState, useCallback, useMemo, useEffect, type CSSProperties } from 'react'
 import { DS, type TimerState, type SessionStats } from './LiquidFocus'
 import { FocusDetector } from './FocusDetector'
 import { IPC_INVOKE } from '@shared/ipc-types'
@@ -29,9 +29,26 @@ interface TimerViewProps {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const RING_SIZE = 240
-const RING_RADIUS = 110
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+const RING_SIZE_DEFAULT = 200
+const RING_RADIUS_DEFAULT = 92
+
+function ringMetricsForHeight(innerHeight: number): {
+  ringSize: number
+  ringRadius: number
+  circumference: number
+  timerFontSize: number
+} {
+  // Title bar (~32) + nav (~44) + controls/stats (~200) ≈ 276px chrome
+  const available = Math.max(280, innerHeight - 276)
+  const ringSize = Math.min(RING_SIZE_DEFAULT, Math.max(140, Math.round(available * 0.62)))
+  const ringRadius = Math.round((ringSize / RING_SIZE_DEFAULT) * RING_RADIUS_DEFAULT)
+  return {
+    ringSize,
+    ringRadius,
+    circumference: 2 * Math.PI * ringRadius,
+    timerFontSize: ringSize >= 190 ? 44 : ringSize >= 160 ? 38 : 32
+  }
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -50,7 +67,18 @@ export function TimerView({
 }: TimerViewProps): React.JSX.Element {
   const isRunning = timer.status === 'running'
   const progress = timer.total > 0 ? 1 - timer.remaining / timer.total : 0
-  const dashOffset = RING_CIRCUMFERENCE * (1 - progress)
+  const [innerHeight, setInnerHeight] = useState(() => window.innerHeight)
+  useEffect(() => {
+    const onResize = (): void => setInnerHeight(window.innerHeight)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const { ringSize, ringRadius, circumference, timerFontSize } = useMemo(
+    () => ringMetricsForHeight(innerHeight),
+    [innerHeight]
+  )
+  const dashOffset = circumference * (1 - progress)
 
   const minutes = Math.floor(timer.remaining / 60)
   const seconds = timer.remaining % 60
@@ -84,20 +112,22 @@ export function TimerView({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '20px 24px 0',
+    padding: '12px 20px 0',
     flexShrink: 0
   }
 
   const timerBody: CSSProperties = {
     flex: 1,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '8px 24px 20px'
+    padding: '4px 20px 16px',
+    overflowY: 'auto'
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {/* Nav bar */}
       <div style={navBar}>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -119,15 +149,16 @@ export function TimerView({
         <div
           style={{
             position: 'relative',
-            width: RING_SIZE,
-            height: RING_SIZE,
-            marginBottom: 16
+            width: ringSize,
+            height: ringSize,
+            marginBottom: 12,
+            flexShrink: 0
           }}
         >
           <svg
-            viewBox="0 0 240 240"
-            width={RING_SIZE}
-            height={RING_SIZE}
+            viewBox="0 0 200 200"
+            width={ringSize}
+            height={ringSize}
             style={{ transform: 'rotate(-90deg)', filter: `drop-shadow(0 0 18px ${isBreak ? 'rgba(255,225,124,0.3)' : 'rgba(255,112,67,0.35)'})` }}
           >
             <defs>
@@ -139,23 +170,23 @@ export function TimerView({
             </defs>
             {/* Track */}
             <circle
-              cx="120"
-              cy="120"
-              r={RING_RADIUS}
+              cx="100"
+              cy="100"
+              r={ringRadius}
               fill="none"
               stroke="rgba(255,255,255,0.05)"
               strokeWidth={10}
             />
             {/* Progress */}
             <circle
-              cx="120"
-              cy="120"
-              r={RING_RADIUS}
+              cx="100"
+              cy="100"
+              r={ringRadius}
               fill="none"
               stroke={isBreak ? DS.accent : 'url(#ringGrad)'}
               strokeWidth={10}
               strokeLinecap="round"
-              strokeDasharray={RING_CIRCUMFERENCE}
+              strokeDasharray={circumference}
               strokeDashoffset={dashOffset}
               style={{ transition: 'stroke-dashoffset 0.8s ease' }}
             />
@@ -174,7 +205,7 @@ export function TimerView({
           >
             <div
               style={{
-                fontSize: 52,
+                fontSize: timerFontSize,
                 fontWeight: 500,
                 letterSpacing: 2,
                 color: DS.white,
@@ -503,7 +534,8 @@ function StatItem({
       <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color }}>
         {value}
         {suffix && (
-          <span style={{ fontSize: 9, fontWeight: 400, color: DS.textLabel, marginLeft: 2 }}>
+          <span style={{ fontSize: 9, fontWeight: 400, color: DS.textLabel, marginLeft: 3 }}>
+            {' '}
             {suffix}
           </span>
         )}

@@ -12,9 +12,12 @@
  */
 
 import os from 'node:os'
+import { BrowserWindow } from 'electron'
 import Store from 'electron-store'
+import { IPC_SEND } from '@shared/ipc-types'
 import { ToolId } from '@shared/tool-ids'
 import { storeCredential, getCredential, deleteCredential } from './credentials'
+import { installTool } from './trial'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -25,13 +28,15 @@ export const LICENSE_CACHE_DAYS = 30
  * Map LemonSqueezy product_id → which tool(s) the license covers.
  * 'all' = subscription or bundle (every tool).
  * Individual tool IDs = perpetual single-tool license.
- * Unknown product_ids default to 'all' for backwards compatibility.
+ * Unknown product_ids return null so an unmapped product cannot unlock extra tools.
  */
 const PRODUCT_TOOL_MAP: Record<number, ToolId | 'all'> = {
   // Individual perpetual licenses ($9.99 one-time)
   861329: ToolId.FocusDim, // live
   861493: ToolId.FocusDim, // test mode
-  // All other product IDs (subscriptions, etc.) default to 'all' via getToolsForProduct()
+  // Subscription / all-tools bundle (live + test product IDs from LemonSqueezy)
+  863559: 'all', // Pro subscription — seen in production activations
+  863806: 'all' // bundle / alternate subscription product
 }
 
 /** Pricing page URL shown when the trial expires. */
@@ -40,6 +45,54 @@ export const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
 /** LemonSqueezy public license endpoints (no API key required). */
 const LS_VALIDATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/validate'
 const LS_ACTIVATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/activate'
+
+function broadcastLicenseStatusChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_SEND.LICENSE_STATUS_CHANGED)
+    }
+  }
+}
+
+/**
+ * Auto-enable tools covered by the stored license so licensed users are not
+ * stuck on the trial "Try Free" storefront.
+ */
+export function isSuiteLicense(): boolean {
+  if (!hasActiveLicenseRecord()) return false
+
+  const stored = getCredential('license', 'product_id')
+  if (!stored) return true // legacy key — full suite
+
+  const productId = parseInt(stored, 10)
+  if (isNaN(productId)) return false
+
+  const covers = getToolsForProduct(productId)
+  return covers === null || covers === 'all'
+}
+
+export function syncLicensedToolInstalls(): void {
+  if (!hasActiveLicenseRecord()) return
+
+  const stored = getCredential('license', 'product_id')
+  if (!stored) {
+    for (const id of Object.values(ToolId)) installTool(id)
+    console.log('[PeakFlow:License] Synced installs for legacy full-suite license')
+    return
+  }
+
+  const productId = parseInt(stored, 10)
+  if (isNaN(productId)) return
+
+  const covers = getToolsForProduct(productId)
+  if (covers === null || covers === 'all') {
+    for (const id of Object.values(ToolId)) installTool(id)
+    console.log(`[PeakFlow:License] Synced installs for suite license (product ${productId})`)
+  } else {
+    installTool(covers)
+    console.log(`[PeakFlow:License] Synced install for ${covers} (product ${productId})`)
+  }
+}
 
 // ─── Store ──────────────────────────────────────────────────────────────────
 
@@ -85,6 +138,14 @@ function cacheValidation(status: string): void {
   licenseStore.set('license_status', status)
 }
 
+/** Sync check: user has a locally stored license marked active/valid. */
+function hasActiveLicenseRecord(): boolean {
+  const key = getCredential('license', 'key')
+  if (!key) return false
+  const status = licenseStore.get('license_status') as string | undefined
+  return status === 'active' || status === 'valid'
+}
+
 /**
  * Store the product_id from a LemonSqueezy response.
  */
@@ -95,20 +156,37 @@ function storeProductId(productId: number): void {
 
 /**
  * Look up which tool(s) a product_id grants access to.
- * Unknown IDs default to 'all' (backwards compat for subscription keys).
+ * Unknown IDs return null so an unmapped product cannot unlock extra tools.
  */
-function getToolsForProduct(productId: number): ToolId | 'all' {
-  return PRODUCT_TOOL_MAP[productId] ?? 'all'
+function getToolsForProduct(productId: number): ToolId | 'all' | null {
+  return PRODUCT_TOOL_MAP[productId] ?? null
 }
 
 /**
  * Extract meta.product_id from a LemonSqueezy API response.
  */
+function parseProductId(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = parseInt(value, 10)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
 function extractProductId(result: Record<string, unknown>): number | null {
   const meta = result.meta as Record<string, unknown> | undefined
-  if (meta && typeof meta.product_id === 'number') {
-    return meta.product_id
+  if (meta) {
+    const fromMeta = parseProductId(meta.product_id)
+    if (fromMeta !== null) return fromMeta
   }
+
+  const licenseKey = result.license_key as Record<string, unknown> | undefined
+  if (licenseKey) {
+    const fromLicense = parseProductId(licenseKey.product_id)
+    if (fromLicense !== null) return fromLicense
+  }
+
   return null
 }
 
@@ -135,7 +213,10 @@ export async function isLicensed(): Promise<boolean> {
 
     // Attempt online validation
     const valid = await validateLicenseOnline(key)
-    return valid
+    if (valid) return true
+
+    // Offline / transient API failure — trust last successful activation
+    return hasActiveLicenseRecord()
   } catch (error) {
     console.warn('[PeakFlow:License] isLicensed check failed:', error)
     // If we have a stored key, give the user the benefit of the doubt
@@ -181,6 +262,7 @@ export async function validateLicenseOnline(licenseKey: string): Promise<boolean
       if (productId !== null) {
         storeProductId(productId)
       }
+      syncLicensedToolInstalls()
     }
 
     return isValid
@@ -239,6 +321,8 @@ export async function activateLicense(
       if (productId !== null) {
         storeProductId(productId)
       }
+      syncLicensedToolInstalls()
+      broadcastLicenseStatusChanged()
       return { success: true, message: 'License activated successfully!' }
     }
 
@@ -253,6 +337,8 @@ export async function activateLicense(
     console.warn('[PeakFlow:License] Activation network error, storing locally:', error)
     storeCredential('license', 'key', licenseKey)
     licenseStore.set('license_status', 'unvalidated')
+    syncLicensedToolInstalls()
+    broadcastLicenseStatusChanged()
     return {
       success: true,
       message: 'License saved. Will verify when online.'
@@ -263,19 +349,24 @@ export async function activateLicense(
 /**
  * Check whether the stored license covers a specific tool.
  * Returns true if: no product_id stored (legacy/backwards compat), product maps to 'all',
- * or product maps to the requested tool.
+ * or product maps to the requested tool. Unmapped product_ids are denied.
  */
 export function isToolLicensed(toolId: string): boolean {
+  if (!hasActiveLicenseRecord()) return false
+
   const stored = getCredential('license', 'product_id')
-  console.log(`[PeakFlow:License] isToolLicensed(${toolId}) — stored product_id raw: "${stored}"`)
   if (!stored) return true // No product_id = legacy key, allow all
 
   const productId = parseInt(stored, 10)
-  console.log(`[PeakFlow:License] parsed productId: ${productId}, map lookup: ${PRODUCT_TOOL_MAP[productId] ?? 'NOT IN MAP → defaults to all'}`)
-  if (isNaN(productId)) return true // Corrupt data, fail open
+  if (isNaN(productId)) return false // Corrupt data, fail closed
 
   const covers = getToolsForProduct(productId)
+  if (covers === null) {
+    // Pro/subscription product not yet in map — don't block validated licensees
+    return true
+  }
   if (covers === 'all') return true
+  if (toolId === 'PeakFlow') return true // suite sentinel: any mapped license counts
   return covers === toolId
 }
 
@@ -291,6 +382,7 @@ export function deactivateLicense(): boolean {
     licenseStore.delete('validation_timestamp')
     licenseStore.delete('license_status')
     console.log('[PeakFlow:License] License deactivated locally')
+    broadcastLicenseStatusChanged()
     return true
   } catch (error) {
     console.warn('[PeakFlow:License] deactivateLicense failed:', error)

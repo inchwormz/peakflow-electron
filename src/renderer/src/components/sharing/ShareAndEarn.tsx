@@ -35,7 +35,8 @@ const SHARE_LINKS = [
   }
 ]
 
-const MAILTO_URL = 'https://mailto:contact@getpeakflow.pro?subject=PeakFlow%20Share%20%26%20Earn&body=Hi!%20I%20shared%20PeakFlow%20on%20%5Bplatform%5D.%20I%27d%20like%20%5Btool%20name%5D%20for%20free.%20Screenshot%20attached.'
+const MAILTO_URL =
+  'mailto:contact@getpeakflow.pro?subject=PeakFlow%20Share%20%26%20Earn&body=Hi!%20I%20shared%20PeakFlow%20on%20%5Bplatform%5D.%20I%27d%20like%20%5Btool%20name%5D%20for%20free.%20Screenshot%20attached.'
 
 const ALL_TOOLS = Object.values(ToolId)
 
@@ -60,11 +61,7 @@ export function ShareAndEarn({ ownedTools }: ShareAndEarnProps): React.JSX.Eleme
   }, [])
 
   const openMailto = useCallback(() => {
-    // mailto: doesn't need https:// prefix — use shell directly
-    window.peakflow.invoke(
-      IPC_INVOKE.SHELL_OPEN_EXTERNAL,
-      'https://getpeakflow.pro/share'
-    ).catch(() => {})
+    window.peakflow.invoke(IPC_INVOKE.SHELL_OPEN_EXTERNAL, MAILTO_URL).catch(() => {})
   }, [])
 
   // ── Styles ──────────────────────────────────────────────────────────────

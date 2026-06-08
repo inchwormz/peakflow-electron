@@ -17,6 +17,8 @@ export interface AccessStatus {
   isLicensed: boolean
   /** True only when the license specifically covers THIS tool (not just "user has any license") */
   isToolLicensed: boolean
+  /** True when the license covers the full suite (subscription / bundle / legacy key) */
+  isSuiteLicense?: boolean
 }
 
 export interface LicenseActivationResult {
@@ -200,6 +202,7 @@ export const IPC_INVOKE = {
 /** Send channels (main → renderer, push notifications) */
 export const IPC_SEND = {
   CLIPBOARD_ON_CHANGE: 'clipboard:on-change',
+  CLIPBOARD_AI_SUGGESTIONS_READY: 'clipboard:ai-suggestions-ready',
   CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-status',
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',

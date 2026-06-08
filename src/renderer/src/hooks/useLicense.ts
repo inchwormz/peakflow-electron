@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { AccessStatus } from '@shared/ipc-types'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
+import { ToolId } from '@shared/tool-ids'
 
 export interface LicenseState {
   loading: boolean
@@ -8,6 +9,7 @@ export interface LicenseState {
   message: string
   daysRemaining: number
   isLicensed: boolean
+  isSuiteLicense: boolean
 }
 
 /**
@@ -20,16 +22,26 @@ export function useLicense(): LicenseState & { refresh: () => void } {
     allowed: true,
     message: '',
     daysRemaining: 14,
-    isLicensed: false
+    isLicensed: false,
+    isSuiteLicense: false
   })
 
   const mountedRef = useRef(true)
 
+  /** Tool windows need per-tool access; Dashboard uses suite-wide check. */
+  const scopedToolId = useMemo(() => {
+    const raw = new URLSearchParams(window.location.search).get('toolId')
+    if (raw && Object.values(ToolId).includes(raw as ToolId)) {
+      return raw as ToolId
+    }
+    return null
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
-      const result = (await window.peakflow.invoke(
-        IPC_INVOKE.SECURITY_CHECK_ACCESS
-      )) as AccessStatus
+      const result = (scopedToolId
+        ? await window.peakflow.invoke(IPC_INVOKE.SECURITY_CHECK_TOOL_ACCESS, scopedToolId)
+        : await window.peakflow.invoke(IPC_INVOKE.SECURITY_CHECK_ACCESS)) as AccessStatus
 
       if (mountedRef.current) {
         setState({
@@ -37,7 +49,9 @@ export function useLicense(): LicenseState & { refresh: () => void } {
           allowed: result.allowed,
           message: result.message,
           daysRemaining: result.daysRemaining,
-          isLicensed: result.isLicensed
+          // On tool windows, badge follows whether THIS tool is licensed
+          isLicensed: scopedToolId ? result.isToolLicensed : result.isLicensed,
+          isSuiteLicense: result.isSuiteLicense === true
         })
       }
     } catch (err) {
@@ -46,7 +60,7 @@ export function useLicense(): LicenseState & { refresh: () => void } {
         setState((prev) => ({ ...prev, loading: false }))
       }
     }
-  }, [])
+  }, [scopedToolId])
 
   useEffect(() => {
     mountedRef.current = true

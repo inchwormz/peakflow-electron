@@ -264,7 +264,9 @@ export function FocusDim(): React.JSX.Element {
       <div
         style={{
           flex: 1,
-          overflow: 'auto',
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
           padding: '0 20px 16px',
           fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif"
         }}

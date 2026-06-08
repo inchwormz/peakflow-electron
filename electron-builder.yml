@@ -5,6 +5,10 @@ directories:
   output: release
 files:
   - '!**/.vscode/*'
+  - '!artifacts/**'
+  - '!prototypes/**'
+  - '!screenshots/**'
+  - '!docs/**'
   - '!src/*'
   - '!electron.vite.config.*'
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
@@ -17,6 +21,9 @@ win:
         - x64
   icon: resources/icon.ico
   requestedExecutionLevel: asInvoker
+  artifactName: PeakFlow-Setup-${version}.${ext}
+  # Avoid winCodeSign cache extract (needs symlink privilege on Windows without Dev Mode)
+  signAndEditExecutable: false
 nsis:
   oneClick: false
   perMachine: false

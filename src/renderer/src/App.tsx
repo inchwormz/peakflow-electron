@@ -1,17 +1,36 @@
-import { useMemo } from 'react'
+import { lazy, Suspense, useMemo, type ReactNode } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import { TitleBar } from './components/layout/TitleBar'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
 import { Dashboard } from './tools/dashboard/Dashboard'
-import { FocusDim } from './tools/focusdim/FocusDim'
-import { QuickBoard } from './tools/quickboard/QuickBoard'
-import { ScreenSlap } from './tools/screenslap/ScreenSlap'
 import { AlertOverlay } from './tools/screenslap/AlertOverlay'
-import { MeetReady } from './tools/meetready/MeetReady'
-import { LiquidFocus } from './tools/liquidfocus/LiquidFocus'
-import { LiquidFocusMini } from './tools/liquidfocus/LiquidFocusMini'
-import { SoundSplit } from './tools/soundsplit/SoundSplit'
 import { TrialExpired } from './components/licensing/TrialExpired'
+import { IPC_INVOKE } from '@shared/ipc-types'
+
+/** Lazy-load heavy tool bundles so the Dashboard hub does not pull TF.js / clipboard UI on startup. */
+const FocusDim = lazy(() => import('./tools/focusdim/FocusDim').then((m) => ({ default: m.FocusDim })))
+const QuickBoard = lazy(() => import('./tools/quickboard/QuickBoard').then((m) => ({ default: m.QuickBoard })))
+const ScreenSlap = lazy(() => import('./tools/screenslap/ScreenSlap').then((m) => ({ default: m.ScreenSlap })))
+const MeetReady = lazy(() => import('./tools/meetready/MeetReady').then((m) => ({ default: m.MeetReady })))
+const LiquidFocus = lazy(() => import('./tools/liquidfocus/LiquidFocus').then((m) => ({ default: m.LiquidFocus })))
+const LiquidFocusMini = lazy(() =>
+  import('./tools/liquidfocus/LiquidFocusMini').then((m) => ({ default: m.LiquidFocusMini }))
+)
+const SoundSplit = lazy(() => import('./tools/soundsplit/SoundSplit').then((m) => ({ default: m.SoundSplit })))
+
+function ToolSuspense({ children }: { children: ReactNode }): React.JSX.Element {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex-1 flex items-center justify-center text-xs" style={{ color: 'var(--text-dim)' }}>
+          Loading…
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  )
+}
 
 /* ─── Placeholder Tool Views ─────────────────────────────────────────────── */
 
@@ -143,7 +162,11 @@ export default function App(): React.JSX.Element {
     }
 
     if (systemId === SystemWindowId.LiquidFocusMini) {
-      return <LiquidFocusMini />
+      return (
+        <ToolSuspense>
+          <LiquidFocusMini />
+        </ToolSuspense>
+      )
     }
 
     // Trial expired / tool not licensed lock screen
@@ -151,7 +174,18 @@ export default function App(): React.JSX.Element {
       const params = new URLSearchParams(window.location.search)
       const deniedTool = params.get('deniedTool') ?? undefined
       const reason = params.get('reason') ?? undefined
-      return <TrialExpired deniedTool={deniedTool} reason={reason} />
+      return (
+        <TrialExpired
+          deniedTool={deniedTool}
+          reason={reason}
+          onActivated={() => {
+            window.peakflow.invoke(IPC_INVOKE.WINDOW_CLOSE).catch(() => {})
+            if (deniedTool) {
+              window.peakflow.invoke(IPC_INVOKE.WINDOW_OPEN, { toolId: deniedTool }).catch(() => {})
+            }
+          }}
+        />
+      )
     }
 
     // Dashboard hub
@@ -162,17 +196,41 @@ export default function App(): React.JSX.Element {
     if (!toolId) return <Dashboard />
     switch (toolId) {
       case ToolId.FocusDim:
-        return <FocusDim />
+        return (
+          <ToolSuspense>
+            <FocusDim />
+          </ToolSuspense>
+        )
       case ToolId.QuickBoard:
-        return <QuickBoard />
+        return (
+          <ToolSuspense>
+            <QuickBoard />
+          </ToolSuspense>
+        )
       case ToolId.ScreenSlap:
-        return <ScreenSlap />
+        return (
+          <ToolSuspense>
+            <ScreenSlap />
+          </ToolSuspense>
+        )
       case ToolId.MeetReady:
-        return <MeetReady />
+        return (
+          <ToolSuspense>
+            <MeetReady />
+          </ToolSuspense>
+        )
       case ToolId.LiquidFocus:
-        return <LiquidFocus />
+        return (
+          <ToolSuspense>
+            <LiquidFocus />
+          </ToolSuspense>
+        )
       case ToolId.SoundSplit:
-        return <SoundSplit />
+        return (
+          <ToolSuspense>
+            <SoundSplit />
+          </ToolSuspense>
+        )
       default:
         return <ToolPlaceholder toolId={toolId} />
     }

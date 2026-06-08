@@ -15,7 +15,38 @@ import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
-import { registerToolHotkey } from './hotkeys'
+import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
+import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
+import { startQueue, pasteNext, cancelQueue } from './services/clipboard-sequential'
+import {
+  getSavedPipelines,
+  AVAILABLE_TRANSFORMS,
+  savePipeline,
+  deletePipeline,
+  applyPipeline
+} from './services/clipboard-transforms'
+import { checkAiAccess, aiTransform, aiOnboard } from './services/clipboard-ai'
+import { getSuggestions, dismissSuggestion } from './services/clipboard-suggestions'
+import {
+  getWorkflows,
+  saveWorkflow,
+  deleteWorkflow,
+  startWorkflow,
+  workflowPasteNext,
+  cancelWorkflow,
+  saveBulkWorkflows
+} from './services/clipboard-workflows'
+import {
+  getFormProfiles,
+  saveFormProfile,
+  deleteFormProfile,
+  startFormFill,
+  formPasteNext,
+  cancelFormFill,
+  saveBulkFormProfiles
+} from './services/clipboard-forms'
+import { runOcr } from './services/clipboard-ocr'
+import { simulateCtrlV } from './native/keyboard'
 import { checkAccess } from './security/access-check'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
@@ -387,7 +418,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SET_TAGS,
     (_event, itemId: string, tags: string[]): ClipboardItem[] => {
-      const { setItemTags } = require('./services/clipboard-collections')
       setItemTags(itemId, tags)
       return getClipboardService().getHistory()
     }
@@ -396,7 +426,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS,
     (): string[] => {
-      const { getAllTags } = require('./services/clipboard-collections')
       return getAllTags()
     }
   )
@@ -404,7 +433,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_MANAGE_TAGS,
     (_event, action: string, payload: Record<string, unknown>): string[] => {
-      const { manageTags } = require('./services/clipboard-collections')
       return manageTags(action, payload)
     }
   )
@@ -423,7 +451,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_START,
     (_event, itemIds: string[]): void => {
-      const { startQueue } = require('./services/clipboard-sequential')
       startQueue(itemIds)
     }
   )
@@ -431,7 +458,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_NEXT,
     (): boolean => {
-      const { pasteNext } = require('./services/clipboard-sequential')
       return pasteNext()
     }
   )
@@ -439,7 +465,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_CANCEL,
     (): void => {
-      const { cancelQueue } = require('./services/clipboard-sequential')
       cancelQueue()
     }
   )
@@ -449,7 +474,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_GET_TRANSFORMS,
     () => {
-      const { getSavedPipelines, AVAILABLE_TRANSFORMS } = require('./services/clipboard-transforms')
       return { pipelines: getSavedPipelines(), available: AVAILABLE_TRANSFORMS }
     }
   )
@@ -457,7 +481,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SAVE_TRANSFORM,
     (_event, pipeline: { id: string; name: string; steps: { type: string; label: string }[] }) => {
-      const { savePipeline } = require('./services/clipboard-transforms')
       return savePipeline(pipeline)
     }
   )
@@ -465,7 +488,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_DELETE_TRANSFORM,
     (_event, pipelineId: string) => {
-      const { deletePipeline } = require('./services/clipboard-transforms')
       return deletePipeline(pipelineId)
     }
   )
@@ -473,7 +495,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_PASTE_WITH_TRANSFORM,
     (_event, itemId: string, steps: { type: string; label: string }[]) => {
-      const { applyPipeline } = require('./services/clipboard-transforms')
       const clipService = getClipboardService()
       const history = clipService.getHistory()
       const item = history.find((h: ClipboardItem) => h.id === itemId)
@@ -482,7 +503,6 @@ export function registerIpcHandlers(): void {
       const transformed = applyPipeline(steps, text)
       clipService.writeText(transformed)
       setTimeout(() => {
-        const { simulateCtrlV } = require('./native/keyboard')
         simulateCtrlV()
       }, 500)
     }
@@ -493,7 +513,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS,
     async (): Promise<{ allowed: boolean }> => {
-      const { checkAiAccess } = require('./services/clipboard-ai')
       return checkAiAccess()
     }
   )
@@ -501,7 +520,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_AI_TRANSFORM,
     async (_event, type: string, text: string, targetLang?: string) => {
-      const { aiTransform } = require('./services/clipboard-ai')
       return aiTransform(type, text, targetLang)
     }
   )
@@ -509,7 +527,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_AI_ONBOARD,
     async (_event, answers: { role: string; apps: string[]; copyPatterns: string[]; repetitiveText: string }) => {
-      const { aiOnboard } = require('./services/clipboard-ai')
       return aiOnboard(answers)
     }
   )
@@ -523,7 +540,6 @@ export function registerIpcHandlers(): void {
       formProfiles?: Array<{ name: string; fields: Array<{ label: string; value: string; type: string }> }>
     }) => {
       const clipService = getClipboardService()
-      const { manageTags } = require('./services/clipboard-collections')
 
       // Create tags
       if (config.tags) {
@@ -546,13 +562,11 @@ export function registerIpcHandlers(): void {
 
       // Create workflows
       if (config.workflows && config.workflows.length > 0) {
-        const { saveBulkWorkflows } = require('./services/clipboard-workflows')
         saveBulkWorkflows(config.workflows)
       }
 
       // Create form profiles
       if (config.formProfiles && config.formProfiles.length > 0) {
-        const { saveBulkFormProfiles } = require('./services/clipboard-forms')
         saveBulkFormProfiles(config.formProfiles)
       }
 
@@ -566,7 +580,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_AI_SUGGEST,
     async () => {
-      const { getSuggestions } = require('./services/clipboard-suggestions')
       return getSuggestions()
     }
   )
@@ -574,7 +587,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_AI_DISMISS_SUGGESTION,
     (_event, suggestionId: string) => {
-      const { dismissSuggestion } = require('./services/clipboard-suggestions')
       dismissSuggestion(suggestionId)
     }
   )
@@ -584,7 +596,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_GET_WORKFLOWS,
     () => {
-      const { getWorkflows } = require('./services/clipboard-workflows')
       return getWorkflows()
     }
   )
@@ -592,7 +603,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SAVE_WORKFLOW,
     (_event, workflow: { name: string; description: string; items: Array<{ label: string; text: string }>; isAiGenerated?: boolean }) => {
-      const { saveWorkflow } = require('./services/clipboard-workflows')
       return saveWorkflow({ ...workflow, isAiGenerated: workflow.isAiGenerated ?? false })
     }
   )
@@ -600,7 +610,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_DELETE_WORKFLOW,
     (_event, workflowId: string) => {
-      const { deleteWorkflow } = require('./services/clipboard-workflows')
       return deleteWorkflow(workflowId)
     }
   )
@@ -608,7 +617,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_START_WORKFLOW,
     (_event, workflowId: string) => {
-      const { startWorkflow } = require('./services/clipboard-workflows')
       return startWorkflow(workflowId)
     }
   )
@@ -616,7 +624,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_WORKFLOW_PASTE_NEXT,
     () => {
-      const { workflowPasteNext } = require('./services/clipboard-workflows')
       return workflowPasteNext()
     }
   )
@@ -624,7 +631,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_CANCEL_WORKFLOW,
     () => {
-      const { cancelWorkflow } = require('./services/clipboard-workflows')
       cancelWorkflow()
     }
   )
@@ -634,7 +640,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_GET_FORM_PROFILES,
     () => {
-      const { getFormProfiles } = require('./services/clipboard-forms')
       return getFormProfiles()
     }
   )
@@ -642,7 +647,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SAVE_FORM_PROFILE,
     (_event, profile: { id?: string; name: string; fields: Array<{ label: string; value: string; type: string }>; isAiGenerated?: boolean }) => {
-      const { saveFormProfile } = require('./services/clipboard-forms')
       return saveFormProfile({ ...profile, isAiGenerated: profile.isAiGenerated ?? false })
     }
   )
@@ -650,7 +654,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_DELETE_FORM_PROFILE,
     (_event, profileId: string) => {
-      const { deleteFormProfile } = require('./services/clipboard-forms')
       return deleteFormProfile(profileId)
     }
   )
@@ -658,7 +661,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_START_FORM_FILL,
     (_event, profileId: string) => {
-      const { startFormFill } = require('./services/clipboard-forms')
       return startFormFill(profileId)
     }
   )
@@ -666,7 +668,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_FORM_PASTE_NEXT,
     () => {
-      const { formPasteNext } = require('./services/clipboard-forms')
       return formPasteNext()
     }
   )
@@ -674,7 +675,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_CANCEL_FORM_FILL,
     () => {
-      const { cancelFormFill } = require('./services/clipboard-forms')
       cancelFormFill()
     }
   )
@@ -688,7 +688,6 @@ export function registerIpcHandlers(): void {
       const history = clipService.getHistory()
       const item = history.find((h: ClipboardItem) => h.id === itemId)
       if (!item || item.type !== 'image' || !item.imagePath) return history
-      const { runOcr } = require('./services/clipboard-ocr')
       const ocrText = await runOcr(item.imagePath)
       if (ocrText) {
         return clipService.setOcrText(itemId, ocrText)
@@ -1017,7 +1016,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.HOTKEY_GET_REGISTERED,
     (): Array<{ accelerator: string; label: string }> => {
-      const { getRegisteredHotkeys } = require('./hotkeys')
       return getRegisteredHotkeys()
     }
   )

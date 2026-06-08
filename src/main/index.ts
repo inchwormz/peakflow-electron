@@ -26,6 +26,7 @@ import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
 import { migrateExistingInstalls, isToolInstalled, installTool } from './security/trial'
+import { syncLicensedToolInstalls } from './security/license'
 import { setAppQuitting, createToolWindow } from './windows'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
@@ -184,6 +185,8 @@ if (!gotLock) {
 
     // Migrate existing users: auto-install all tools for users upgrading from pre-storefront
     migrateExistingInstalls()
+    // Licensed users should not stay on the trial storefront UI
+    syncLicensedToolInstalls()
 
     // Ensure PeakFlow suite trial is stamped for fresh installs (and v1.3.0 users
     // who ran the broken migration that skipped the PeakFlow key)
