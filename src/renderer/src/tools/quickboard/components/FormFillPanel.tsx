@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { ChevronLeft } from 'lucide-react'
 import { DS, NavButton, navBarStyle, SectionLabel } from './shared'
 import { IPC_INVOKE } from '@shared/ipc-types'
 
@@ -192,7 +193,7 @@ export function FormFillPanel({ onBack }: FormFillPanelProps): React.JSX.Element
           flex: 1,
           WebkitAppRegion: 'no-drag'
         }}>
-          <NavButton icon="&#9664;" onClick={onBack} />
+          <NavButton icon={<ChevronLeft size={15} />} onClick={onBack} />
           <span style={{
             fontSize: 13,
             fontWeight: 400,

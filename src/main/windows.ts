@@ -68,7 +68,8 @@ const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
   [ToolId.QuickBoard]: { width: 340, height: 540, alwaysOnTop: true, skipTaskbar: true },
   [ToolId.MeetReady]: { width: 340, height: 540 },
   [ToolId.SoundSplit]: { width: 340, height: 540, minWidth: 340, minHeight: 400 },
-  [ToolId.LiquidFocus]: { width: 380, height: 740, minWidth: 340, minHeight: 580, alwaysOnTop: true },
+  // 768: timer ring + controls + stats row incl. the TODAY mini-chart (clips at 740)
+  [ToolId.LiquidFocus]: { width: 380, height: 768, minWidth: 340, minHeight: 580, alwaysOnTop: true },
   [ToolId.ScreenSlap]: { width: 400, height: 600 },
   [SystemWindowId.ScreenSlapAlert]: {
     width: 0,

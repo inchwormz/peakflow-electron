@@ -715,19 +715,12 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // ─── Google Calendar (shared by ScreenSlap + MeetReady) ────────────────────
+  // ─── Calendar — iCal feed (shared by ScreenSlap + MeetReady) ───────────────
 
   ipcMain.handle(
     IPC_INVOKE.CALENDAR_GET_EVENTS,
     (): CalendarEvent[] => {
       return getCalendarService().getEvents()
-    }
-  )
-
-  ipcMain.handle(
-    IPC_INVOKE.CALENDAR_AUTHENTICATE,
-    async (): Promise<CalendarStatus> => {
-      return getCalendarService().authenticate()
     }
   )
 

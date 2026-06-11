@@ -129,25 +129,27 @@ export function startWorkflow(workflowId: string): { active: boolean; current: n
 export function workflowPasteNext(): { active: boolean; current: number; total: number; label: string } | null {
   if (!activeWorkflow) return null
 
-  // Paste current
+  // Stage the CURRENT item, then paste. The next item must not be written
+  // until the next call — writing it now races the delayed Ctrl+V and the
+  // paste inserts the wrong value.
+  const items = activeWorkflow.workflow.items
+  const current = items[activeWorkflow.currentIndex]
+  getClipboardService().writeText(current.text)
   setTimeout(() => simulateCtrlV(), 80)
 
   activeWorkflow.currentIndex++
 
-  if (activeWorkflow.currentIndex >= activeWorkflow.workflow.items.length) {
-    const total = activeWorkflow.workflow.items.length
+  if (activeWorkflow.currentIndex >= items.length) {
+    const total = items.length
     activeWorkflow = null
     return { active: false, current: total, total, label: '' }
   }
 
-  // Write next item
-  const next = activeWorkflow.workflow.items[activeWorkflow.currentIndex]
-  getClipboardService().writeText(next.text)
-
+  const next = items[activeWorkflow.currentIndex]
   return {
     active: true,
     current: activeWorkflow.currentIndex + 1,
-    total: activeWorkflow.workflow.items.length,
+    total: items.length,
     label: next.label
   }
 }

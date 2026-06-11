@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback } from 'react'
+import { ChevronLeft } from 'lucide-react'
 import { DS, SectionLabel, Toggle } from './shared'
 
 interface TriggerRule {
@@ -170,7 +171,7 @@ export function TriggerBuilder(): React.JSX.Element {
             lineHeight: 1
           }}
         >
-          &#9664;
+          <ChevronLeft size={15} />
         </button>
         <input
           value={editing.name}

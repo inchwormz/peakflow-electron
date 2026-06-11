@@ -185,10 +185,13 @@ class ScreenSlapService {
       id: `test-${Date.now()}`,
       summary: '⚡ TEST ALERT — Check if this stays on top!',
       startTime: new Date(now.getTime() + 60_000).toISOString(),
+      endTime: new Date(now.getTime() + 31 * 60_000).toISOString(),
       durationMinutes: 30,
       allDay: false,
       meetingLink: null,
-      meetingService: null
+      meetingService: null,
+      location: null,
+      description: null
     }
     this.triggerAlert(fakeEvent, 1)
     console.log('[ScreenSlap] Test alert triggered')

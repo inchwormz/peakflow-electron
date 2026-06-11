@@ -496,8 +496,10 @@ export function getMasterVolume(): NativeMasterAudio {
   if (!raw) return { volume: 1, peak: 0, muted: false }
 
   const parts = raw.split('|')
+  // Number.isFinite, not `|| 1`: a master volume of 0 is legitimate
+  const volume = parseFloat(parts[0])
   return {
-    volume: parseFloat(parts[0]) || 1,
+    volume: Number.isFinite(volume) ? volume : 1,
     peak: parseFloat(parts[1]) || 0,
     muted: false // Master mute needs separate check
   }

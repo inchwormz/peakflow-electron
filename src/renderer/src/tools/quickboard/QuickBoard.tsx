@@ -35,6 +35,7 @@ import { TagBar } from './components/TagBar'
 import { QueueBanner } from './components/QueueBanner'
 import { EditModal } from './components/EditModal'
 import { TransformPicker } from './components/TransformPicker'
+import { Check, ListChecks, Settings, Minus, X } from 'lucide-react'
 import { OnboardingWizard } from './components/OnboardingWizard'
 import { WorkflowPanel } from './components/WorkflowPanel'
 import { FormFillPanel } from './components/FormFillPanel'
@@ -542,7 +543,7 @@ export function QuickBoard(): React.JSX.Element {
               <span style={{ fontSize: 13, fontWeight: 400, color: DS.textPrimary, fontFamily: "'Silkscreen', cursive" }}>
                 QuickBoard
               </span>
-              <span style={{ fontSize: 10, color: DS.textDim }}>
+              <span style={{ fontSize: 10, color: DS.textDim, whiteSpace: 'nowrap' }}>
                 {filteredHistory.length} items
               </span>
               {suggestions.length > 0 && !showSuggestions && (
@@ -568,15 +569,15 @@ export function QuickBoard(): React.JSX.Element {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' }}>
               {/* Multi-select toggle */}
               <NavButton
-                icon={multiSelectMode ? '&#10003;' : '&#9776;'}
+                icon={multiSelectMode ? <Check size={15} /> : <ListChecks size={15} />}
                 onClick={() => {
                   setMultiSelectMode(!multiSelectMode)
                   if (multiSelectMode) setSelectedIds(new Set())
                 }}
               />
-              <NavButton icon="&#9881;" onClick={switchToSettings} />
-              <NavButton icon="&#8212;" onClick={handleMinimize} />
-              <NavButton icon="&#10005;" onClick={handleClose} isClose />
+              <NavButton icon={<Settings size={15} />} onClick={switchToSettings} />
+              <NavButton icon={<Minus size={15} />} onClick={handleMinimize} />
+              <NavButton icon={<X size={15} />} onClick={handleClose} isClose />
             </div>
           </div>
 

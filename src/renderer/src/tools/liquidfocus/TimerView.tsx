@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect, type CSSProperties } from 'react'
+import { PictureInPicture2, Settings, RotateCcw, SkipForward } from 'lucide-react'
 import { DS, type TimerState, type SessionStats } from './LiquidFocus'
 import { FocusDetector } from './FocusDetector'
 import { IPC_INVOKE } from '@shared/ipc-types'
@@ -135,10 +136,10 @@ export function TimerView({
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <NavButton onClick={() => window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_TOGGLE_MINI)} title="Mini mode">
-            &#9724;
+            <PictureInPicture2 size={14} />
           </NavButton>
           <NavButton onClick={onShowSettings} title="Settings">
-            &#9881;
+            <Settings size={14} />
           </NavButton>
         </div>
       </div>
@@ -288,11 +289,11 @@ export function TimerView({
           }}
         >
           <IconButton onClick={onReset} title="Reset">
-            &#8635;
+            <RotateCcw size={18} />
           </IconButton>
           <MainButton status={timer.status} onClick={onToggle} />
           <IconButton onClick={onSkip} title="Skip">
-            &#9654;
+            <SkipForward size={18} />
           </IconButton>
         </div>
 

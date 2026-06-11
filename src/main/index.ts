@@ -26,7 +26,7 @@ import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
 import { migrateExistingInstalls, isToolInstalled, installTool } from './security/trial'
-import { syncLicensedToolInstalls } from './security/license'
+import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting, createToolWindow } from './windows'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
@@ -187,6 +187,9 @@ if (!gotLock) {
     migrateExistingInstalls()
     // Licensed users should not stay on the trial storefront UI
     syncLicensedToolInstalls()
+    // Pull the latest product→tool map from the releases repo so new products
+    // unlock correctly without an app update (non-blocking; re-syncs on change)
+    void refreshProductMap()
 
     // Ensure PeakFlow suite trial is stamped for fresh installs (and v1.3.0 users
     // who ran the broken migration that skipped the PeakFlow key)

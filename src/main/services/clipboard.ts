@@ -309,6 +309,10 @@ class ClipboardService {
           this.lastTextHash = hash
           this.handleNewText(text)
         }
+      } else {
+        // Clipboard cleared (or no text format) — reset so re-copying the
+        // same text later registers as a new copy event
+        this.lastTextHash = ''
       }
 
       // Only read/hash images when formats actually changed (avoids toPNG() every 500ms)
@@ -320,6 +324,9 @@ class ClipboardService {
             this.lastImageHash = imgHash
             this.handleNewImage(img)
           }
+        } else {
+          // Image gone from clipboard — allow the same image to re-register
+          this.lastImageHash = ''
         }
       }
     } catch (error) {
@@ -441,6 +448,9 @@ class ClipboardService {
       writeFileSync(imagePath, img.toPNG())
     } catch (error) {
       console.error('[QuickBoard] Failed to save image to disk:', error)
+      // Un-commit the hash so the capture is retried on the next format change
+      // (a transient disk error must not permanently skip this image)
+      this.lastImageHash = ''
       return
     }
 

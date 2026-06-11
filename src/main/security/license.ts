@@ -25,19 +25,41 @@ import { installTool } from './trial'
 export const LICENSE_CACHE_DAYS = 30
 
 /**
- * Map LemonSqueezy product_id → which tool(s) the license covers.
+ * Baseline map of LemonSqueezy product_id → which tool(s) the license covers.
  * 'all' = subscription or bundle (every tool).
  * Individual tool IDs = perpetual single-tool license.
- * Unknown product_ids return null so an unmapped product cannot unlock extra tools.
+ *
+ * This hardcoded map is only the fallback: it is overlaid by product-map.json
+ * fetched from the releases repo (see refreshProductMap), so new products can
+ * be mapped with a JSON commit instead of shipping an app update — the v1.6.0
+ * lockout happened because this map could only change via a release.
  */
+// Product names verified against live checkout pages on peakflow.lemonsqueezy.com, 2026-06-11.
 const PRODUCT_TOOL_MAP: Record<number, ToolId | 'all'> = {
-  // Individual perpetual licenses ($9.99 one-time)
+  // Individual permanent licenses (one per tool)
   861329: ToolId.FocusDim, // live
   861493: ToolId.FocusDim, // test mode
-  // Subscription / all-tools bundle (live + test product IDs from LemonSqueezy)
-  863559: 'all', // Pro subscription — seen in production activations
-  863806: 'all' // bundle / alternate subscription product
+  863557: ToolId.ScreenSlap,
+  863559: ToolId.LiquidFocus, // was wrongly mapped 'all' in v1.6.3 (assumed Pro sub)
+  863744: ToolId.MeetReady,
+  863751: ToolId.QuickBoard,
+  863756: ToolId.SoundSplit,
+  // Subscriptions / all-tools bundles
+  822965: 'all', // PeakFlow Pro monthly — linked from getpeakflow.pro pricing
+  841306: 'all', // PeakFlow Subscription monthly — storefront
+  863806: 'all', // PeakFlow Suite perpetual
+  875766: 'all' // PeakFlow Annual subscription
 }
+
+/**
+ * Remote product map JSON ({"<product_id>": "<tool-id>" | "all"}) hosted in
+ * the public releases repo — same trust root the auto-updater already uses.
+ */
+const REMOTE_PRODUCT_MAP_URL =
+  'https://raw.githubusercontent.com/inchwormz/peakflow-releases/main/product-map.json'
+
+/** licenseStore key caching the last successfully fetched remote map. */
+const PRODUCT_MAP_CACHE_KEY = 'product_map_cache'
 
 /** Pricing page URL shown when the trial expires. */
 export const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
@@ -99,6 +121,69 @@ export function syncLicensedToolInstalls(): void {
 /** Dedicated store for license metadata (validation cache, status). */
 const licenseStore = new Store({ name: 'peakflow-license' })
 
+// ─── Product Map ────────────────────────────────────────────────────────────
+
+/** Hardcoded baseline merged with the cached remote map. Built lazily. */
+let mergedProductMap: Record<number, ToolId | 'all'> | null = null
+
+function isValidMapValue(value: unknown): value is ToolId | 'all' {
+  return value === 'all' || (Object.values(ToolId) as unknown[]).includes(value)
+}
+
+/** Parse an untrusted map blob, dropping malformed entries. */
+function parseProductMap(raw: unknown): Record<number, ToolId | 'all'> {
+  const result: Record<number, ToolId | 'all'> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = parseInt(key, 10)
+    if (!Number.isFinite(id) || !isValidMapValue(value)) continue
+    result[id] = value
+  }
+  return result
+}
+
+function getProductMap(): Record<number, ToolId | 'all'> {
+  if (!mergedProductMap) {
+    const cached = parseProductMap(licenseStore.get(PRODUCT_MAP_CACHE_KEY))
+    mergedProductMap = { ...PRODUCT_TOOL_MAP, ...cached }
+  }
+  return mergedProductMap
+}
+
+/**
+ * Fetch the remote product map and overlay it on the hardcoded baseline.
+ * Failures (offline, bad JSON) keep the current map. If coverage changed,
+ * tool installs are re-synced so a newly mapped license unlocks immediately.
+ */
+export async function refreshProductMap(): Promise<void> {
+  try {
+    const response = await fetch(REMOTE_PRODUCT_MAP_URL, {
+      signal: AbortSignal.timeout(10_000)
+    })
+    if (!response.ok) {
+      console.warn(`[PeakFlow:License] Product map fetch HTTP ${response.status}`)
+      return
+    }
+    const remote = parseProductMap(await response.json())
+    if (Object.keys(remote).length === 0) {
+      console.warn('[PeakFlow:License] Remote product map empty/invalid — keeping current map')
+      return
+    }
+    const before = JSON.stringify(getProductMap())
+    licenseStore.set(PRODUCT_MAP_CACHE_KEY, remote)
+    mergedProductMap = { ...PRODUCT_TOOL_MAP, ...remote }
+    console.log(
+      `[PeakFlow:License] Product map refreshed (${Object.keys(remote).length} remote entries)`
+    )
+    if (JSON.stringify(mergedProductMap) !== before) {
+      syncLicensedToolInstalls()
+      broadcastLicenseStatusChanged()
+    }
+  } catch (error) {
+    console.warn('[PeakFlow:License] Product map refresh failed (offline?):', error)
+  }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -156,10 +241,10 @@ function storeProductId(productId: number): void {
 
 /**
  * Look up which tool(s) a product_id grants access to.
- * Unknown IDs return null so an unmapped product cannot unlock extra tools.
+ * Unknown IDs return null; callers decide the fail-open/closed policy.
  */
 function getToolsForProduct(productId: number): ToolId | 'all' | null {
-  return PRODUCT_TOOL_MAP[productId] ?? null
+  return getProductMap()[productId] ?? null
 }
 
 /**
@@ -362,7 +447,11 @@ export function isToolLicensed(toolId: string): boolean {
 
   const covers = getToolsForProduct(productId)
   if (covers === null) {
-    // Pro/subscription product not yet in map — don't block validated licensees
+    // Product not yet in map — never lock out a validated licensee, but this
+    // grants full access: map the product in product-map.json ASAP.
+    console.warn(
+      `[PeakFlow:License] Unknown product_id ${productId} — failing open until product-map.json is updated`
+    )
     return true
   }
   if (covers === 'all') return true

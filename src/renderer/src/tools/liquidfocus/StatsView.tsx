@@ -8,6 +8,7 @@
  */
 
 import { useState, useMemo, type CSSProperties } from 'react'
+import { ChevronLeft } from 'lucide-react'
 import { DS, type SessionStats } from './LiquidFocus'
 
 interface StatsViewProps {
@@ -52,7 +53,7 @@ export function StatsView({ stats, workDurationMinutes, onBack }: StatsViewProps
       {/* Nav bar */}
       <div style={navBar}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <NavBtn onClick={onBack}>&#9664;</NavBtn>
+          <NavBtn onClick={onBack}><ChevronLeft size={15} /></NavBtn>
         </div>
         <span
           style={{

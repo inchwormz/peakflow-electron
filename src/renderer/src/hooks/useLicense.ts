@@ -10,6 +10,8 @@ export interface LicenseState {
   daysRemaining: number
   isLicensed: boolean
   isSuiteLicense: boolean
+  /** True on tool windows (per-tool check); false on the Dashboard (suite-wide check). */
+  scoped: boolean
 }
 
 /**
@@ -17,7 +19,7 @@ export interface LicenseState {
  * and listening for push updates via `license:status-changed`.
  */
 export function useLicense(): LicenseState & { refresh: () => void } {
-  const [state, setState] = useState<LicenseState>({
+  const [state, setState] = useState<Omit<LicenseState, 'scoped'>>({
     loading: true,
     allowed: true,
     message: '',
@@ -80,5 +82,5 @@ export function useLicense(): LicenseState & { refresh: () => void } {
     }
   }, [refresh])
 
-  return { ...state, refresh }
+  return { ...state, scoped: scopedToolId !== null, refresh }
 }

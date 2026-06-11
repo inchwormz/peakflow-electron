@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { ChevronLeft, ChevronUp, ChevronDown } from 'lucide-react'
 import { DS, SectionLabel } from './shared'
 import { IPC_INVOKE } from '@shared/ipc-types'
 
@@ -199,7 +200,7 @@ export function TransformBuilder(): React.JSX.Element {
             lineHeight: 1
           }}
         >
-          &#9664;
+          <ChevronLeft size={15} />
         </button>
         <input
           value={editing.name}
@@ -255,7 +256,7 @@ export function TransformBuilder(): React.JSX.Element {
                 lineHeight: 1
               }}
             >
-              &#9650;
+              <ChevronUp size={10} />
             </button>
             <button
               onClick={() => moveStep(idx, 1)}
@@ -270,7 +271,7 @@ export function TransformBuilder(): React.JSX.Element {
                 lineHeight: 1
               }}
             >
-              &#9660;
+              <ChevronDown size={10} />
             </button>
           </div>
 

@@ -1193,7 +1193,9 @@ function ColorSwatch({
           height: 28,
           borderRadius: '50%',
           background: hex,
-          border: `2px solid ${active ? DS.white : 'transparent'}`,
+          // Faint ring on inactive swatches — the dark presets (Black, Gray)
+          // are invisible against the dark background without it
+          border: `2px solid ${active ? DS.white : 'rgba(255,255,255,0.18)'}`,
           transition: 'border-color 0.2s, transform 0.15s',
           transform: hovered ? 'scale(1.1)' : 'scale(1)'
         }}

@@ -105,6 +105,7 @@ export const IPC_INVOKE = {
   CLIPBOARD_QUEUE_START: 'clipboard:queue-start',
   CLIPBOARD_QUEUE_NEXT: 'clipboard:queue-next',
   CLIPBOARD_QUEUE_CANCEL: 'clipboard:queue-cancel',
+  CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-get-status',
   CLIPBOARD_GET_TRANSFORMS: 'clipboard:get-transforms',
   CLIPBOARD_SAVE_TRANSFORM: 'clipboard:save-transform',
   CLIPBOARD_DELETE_TRANSFORM: 'clipboard:delete-transform',
@@ -144,7 +145,6 @@ export const IPC_INVOKE = {
 
   // Calendar (shared by ScreenSlap + MeetReady)
   CALENDAR_GET_EVENTS: 'calendar:get-events',
-  CALENDAR_AUTHENTICATE: 'calendar:authenticate',
   CALENDAR_GET_STATUS: 'calendar:get-status',
   CALENDAR_DISCONNECT: 'calendar:disconnect',
   CALENDAR_FETCH_NOW: 'calendar:fetch-now',

@@ -1,6 +1,6 @@
 {
   "name": "peakflow-electron",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "PeakFlow — Mac-level productivity tools for Windows",
   "main": "./out/main/index.js",
   "author": "PeakFlow",
@@ -23,6 +23,7 @@
     "electron-store": "^10.0.0",
     "electron-updater": "^6.3.0",
     "koffi": "^2.15.1",
+    "lucide-react": "^1.17.0",
     "node-ical": "^0.25.4"
   },
   "devDependencies": {

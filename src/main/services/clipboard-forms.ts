@@ -116,25 +116,27 @@ export function formPasteNext(): {
 } | null {
   if (!activeFill) return null
 
-  // Paste current field
+  // Stage the CURRENT field, then paste. The next field must not be written
+  // until the next call — writing it now races the delayed Ctrl+V and the
+  // paste inserts the wrong value.
+  const fields = activeFill.profile.fields
+  const current = fields[activeFill.currentIndex]
+  getClipboardService().writeText(current.value)
   setTimeout(() => simulateCtrlV(), 80)
 
   activeFill.currentIndex++
 
-  if (activeFill.currentIndex >= activeFill.profile.fields.length) {
-    const total = activeFill.profile.fields.length
+  if (activeFill.currentIndex >= fields.length) {
+    const total = fields.length
     activeFill = null
     return { active: false, current: total, total, label: '' }
   }
 
-  // Write next field value to clipboard
-  const next = activeFill.profile.fields[activeFill.currentIndex]
-  getClipboardService().writeText(next.value)
-
+  const next = fields[activeFill.currentIndex]
   return {
     active: true,
     current: activeFill.currentIndex + 1,
-    total: activeFill.profile.fields.length,
+    total: fields.length,
     label: next.label
   }
 }
