@@ -16,7 +16,7 @@
  *   - soundsplit:sessions-updated → push updates (VU meters)
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { TitleBar } from '../../components/layout/TitleBar'
 import { Slider } from '../../components/ui/Slider'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
@@ -82,6 +82,7 @@ function getAppIcon(name: string): string {
 export function SoundSplit(): React.JSX.Element {
   const [sessions, setSessions] = useState<AudioSession[]>([])
   const [masterVolume, setMasterVolume] = useState(80)
+  const draggingMasterRef = useRef(false)
 
   // ── Load initial state ──────────────────────────────────────────────────
 
@@ -109,12 +110,31 @@ export function SoundSplit(): React.JSX.Element {
   // ── Listen for session updates (VU meters) ──────────────────────────────
 
   useEffect(() => {
+    const stopDrag = (): void => {
+      draggingMasterRef.current = false
+    }
+    window.addEventListener('pointerup', stopDrag)
+    window.addEventListener('pointercancel', stopDrag)
+    window.addEventListener('blur', stopDrag)
+    return () => {
+      window.removeEventListener('pointerup', stopDrag)
+      window.removeEventListener('pointercancel', stopDrag)
+      window.removeEventListener('blur', stopDrag)
+    }
+  }, [])
+
+  useEffect(() => {
     const unsub = window.peakflow.on(
       IPC_SEND.SOUNDSPLIT_SESSIONS_UPDATED,
-      (data: unknown) => {
+      (data: unknown, master: unknown) => {
         if (Array.isArray(data)) {
           setSessions(data as AudioSession[])
         }
+        if (draggingMasterRef.current) return
+        if (!master || typeof master !== 'object') return
+        const volume = (master as MasterAudio).volume
+        if (typeof volume !== 'number' || !Number.isFinite(volume)) return
+        setMasterVolume(Math.round(Math.min(1, Math.max(0, volume)) * 100))
       }
     )
     return unsub
@@ -181,6 +201,7 @@ export function SoundSplit(): React.JSX.Element {
         {/* Master volume row */}
         <div style={{ padding: '0 24px 4px' }}>
           <div
+            onPointerDown={() => { draggingMasterRef.current = true }}
             style={{
               display: 'flex',
               alignItems: 'center',

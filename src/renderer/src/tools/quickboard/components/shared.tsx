@@ -59,6 +59,10 @@ export interface ClipboardItem {
   editedText?: string
   linkTitle?: string
   linkFavicon?: string
+  /** Set when the clip matched the secret detector. Row text is masked. */
+  secret?: boolean
+  /** Manual order among pinned clips. */
+  pinOrder?: number
 }
 
 export type SortMode = 'recent' | 'frequency'

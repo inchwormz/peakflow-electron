@@ -117,9 +117,10 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
         </button>
       </div>
 
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex flex-col items-center justify-center min-h-full py-4">
       <div
-        className="flex flex-col items-center w-full max-w-[420px] mx-4 px-8 py-10 rounded-2xl"
+        className="flex flex-col items-center w-full max-w-[420px] mx-4 px-8 py-8 rounded-2xl"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-dim)'
@@ -286,6 +287,7 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
             {status.message}
           </p>
         )}
+      </div>
       </div>
       </div>
     </div>

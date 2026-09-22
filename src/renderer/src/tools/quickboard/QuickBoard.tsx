@@ -42,6 +42,24 @@ import { FormFillPanel } from './components/FormFillPanel'
 import { SuggestionBanner } from './components/SuggestionBanner'
 import { scoreItem } from './fuzzy-search'
 
+function sortPinned(pinned: ClipboardItem[], sortMode: SortMode, searching: boolean): ClipboardItem[] {
+  const next = [...pinned]
+  if (searching) return next
+  if (sortMode === 'frequency') {
+    next.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
+    return next
+  }
+  // No pinOrder yet: newest first, same as the old recent sort.
+  // After a drag, pinOrder is the persisted order.
+  next.sort((a, b) => {
+    const ao = typeof a.pinOrder === 'number' ? a.pinOrder : -1
+    const bo = typeof b.pinOrder === 'number' ? b.pinOrder : -1
+    if (ao !== bo) return ao - bo
+    return b.timestamp.localeCompare(a.timestamp)
+  })
+  return next
+}
+
 // ─── Suggestion type ─────────────────────────────────────────────────────────
 
 interface AiSuggestion {
@@ -59,6 +77,7 @@ export function QuickBoard(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>('recent')
   const [view, setView] = useState<ViewMode>('main')
+  const dragPinId = useRef<string | null>(null)
   const [toastVisible, setToastVisible] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [typeFilter, setTypeFilter] = useState<ContentTypeFilter>('all')
@@ -221,20 +240,46 @@ export function QuickBoard(): React.JSX.Element {
       items = scored.map(({ item }) => item)
     }
 
-    // Separate pinned and unpinned
-    const pinned = items.filter((h) => h.pinned)
+    // Separate pinned and unpinned. No display cap — stored pins and history stay visible.
+    // max_entries still limits how many new unpinned captures are kept.
+    const pinned = sortPinned(items.filter((h) => h.pinned), sortMode, !!searchQuery)
     const unpinned = items.filter((h) => !h.pinned)
 
     if (sortMode === 'frequency') {
-      pinned.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
       unpinned.sort((a, b) => b.copyCount - a.copyCount || b.timestamp.localeCompare(a.timestamp))
     } else if (!searchQuery) {
-      pinned.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       unpinned.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     }
 
-    return [...pinned, ...unpinned].slice(0, 200)
+    return [...pinned, ...unpinned]
   }, [history, searchQuery, sortMode, typeFilter, activeTags])
+
+  const canReorderPins = sortMode === 'recent' && searchQuery.trim() === ''
+
+  const handleReorderPin = useCallback((targetId: string) => {
+    const dragId = dragPinId.current
+    dragPinId.current = null
+    if (!dragId || dragId === targetId) return
+
+    const pinnedIds = sortPinned(
+      history.filter((h) => h.pinned),
+      'recent',
+      false
+    ).map((h) => h.id)
+    const from = pinnedIds.indexOf(dragId)
+    const to = pinnedIds.indexOf(targetId)
+    if (from < 0 || to < 0) return
+
+    const next = [...pinnedIds]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    window.peakflow
+      .invoke(IPC_INVOKE.CLIPBOARD_REORDER_PINS, next)
+      .then((data) => {
+        if (Array.isArray(data)) setHistory(data as ClipboardItem[])
+      })
+      .catch(() => {})
+  }, [history])
 
   const handleDeleteItem = useCallback(
     (e: React.MouseEvent, itemId: string) => {
@@ -674,6 +719,9 @@ export function QuickBoard(): React.JSX.Element {
                 onDelete={(e) => handleDeleteItem(e, item.id)}
                 onDoubleClick={item.type === 'text' ? () => setEditingItem(item) : undefined}
                 onContextMenu={item.type === 'text' ? (e) => { e.preventDefault(); setTransformItem(item) } : undefined}
+                draggablePin={canReorderPins}
+                onPinDragStart={(id) => { dragPinId.current = id }}
+                onPinDrop={handleReorderPin}
               />
             )}
           />

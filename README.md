@@ -99,6 +99,6 @@ Free to build and run from source. The code is open because PeakFlow touches you
 
 If you want to support the developer, grab the installer at [getpeakflow.pro](https://getpeakflow.pro):
 
-- **$6.99/month** ... all 7 tools, cancel anytime
+- **All tools — $5/month** ... cancel anytime
 - **$9.99** ... one tool, yours forever (v1)
 - **$49.99** ... all 7 tools, yours forever (v1)

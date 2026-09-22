@@ -34,6 +34,8 @@ export interface CalendarEvent {
   description: string | null
   /** Whether this is an all-day event (skip for alerts) */
   allDay: boolean
+  /** Display names from ATTENDEE (CN, otherwise the calendar address) */
+  attendees: string[]
 }
 
 export interface CalendarStatus {
@@ -80,6 +82,40 @@ function paramStr(val: unknown): string {
   if (typeof val === 'string') return val
   if (val && typeof val === 'object' && 'val' in val) return String((val as { val: unknown }).val)
   return ''
+}
+
+function nameFromCalAddress(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  const named = trimmed.match(/^"?([^"<]+?)"?\s*<[^>]+>$/)
+  if (named?.[1]) return named[1].trim()
+  return trimmed.replace(/^mailto:/i, '').trim()
+}
+
+/** Names from a VEVENT ATTENDEE property. node-ical lowercases it to `attendee`. */
+function attendeeNames(attendee: ical.VEvent['attendee']): string[] {
+  if (!attendee) return []
+  const list = Array.isArray(attendee) ? attendee : [attendee]
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const entry of list) {
+    let name = ''
+    if (typeof entry === 'string') {
+      name = nameFromCalAddress(entry)
+    } else if (entry && typeof entry === 'object') {
+      const params = 'params' in entry ? entry.params : undefined
+      const cn = params?.CN
+      if (typeof cn === 'string' && cn.trim()) name = cn.trim()
+      else if (typeof cn === 'number') name = String(cn)
+      else if ('val' in entry && typeof entry.val === 'string') name = nameFromCalAddress(entry.val)
+    }
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    names.push(name)
+  }
+  return names
 }
 
 // ─── Service ────────────────────────────────────────────────────────────────
@@ -266,7 +302,8 @@ class CalendarService {
       meetingService: service,
       location,
       description: truncatedDesc,
-      allDay
+      allDay,
+      attendees: attendeeNames(event.attendee)
     }
   }
 
@@ -301,7 +338,8 @@ class CalendarService {
       meetingService: service,
       location,
       description: truncatedDesc,
-      allDay
+      allDay,
+      attendees: attendeeNames(evt.attendee)
     }
   }
 

@@ -63,7 +63,7 @@ function ensureToolWindowSize(win: BrowserWindow, cfg: WindowOverrides | undefin
 }
 
 const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
-  [SystemWindowId.Dashboard]: { width: 420, height: 640, minWidth: 380, minHeight: 560 },
+  [SystemWindowId.Dashboard]: { width: 420, height: 720, minWidth: 380, minHeight: 560 },
   [ToolId.FocusDim]: { width: 360, height: 740, minWidth: 320, minHeight: 580, resizable: true },
   [ToolId.QuickBoard]: { width: 340, height: 540, alwaysOnTop: true, skipTaskbar: true },
   [ToolId.MeetReady]: { width: 340, height: 540 },
@@ -87,7 +87,7 @@ const WINDOW_CONFIGS: Record<string, WindowOverrides> = {
   },
   [SystemWindowId.TrialExpired]: {
     width: 460,
-    height: 420,
+    height: 640,
     resizable: false,
     alwaysOnTop: true
   },

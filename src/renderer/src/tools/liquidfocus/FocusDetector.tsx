@@ -3,7 +3,8 @@
  *
  * Uses TensorFlow.js BlazeFace model to detect face presence in real-time.
  * When the user looks away (no face detected) for longer than the configured
- * threshold, it records an interruption via IPC.
+ * threshold, it records an interruption and pauses a running timer once per
+ * away episode. A face coming back resumes only that pause.
  *
  * Privacy: All processing is on-device. Frames are sampled to an OffscreenCanvas
  * and immediately discarded after inference. No video is stored or transmitted.
@@ -24,8 +25,10 @@ import { DS } from './LiquidFocus'
 export type FocusStatus = 'loading' | 'focused' | 'away' | 'no-camera' | 'error'
 
 interface FocusDetectorProps {
-  /** Whether the timer is in a work session and running */
+  /** Work session is in progress (running or paused). Detection stays on while paused so a look-away pause can resume. */
   active: boolean
+  /** True only while the countdown is running. A user pause leaves this false. */
+  timerRunning: boolean
   /** Seconds of looking away before counting as an interruption */
   thresholdSecs: number
   /** Called when focus status changes */
@@ -36,8 +39,35 @@ interface FocusDetectorProps {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
+function isPausedTimer(data: unknown): boolean {
+  return !!data && typeof data === 'object' && (data as { status?: unknown }).status === 'paused'
+}
+
+/** Survives the timer view unmounting (settings, tasks) so a look-away pause can still resume. */
+let lookAwayPaused = false
+
+function resumeIfLookAwayPaused(): void {
+  if (!lookAwayPaused) return
+  // Clear immediately so a second face frame does not start a second resume.
+  lookAwayPaused = false
+  window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_GET_STATE).then((data: unknown) => {
+    const status = data && typeof data === 'object'
+      ? (data as { timer?: { status?: unknown } }).timer?.status
+      : undefined
+    // Only resume a timer this episode paused. Idle/running means the user reset or already resumed.
+    if (status !== 'paused') return
+    window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_START).catch((err: unknown) => {
+      console.warn('[FocusDetector] Failed to resume timer:', err)
+    })
+  }).catch((err: unknown) => {
+    lookAwayPaused = true
+    console.warn('[FocusDetector] Failed to read timer before resume:', err)
+  })
+}
+
 export function FocusDetector({
   active,
+  timerRunning,
   thresholdSecs,
   onStatusChange,
   showPreview = true
@@ -48,7 +78,10 @@ export function FocusDetector({
   const rafRef = useRef<number | null>(null)
   const awayStartRef = useRef<number | null>(null)
   const interruptionRecordedRef = useRef(false)
+  const pauseFlightRef = useRef(0)
+  const timerRunningRef = useRef(timerRunning)
   const thresholdRef = useRef(thresholdSecs)
+  timerRunningRef.current = timerRunning
 
   const [status, setStatus] = useState<FocusStatus>('loading')
   const [totalInterruptions, setTotalInterruptions] = useState(0)
@@ -85,7 +118,8 @@ export function FocusDetector({
 
   useEffect(() => {
     if (!active) {
-      // Clean up when not active
+      // Camera off when the work session is idle or not a work phase.
+      // Do not clear lookAwayPaused here — a face return still has to resume that pause.
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
@@ -166,10 +200,10 @@ export function FocusDetector({
           const faceDetected = predictions.length > 0
 
           if (faceDetected) {
-            // User is looking at screen — reset away tracking
             awayStartRef.current = null
             interruptionRecordedRef.current = false
             updateStatus('focused')
+            if (lookAwayPaused) resumeIfLookAwayPaused()
           } else {
             // No face detected
             const currentTime = Date.now()
@@ -182,10 +216,22 @@ export function FocusDetector({
 
             if (awayDuration >= threshold) {
               updateStatus('away')
-              // Record interruption once per away episode
-              if (!interruptionRecordedRef.current) {
+              // Record and pause once per away episode, and only if the timer is running.
+              // A pause the user started leaves timerRunning false, so we do not resume it later.
+              if (!interruptionRecordedRef.current && timerRunningRef.current) {
                 interruptionRecordedRef.current = true
                 recordInterruption()
+                const flight = ++pauseFlightRef.current
+                window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_PAUSE).then((state: unknown) => {
+                  if (pauseFlightRef.current !== flight) return
+                  if (!isPausedTimer(state)) return
+                  lookAwayPaused = true
+                  // Face already returned before pause landed. Unmount sets awayStart null too;
+                  // `cancelled` keeps that from resuming until a face is actually seen again.
+                  if (!cancelled && awayStartRef.current === null) resumeIfLookAwayPaused()
+                }).catch((err: unknown) => {
+                  console.warn('[FocusDetector] Failed to pause timer:', err)
+                })
               }
             }
           }

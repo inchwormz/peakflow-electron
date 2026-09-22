@@ -6,9 +6,9 @@
  *   - Polls clipboard every 500ms using electron.clipboard
  *   - Detects text changes via hash comparison
  *   - Detects image changes via nativeImage comparison
- *   - Filters out secrets (looksLikeSecret from security module)
+ *   - Keeps detected secrets, stored with a secret flag and a masked preview
  *   - Filters out excluded apps (isExcludedApp -- basic active window check)
- *   - Stores history in electron-store with optional safeStorage encryption
+ *   - Stores history in electron-store; encrypts the blob when encrypt_history is on
  *   - Auto-expires unpinned items older than max_age_hours
  *   - Deduplicates by content, bumping copy_count instead
  *
@@ -25,6 +25,7 @@ import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig } from './config-store'
 import { looksLikeSecret } from '../security/secret-detection'
+import { decryptString, encryptString } from '../security/safe-storage'
 import { isExcludedApp } from '../security/excluded-apps'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { simulateCtrlV } from '../native/keyboard'
@@ -69,7 +70,13 @@ export interface ClipboardItem {
   linkTitle?: string
   /** Auto-fetched favicon as base64 data URL */
   linkFavicon?: string
+  /** True when the capture matched the secret detector. Real text stays stored; UI masks it. */
+  secret?: boolean
+  /** Manual order among pinned clips. Absent until the user drags a pin. */
+  pinOrder?: number
 }
+
+const SECURE_HISTORY_KEY = 'items_secure'
 
 // ─── Service class ──────────────────────────────────────────────────────────
 
@@ -108,20 +115,69 @@ class ClipboardService {
 
   // ─── Persistence ────────────────────────────────────────────────────────
 
+  private encryptionRequested(): boolean {
+    try {
+      return this.getConf().encrypt_history === true
+    } catch {
+      return false
+    }
+  }
+
+  private normalizeHistory(data: unknown[]): ClipboardItem[] {
+    const items: ClipboardItem[] = []
+    for (const raw of data) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as ClipboardItem
+      if (typeof item.id !== 'string') continue
+      items.push({
+        ...item,
+        tags: item.tags ?? [],
+        sourceApp: item.sourceApp ?? null,
+        contentType: item.contentType ?? this.detectContentType(item),
+        ocrText: item.ocrText ?? null
+      })
+    }
+    return items
+  }
+
+  private readPlainHistory(): ClipboardItem[] | null {
+    const data = this.store.get('items') as unknown
+    if (!Array.isArray(data)) return null
+    return this.normalizeHistory(data)
+  }
+
+  private readSecureHistory(): ClipboardItem[] | null {
+    const secure = this.store.get(SECURE_HISTORY_KEY) as unknown
+    if (typeof secure !== 'string' || secure.length === 0) return null
+    const json = decryptString(secure)
+    if (!json) return null
+    try {
+      const parsed = JSON.parse(json) as unknown
+      if (!Array.isArray(parsed)) return null
+      return this.normalizeHistory(parsed)
+    } catch {
+      return null
+    }
+  }
+
   private loadHistory(): void {
     try {
-      const data = this.store.get('items') as ClipboardItem[] | undefined
-      if (Array.isArray(data)) {
-        // Migrate: backfill new fields on existing items
-        this.history = data.map((item) => ({
-          ...item,
-          tags: item.tags ?? [],
-          sourceApp: item.sourceApp ?? null,
-          contentType: item.contentType ?? this.detectContentType(item),
-          ocrText: item.ocrText ?? null
-        }))
-        this.expireOldEntries()
-      }
+      const wantEncrypt = this.encryptionRequested()
+      const secure = this.readSecureHistory()
+      const plain = this.readPlainHistory()
+
+      // Prefer the format the flag asks for, but never drop a readable older blob.
+      let data: ClipboardItem[] | null = null
+      if (wantEncrypt && secure) data = secure
+      else if (plain) data = plain
+      else if (secure) data = secure
+
+      if (!data) return
+
+      this.history = data
+      this.expireOldEntries()
+      // Flag is on and only plaintext exists (or safeStorage just became available).
+      if (wantEncrypt && !secure && plain) this.saveHistory()
     } catch (error) {
       console.warn('[QuickBoard] Failed to load history:', error)
       this.history = []
@@ -130,10 +186,26 @@ class ClipboardService {
 
   private saveHistory(): void {
     try {
+      if (this.encryptionRequested()) {
+        const encrypted = encryptString(JSON.stringify(this.history))
+        if (encrypted) {
+          this.store.set(SECURE_HISTORY_KEY, encrypted)
+          if (this.store.has('items')) this.store.delete('items')
+          return
+        }
+        console.warn('[QuickBoard] safeStorage unavailable; saving history as plaintext')
+      }
+
       this.store.set('items', this.history)
+      if (this.store.has(SECURE_HISTORY_KEY)) this.store.delete(SECURE_HISTORY_KEY)
     } catch (error) {
       console.warn('[QuickBoard] Failed to save history:', error)
     }
+  }
+
+  /** Rewrite the history blob so it matches the current encrypt_history flag. */
+  persistHistory(): void {
+    this.saveHistory()
   }
 
   // ─── Expiry ─────────────────────────────────────────────────────────────
@@ -346,14 +418,7 @@ class ClipboardService {
       return
     }
 
-    // Security: skip secrets/passwords
-    if (looksLikeSecret(text)) {
-      this.skippedCount++
-      console.log(
-        `[QuickBoard] Skipped secret (total: ${this.skippedCount})`
-      )
-      return
-    }
+    const secret = looksLikeSecret(text)
 
     // Check for duplicate -- bump copy count instead of adding new entry
     const existingIndex = this.history.findIndex(
@@ -364,6 +429,10 @@ class ClipboardService {
       const existing = this.history[existingIndex]
       existing.copyCount += 1
       existing.timestamp = new Date().toISOString()
+      if (secret) {
+        existing.secret = true
+        if (!existing.editedText) existing.preview = maskSecretText(text)
+      }
       // Move to top
       this.history.splice(existingIndex, 1)
       this.history.unshift(existing)
@@ -372,8 +441,11 @@ class ClipboardService {
       return
     }
 
-    // New text item
-    const preview = text.replace(/\n/g, ' ').trim().slice(0, 120)
+    // New text item. Secrets are stored, but the preview is masked.
+    const flat = text.replace(/\n/g, ' ').trim()
+    const preview = secret
+      ? maskSecretText(flat)
+      : flat.slice(0, 120) + (text.length > 120 ? '...' : '')
     const item: ClipboardItem = {
       id: this.generateId(),
       text,
@@ -381,11 +453,12 @@ class ClipboardService {
       timestamp: new Date().toISOString(),
       copyCount: 1,
       pinned: false,
-      preview: preview + (text.length > 120 ? '...' : ''),
+      preview,
       tags: [],
       sourceApp: this.currentSourceApp,
       contentType: this.detectContentType({ text, type: 'text' }),
-      ocrText: null
+      ocrText: null,
+      ...(secret ? { secret: true } : {})
     }
 
     this.history.unshift(item)
@@ -709,6 +782,36 @@ class ClipboardService {
     const item = this.history.find((h) => h.id === itemId)
     if (item) {
       item.pinned = !item.pinned
+      if (!item.pinned) delete item.pinOrder
+      this.saveHistory()
+      this.broadcastChange()
+    }
+    return this.history
+  }
+
+  /**
+   * Persist a new pinned-row order. `orderedIds` is the full pin sequence;
+   * pins missing from the list keep their relative order after those ids.
+   */
+  reorderPinned(orderedIds: string[]): ClipboardItem[] {
+    const rank = new Map<string, number>()
+    for (const id of orderedIds) {
+      if (typeof id !== 'string' || rank.has(id)) continue
+      rank.set(id, rank.size)
+    }
+
+    let next = rank.size
+    let changed = false
+    for (const item of this.history) {
+      if (!item.pinned) continue
+      const order = rank.has(item.id) ? rank.get(item.id)! : next++
+      if (item.pinOrder !== order) {
+        item.pinOrder = order
+        changed = true
+      }
+    }
+
+    if (changed) {
       this.saveHistory()
       this.broadcastChange()
     }
@@ -788,7 +891,10 @@ class ClipboardService {
     const item = this.history.find((h) => h.id === itemId)
     if (item && item.type === 'text') {
       item.editedText = editedText
-      item.preview = editedText.replace(/\n/g, ' ').trim().slice(0, 120) + (editedText.length > 120 ? '...' : '')
+      const flat = editedText.replace(/\n/g, ' ').trim()
+      item.preview = item.secret
+        ? maskSecretText(flat)
+        : flat.slice(0, 120) + (editedText.length > 120 ? '...' : '')
       this.saveHistory()
       this.broadcastChange()
     }
@@ -817,6 +923,12 @@ class ClipboardService {
     }
     return this.history
   }
+}
+
+function maskSecretText(text: string): string {
+  const trimmed = text.trim()
+  const count = Math.min(16, Math.max(8, trimmed.length))
+  return '\u2022'.repeat(count)
 }
 
 // ─── Singleton ──────────────────────────────────────────────────────────────

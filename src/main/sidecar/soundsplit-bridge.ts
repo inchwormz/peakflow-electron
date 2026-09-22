@@ -474,9 +474,10 @@ class SoundSplitBridge {
       iconPath: s.iconPath
     }))
 
+    const master = { volume: this.masterVolume, peak: this.masterPeak }
     BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) {
-        win.webContents.send(IPC_SEND.SOUNDSPLIT_SESSIONS_UPDATED, data)
+        win.webContents.send(IPC_SEND.SOUNDSPLIT_SESSIONS_UPDATED, data, master)
       }
     })
   }

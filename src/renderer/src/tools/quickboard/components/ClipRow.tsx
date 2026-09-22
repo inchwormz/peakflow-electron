@@ -16,6 +16,12 @@ import {
   type ClipboardItem
 } from './shared'
 
+function maskSecretText(text: string): string {
+  const trimmed = text.trim()
+  const count = Math.min(16, Math.max(8, trimmed.length))
+  return '\u2022'.repeat(count)
+}
+
 export function ClipRow({
   item,
   time,
@@ -26,7 +32,10 @@ export function ClipRow({
   onPin,
   onDelete,
   onDoubleClick,
-  onContextMenu
+  onContextMenu,
+  draggablePin,
+  onPinDragStart,
+  onPinDrop
 }: {
   item: ClipboardItem
   time: string
@@ -39,8 +48,16 @@ export function ClipRow({
   onDelete: (e: React.MouseEvent) => void
   onDoubleClick?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
+  /** Pinned rows can be dragged to a new pin order. */
+  draggablePin?: boolean
+  onPinDragStart?: (id: string) => void
+  onPinDrop?: (targetId: string) => void
 }): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const shownText = item.secret
+    ? maskSecretText(item.editedText || item.preview || item.text || '')
+    : (item.editedText || item.preview)
 
   const isQueued = queueNumber != null
   const rowBg = isQueued ? '#1a1a0a' : isSelected ? DS.bgLight : hovered ? DS.bgLight : 'transparent'
@@ -73,13 +90,25 @@ export function ClipRow({
         transition: 'background 0.15s',
         alignItems: 'stretch',
         background: rowBg,
-        borderRadius: '0 10px 10px 0'
+        borderRadius: '0 10px 10px 0',
+        outline: dragOver ? `1px solid ${DS.accent}` : 'none'
       }}
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onDragOver={draggablePin && item.pinned ? (e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setDragOver(true)
+      } : undefined}
+      onDragLeave={draggablePin ? () => setDragOver(false) : undefined}
+      onDrop={draggablePin && item.pinned ? (e) => {
+        e.preventDefault()
+        setDragOver(false)
+        onPinDrop?.(item.id)
+      } : undefined}
     >
       {/* Provenance strip — 3px left edge */}
       <div
@@ -204,7 +233,7 @@ export function ClipRow({
                 {item.linkTitle}
               </div>
             )}
-            <div style={clipPreviewStyle}>{item.editedText || item.preview}</div>
+            <div style={clipPreviewStyle}>{shownText}</div>
           </>
         )}
 
@@ -239,6 +268,28 @@ export function ClipRow({
           transition: 'opacity 0.15s'
         }}
       >
+        {draggablePin && item.pinned && (
+          <div
+            draggable
+            title="Drag to reorder"
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move'
+              e.dataTransfer.setData('text/plain', item.id)
+              onPinDragStart?.(item.id)
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              cursor: 'grab',
+              color: DS.textDim,
+              fontSize: 12,
+              lineHeight: 1,
+              userSelect: 'none',
+              padding: '2px 0'
+            }}
+          >
+            {'\u2630'}
+          </div>
+        )}
         <ActionButton
           icon={item.pinned ? '\u2605' : '\u2606'}
           defaultColor={item.pinned ? DS.yellow : DS.textGhost}

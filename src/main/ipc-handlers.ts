@@ -207,6 +207,9 @@ export function registerIpcHandlers(): void {
         if (payload.tool === ToolId.ScreenSlap) {
           getScreenSlapService().refreshConfig()
         }
+        if (payload.tool === ToolId.QuickBoard && payload.key === 'encrypt_history') {
+          getClipboardService().persistHistory()
+        }
         return true
       } catch (error) {
         console.warn('[PeakFlow] config:set failed:', error)
@@ -405,6 +408,16 @@ export function registerIpcHandlers(): void {
     IPC_INVOKE.CLIPBOARD_PIN_ITEM,
     (_event, itemId: string): ClipboardItem[] => {
       return getClipboardService().pinItem(itemId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.CLIPBOARD_REORDER_PINS,
+    (_event, orderedIds: unknown): ClipboardItem[] => {
+      const ids = Array.isArray(orderedIds)
+        ? orderedIds.filter((id): id is string => typeof id === 'string')
+        : []
+      return getClipboardService().reorderPinned(ids)
     }
   )
 

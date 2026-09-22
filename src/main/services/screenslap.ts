@@ -191,7 +191,8 @@ class ScreenSlapService {
       meetingLink: null,
       meetingService: null,
       location: null,
-      description: null
+      description: null,
+      attendees: []
     }
     this.triggerAlert(fakeEvent, 1)
     console.log('[ScreenSlap] Test alert triggered')

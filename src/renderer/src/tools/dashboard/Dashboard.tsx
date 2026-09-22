@@ -206,21 +206,28 @@ export function Dashboard(): React.JSX.Element {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    padding: '20px 24px',
-    overflow: 'hidden auto'
+    padding: '16px 20px',
+    minHeight: 0,
+    overflow: 'hidden'
   }
 
   const header: CSSProperties = {
-    marginBottom: 24,
+    marginBottom: 12,
     flexShrink: 0
   }
 
   const grid: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: 10,
-    flex: 1,
-    overflow: 'auto',
+    gridAutoRows: 'min-content',
+    alignItems: 'start',
+    alignContent: 'start',
+    gap: 8,
+    flex: '1 1 0px',
+    height: 0,
+    minHeight: 0,
+    overflowX: 'hidden',
+    overflowY: 'auto',
     scrollbarWidth: 'thin',
     scrollbarColor: '#1a1a1a transparent'
   }
@@ -390,15 +397,17 @@ function ToolCard({
   const card: CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
-    padding: '16px 14px',
+    gap: 6,
+    padding: '12px',
     borderRadius: 12,
     background: isHovered ? 'var(--bg-elevated)' : 'var(--bg-surface)',
     border: `1px solid ${isHovered ? tool.accent + '40' : 'var(--border-surface)'}`,
-    cursor: installed ? 'pointer' : 'default',
+    cursor: 'pointer',
     transition: 'all 0.2s ease',
     position: 'relative',
-    overflow: 'hidden'
+    flexShrink: 0,
+    minHeight: 'min-content',
+    overflow: 'visible'
   }
 
   const iconWrap: CSSProperties = {
@@ -461,8 +470,8 @@ function ToolCard({
   } : null
 
   const installBtnStyle: CSSProperties = {
-    marginTop: 4,
-    padding: '6px 12px',
+    marginTop: 'auto',
+    padding: '6px 10px',
     borderRadius: 8,
     border: 'none',
     outline: 'none',
@@ -472,10 +481,15 @@ function ToolCard({
     fontFamily: "'Outfit', sans-serif",
     background: tool.accent + '20',
     color: tool.accent,
-    transition: 'background 0.2s'
+    transition: 'background 0.2s',
+    width: '100%',
+    whiteSpace: 'normal',
+    lineHeight: 1.3,
+    textAlign: 'center',
+    flexShrink: 0
   }
 
-  const handleCardClick = installed ? onClick : undefined
+  const handleCardClick = installed ? onClick : onInstall
 
   return (
     <div style={card} onMouseEnter={onHover} onMouseLeave={onLeave} onClick={handleCardClick}>

@@ -271,7 +271,8 @@ export function TimerView({
         {focusDetectionEnabled && (
           <div style={{ marginBottom: 10 }}>
             <FocusDetector
-              active={timer.mode === 'work' && timer.status === 'running'}
+              active={timer.mode === 'work' && timer.status !== 'idle'}
+              timerRunning={timer.status === 'running'}
               thresholdSecs={focusAwayThresholdSecs}
               showPreview
             />

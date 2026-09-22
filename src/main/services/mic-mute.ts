@@ -31,21 +31,21 @@ using System;
 using System.Runtime.InteropServices;
 
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-class MMDeviceEnumerator {}
+public class MMDeviceEnumerator {}
 
 [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator {
+public interface IMMDeviceEnumerator {
     int NotImpl1();
     int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
 }
 
 [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice {
+public interface IMMDevice {
     int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
 }
 
 [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioEndpointVolume {
+public interface IAudioEndpointVolume {
     int NotImpl1();
     int NotImpl2();
     int GetChannelCount(out uint pnChannelCount);

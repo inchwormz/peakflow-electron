@@ -61,6 +61,7 @@ interface CalendarEvent {
   location: string | null
   description: string | null
   allDay: boolean
+  attendees?: string[]
 }
 
 interface CalendarStatus {
@@ -103,6 +104,15 @@ type ViewMode = 'main' | 'settings' | 'events'
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const api = window.peakflow
+
+function isSameLocalDay(isoStr: string, nowMs: number): boolean {
+  const d = new Date(isoStr)
+  if (Number.isNaN(d.getTime())) return false
+  const n = new Date(nowMs)
+  return d.getFullYear() === n.getFullYear()
+    && d.getMonth() === n.getMonth()
+    && d.getDate() === n.getDate()
+}
 
 function formatTime(isoStr: string): string {
   const d = new Date(isoStr)
@@ -337,6 +347,9 @@ export function ScreenSlap(): React.JSX.Element {
   const nextDiff = nextEvent
     ? new Date(nextEvent.startTime).getTime() - now
     : null
+  const todayEvents = events
+    .filter((e) => isSameLocalDay(e.startTime, now))
+    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
@@ -638,18 +651,19 @@ export function ScreenSlap(): React.JSX.Element {
               </button>
             </div>
             <div style={styles.panelSub}>
-              {events.length} events scheduled
+              {todayEvents.length} events scheduled
             </div>
 
             <div style={styles.panelBody}>
-              {events.length === 0 ? (
+              {todayEvents.length === 0 ? (
                 <div style={styles.emptyEvents}>
                   No events scheduled today
                 </div>
               ) : (
-                events.map((ev) => {
+                todayEvents.map((ev) => {
                   const isPast =
                     new Date(ev.endTime).getTime() < now
+                  const names = ev.attendees?.filter((name) => name.trim().length > 0) ?? []
                   return (
                     <div
                       key={ev.id}
@@ -663,7 +677,10 @@ export function ScreenSlap(): React.JSX.Element {
                         {formatTime(ev.endTime)}
                       </span>
                       <span style={styles.eventNameCol}>
-                        {ev.summary}
+                        <span style={styles.eventSummary}>{ev.summary}</span>
+                        {names.length > 0 && (
+                          <span style={styles.eventAttendees}>{names.join(', ')}</span>
+                        )}
                       </span>
                       <span style={styles.eventDurCol}>
                         {ev.durationMinutes}m
@@ -1201,8 +1218,23 @@ const styles: Record<string, CSSProperties> = {
 
   eventNameCol: {
     flex: 1,
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 2
+  },
+
+  eventSummary: {
     fontSize: 13,
     color: '#ccc',
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  },
+
+  eventAttendees: {
+    fontSize: 10,
+    color: '#888888',
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis'
