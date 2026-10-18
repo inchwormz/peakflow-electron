@@ -61,8 +61,9 @@ interface OverlayEntry {
   window: BrowserWindow
   displayId: number
   bounds: Electron.Rectangle
+  /** native-API units per DIP: display scale on Windows, 1 on macOS (helper returns points) */
   scaleFactor: number
-  /** Physical pixel bounds (bounds * scaleFactor) for matching against Win32 coords */
+  /** Display bounds in native-API units (physical px on Windows, points on macOS) */
   physicalBounds: { x: number; y: number; width: number; height: number }
 }
 
@@ -503,10 +504,17 @@ class FocusDimService {
       win.setAlwaysOnTop(true, 'screen-saver')
       win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml)}`)
 
-      const sf = display.scaleFactor || 1
+      // Window rects arrive in the native API's units. Win32 returns physical
+      // pixels, so we keep a physical copy of each display to match against.
+      // macOS (Swift helper: AX/CGWindowList) returns points, which are the
+      // same units as Electron's DIP screen coordinates on every display,
+      // Retina or not — so no scaling there (and screen.dipToScreenPoint
+      // does not exist on macOS).
+      const nativeIsDip = process.platform === 'darwin'
+      const sf = nativeIsDip ? 1 : (display.scaleFactor || 1)
       // DPI origin: screen.dipToScreenPoint handles multi-monitor offsets correctly.
       // Simple `x * sf` only works for the primary monitor at (0,0).
-      const physOrigin = screen.dipToScreenPoint({ x, y })
+      const physOrigin = nativeIsDip ? { x, y } : screen.dipToScreenPoint({ x, y })
       const entry: OverlayEntry = {
         window: win,
         displayId: display.id,
