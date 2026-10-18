@@ -3,6 +3,7 @@ productName: PeakFlow
 directories:
   buildResources: resources
   output: release
+afterPack: scripts/after-pack.js
 afterSign: scripts/notarize.js
 files:
   - '!**/.vscode/*'
@@ -15,6 +16,11 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!sidecar/*'
+  # developer-only files that must never ship inside the app
+  - '!.claude/**'
+  - '!.playwright-mcp/**'
+  - '!scripts/**'
+  - '!{CLAUDE.md,ROADMAP.md,eslint.config.js,.env.example}'
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
