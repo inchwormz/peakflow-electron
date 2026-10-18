@@ -16,6 +16,12 @@
  *   mic-set-mute <0|1>    → {"muted": true/false}
  *   mic-toggle-mute       → {"muted": true/false}
  *   accessibility-check   → {"trusted": true/false}
+ *   paste                 → {"ok": bool, "trusted": bool}  (Cmd+V via CGEvent)
+ *   ocr <path>            → {"text": "..."}               (Apple Vision)
+ *
+ * One-shot mode: `peakflow-helper <command> [arg]` runs one command, prints
+ * its JSON result and exits (used for paste and OCR so a slow OCR never
+ * blocks the 60fps window polling on the persistent process).
  *   ping                  → "pong"
  *   exit                  → terminates
  */
@@ -33,6 +39,31 @@ func respond(_ json: String) {
 func respondError(_ message: String) {
     let escaped = message.replacingOccurrences(of: "\"", with: "\\\"")
     respond("{\"error\":\"\(escaped)\"}")
+}
+
+func runOneShot(_ command: String, _ arg: String?) -> String? {
+    switch command {
+    case "paste":
+        return pasteCmdV()
+    case "ocr":
+        guard let path = arg else { return jsonLine(["text": "", "error": "ocr requires a file path"]) }
+        return recognizeText(path: path)
+    case "accessibility-check":
+        return "{\"trusted\":\(checkAccessibility())}"
+    default:
+        return nil
+    }
+}
+
+let cliArgs = CommandLine.arguments
+if cliArgs.count > 1 {
+    let arg = cliArgs.count > 2 ? cliArgs[2...].joined(separator: " ") : nil
+    if let result = runOneShot(cliArgs[1], arg) {
+        respond(result)
+        exit(0)
+    }
+    respondError("Unknown command: \(cliArgs[1])")
+    exit(1)
 }
 
 // Main loop: read commands from stdin
@@ -99,6 +130,12 @@ while let line = readLine(strippingNewline: true) {
     case "accessibility-check":
         let trusted = checkAccessibility()
         respond("{\"trusted\":\(trusted)}")
+
+    case "paste":
+        respond(pasteCmdV())
+
+    case "ocr":
+        respond(runOneShot("ocr", arg) ?? "{}")
 
     case "ping":
         respond("\"pong\"")

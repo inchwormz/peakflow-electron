@@ -9,8 +9,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process'
-import { join } from 'path'
-import { app } from 'electron'
+import { getMacHelperPath } from './mac-helper'
 
 // ─── Types (matching the shared interfaces in active-window.ts router) ──────
 
@@ -46,13 +45,7 @@ let pendingData = ''
 let requestQueue: Array<{ resolve: (data: string) => void; reject: (err: Error) => void }> = []
 let restartTimeout: ReturnType<typeof setTimeout> | null = null
 
-function getHelperPath(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'peakflow-helper')
-  }
-  // Dev mode: use the repo-level resources directory, not the compiled out/ tree.
-  return join(app.getAppPath(), 'resources', 'darwin', 'peakflow-helper')
-}
+const getHelperPath = getMacHelperPath
 
 function ensureHelper(): void {
   if (helper && !helper.killed) return

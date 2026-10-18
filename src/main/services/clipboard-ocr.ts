@@ -1,5 +1,6 @@
 /**
- * clipboard-ocr.ts — OCR for image clips using Windows native OCR (WinRT).
+ * clipboard-ocr.ts — OCR for image clips: Windows native OCR (WinRT) on Windows,
+ * Apple Vision (via the Swift helper) on macOS.
  *
  * Invokes PowerShell with Add-Type to load Windows.Media.Ocr via WinRT.
  * Only works on Windows 10 1809+ (build 17763+). Falls back gracefully.
@@ -7,6 +8,7 @@
 
 import { execFile } from 'child_process'
 import { existsSync } from 'fs'
+import { runMacHelper } from '../native/mac-helper'
 
 // ─── OCR via Windows Runtime ────────────────────────────────────────────────
 
@@ -16,13 +18,22 @@ import { existsSync } from 'fs'
  */
 export function runOcr(imagePath: string): Promise<string | null> {
   return new Promise((resolve) => {
-    // WinRT OCR via PowerShell exists only on Windows
-    if (process.platform !== 'win32') {
+    if (!existsSync(imagePath)) {
       resolve(null)
       return
     }
 
-    if (!existsSync(imagePath)) {
+    // macOS: Apple Vision via the Swift helper (on-device, no permission needed)
+    if (process.platform === 'darwin') {
+      runMacHelper(['ocr', imagePath], 15000).then((result) => {
+        const text = typeof result?.text === 'string' ? result.text.trim() : ''
+        resolve(text.length > 0 ? text : null)
+      })
+      return
+    }
+
+    // WinRT OCR via PowerShell exists only on Windows
+    if (process.platform !== 'win32') {
       resolve(null)
       return
     }
