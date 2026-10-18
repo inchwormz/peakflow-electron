@@ -1,12 +1,14 @@
 import { isMac } from './platform'
+// Static imports: electron-vite bundles main into one file, so a runtime
+// require('./active-window-win32') would look for a file that does not exist.
+// Both modules are safe to load on either OS (native bindings are lazy).
+import * as winImpl from './active-window-win32'
+import * as macImpl from './active-window-darwin'
 
-type ActiveWindowModule = typeof import('./active-window-win32')
+type ActiveWindowModule = typeof winImpl
 
 function getImpl(): ActiveWindowModule {
-  if (isMac) {
-    return require('./active-window-darwin') as ActiveWindowModule
-  }
-  return require('./active-window-win32') as ActiveWindowModule
+  return isMac ? (macImpl as ActiveWindowModule) : winImpl
 }
 
 export type { ActiveWindowInfo, WindowRect, DisplayBounds } from './active-window-win32'
