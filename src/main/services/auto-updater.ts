@@ -17,7 +17,8 @@
 import { app, dialog, net, BrowserWindow, shell } from 'electron'
 import { createWriteStream } from 'fs'
 import { join, dirname } from 'path'
-import { spawn, execFileSync } from 'child_process'
+import { spawn } from 'child_process'
+import { readMacSignature } from './mac-signature'
 import type { AppUpdater } from 'electron-updater'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -215,20 +216,11 @@ let macSignedCache: boolean | null = null
 function isMacUpdateCapable(): boolean {
   if (!isMac || !app.isPackaged) return false
   if (macSignedCache !== null) return macSignedCache
-  try {
-    // process.execPath = <PeakFlow.app>/Contents/MacOS/PeakFlow
-    const bundlePath = dirname(dirname(dirname(process.execPath)))
-    // codesign prints signing details on stderr; capture both streams
-    const details = execFileSync('/usr/bin/codesign', ['-dv', '--verbose=2', bundlePath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000
-    })
-    macSignedCache = /Authority=Developer ID Application/.test(details)
-  } catch (err) {
-    const e = err as { stderr?: string }
-    macSignedCache = typeof e.stderr === 'string' && /Authority=Developer ID Application/.test(e.stderr)
-  }
+  // process.execPath = <PeakFlow.app>/Contents/MacOS/PeakFlow
+  const bundlePath = dirname(dirname(dirname(process.execPath)))
+  const kind = readMacSignature(bundlePath)
+  console.log(`[AutoUpdater] macOS code signature: ${kind}`)
+  macSignedCache = kind === 'developer-id'
   return macSignedCache
 }
 

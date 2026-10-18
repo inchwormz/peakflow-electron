@@ -18,7 +18,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "check": "node scripts/checks/run.mjs"
   },
   "dependencies": {
     "electron-store": "^10.0.0",
