@@ -9,7 +9,7 @@
  */
 
 import { getMacHelperPath } from './mac-helper'
-import { HelperClient } from './helper-client'
+import { HelperClient, isValidBundleId, isValidPid } from './helper-client'
 
 // ─── Types (matching the shared interfaces in active-window.ts router) ──────
 
@@ -96,6 +96,7 @@ export function getActiveWindow(): ActiveWindowInfo | null {
 
 export function getAllVisibleWindows(filterPid?: number, _displayBounds?: DisplayBounds[]): WindowRect[] {
   // Async: fire command, return cached result keyed by command
+  if (filterPid !== undefined && !isValidPid(filterPid)) return []
   const command = filterPid !== undefined ? `all-windows ${filterPid}` : 'all-windows'
   const cacheKey = command
 
@@ -128,10 +129,17 @@ const allWindowsCache = new Map<string, { data: WindowRect[]; inFlight: boolean 
 export function getWindowsForExeNames(exeNames: string[], _displayBounds?: DisplayBounds[]): WindowRect[] {
   // On macOS, exeNames contains bundle IDs. Query for each.
   // Use cached results with async refresh.
-  if (!cachedExeWindows.inFlight && exeNames.length > 0) {
+  // Bundle IDs go into a helper command line: only letters, digits, dots, hyphens.
+  const bundleIds = exeNames.filter((bid) => {
+    if (isValidBundleId(bid)) return true
+    if (warnedBundleIds.has(bid)) return false
+    warnedBundleIds.add(bid)
+    console.warn(`[ActiveWindow-Darwin] Ignoring invalid bundle ID: ${JSON.stringify(bid)}`)
+    return false
+  })
+  if (!cachedExeWindows.inFlight && bundleIds.length > 0) {
     cachedExeWindows.inFlight = true
-    // Query the first bundle ID (most common case: single excluded app)
-    const promises = exeNames.map(bid => sendCommand(`app-windows ${bid}`))
+    const promises = bundleIds.map(bid => sendCommand(`app-windows ${bid}`))
     Promise.all(promises).then((results) => {
       const allRects: WindowRect[] = []
       for (const raw of results) {
@@ -150,6 +158,7 @@ export function getWindowsForExeNames(exeNames: string[], _displayBounds?: Displ
   return cachedExeWindows.data
 }
 
+const warnedBundleIds = new Set<string>()
 const cachedExeWindows: { data: WindowRect[]; inFlight: boolean } = { data: [], inFlight: false }
 
 /** PID → bundleId cache */
@@ -157,6 +166,7 @@ const pidBundleCache = new Map<number, string>()
 const pidLookupsInFlight = new Set<number>()
 
 export function getProcessExeName(pid: number): string | null {
+  if (!isValidPid(pid)) return null
   const cached = pidBundleCache.get(pid)
   if (cached !== undefined) return cached
 
