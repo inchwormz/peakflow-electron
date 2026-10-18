@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, type ReactNode } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import { TitleBar } from './components/layout/TitleBar'
 import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
+import { isToolSupportedOn } from '@shared/platform-tools'
 import { Dashboard } from './tools/dashboard/Dashboard'
 import { AlertOverlay } from './tools/screenslap/AlertOverlay'
 import { TrialExpired } from './components/licensing/TrialExpired'
@@ -83,7 +84,7 @@ function ToolPlaceholder({ toolId }: { toolId: ToolId }): React.JSX.Element {
 /* ─── Debug / Landing View ───────────────────────────────────────────────── */
 
 function DebugLanding(): React.JSX.Element {
-  const tools = Object.values(ToolId)
+  const tools = Object.values(ToolId).filter((id) => isToolSupportedOn(id, window.peakflow.platform))
 
   return (
     <>

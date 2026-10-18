@@ -549,6 +549,8 @@ export function getSoundSplitBridge(): SoundSplitBridge {
 }
 
 export function initSoundSplit(): void {
+  // PowerShell/WASAPI sidecar is Windows-only; SoundSplit is hidden elsewhere
+  if (process.platform !== 'win32') return
   getSoundSplitBridge().init()
 }
 

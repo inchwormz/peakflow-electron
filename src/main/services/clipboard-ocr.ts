@@ -16,6 +16,12 @@ import { existsSync } from 'fs'
  */
 export function runOcr(imagePath: string): Promise<string | null> {
   return new Promise((resolve) => {
+    // WinRT OCR via PowerShell exists only on Windows
+    if (process.platform !== 'win32') {
+      resolve(null)
+      return
+    }
+
     if (!existsSync(imagePath)) {
       resolve(null)
       return

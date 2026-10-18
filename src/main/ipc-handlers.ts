@@ -64,6 +64,7 @@ import type { ScreenSlapState } from './services/screenslap'
 import { getLiquidFocusService, initLiquidFocus } from './services/liquidfocus'
 import type { LiquidFocusFullState, LiquidFocusTask, TimerState, SessionStats } from './services/liquidfocus'
 import { getSoundSplitBridge, initSoundSplit } from './sidecar/soundsplit-bridge'
+import { isToolSupportedOn } from '@shared/platform-tools'
 import type { AudioSession, MasterAudio } from './sidecar/soundsplit-bridge'
 import { getTodoistService } from './services/todoist'
 import type { TodoistStatus, TodoistTask, TodoistProject } from './services/todoist'
@@ -897,10 +898,13 @@ export function registerIpcHandlers(): void {
   )
 
   // ─── SoundSplit ──────────────────────────────────────────────────────────
+  // Windows-only (PowerShell/WASAPI sidecar); other platforms get inert results
+  const soundSplitAvailable = isToolSupportedOn(ToolId.SoundSplit, process.platform)
 
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_GET_SESSIONS,
     (): AudioSession[] => {
+      if (!soundSplitAvailable) return []
       return getSoundSplitBridge().getSessions()
     }
   )
@@ -908,6 +912,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_VOLUME,
     (_event, pid: number, volume: number): boolean => {
+      if (!soundSplitAvailable) return false
       return getSoundSplitBridge().setVolume(pid, volume)
     }
   )
@@ -915,6 +920,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_MUTE,
     (_event, pid: number, muted: boolean): boolean => {
+      if (!soundSplitAvailable) return false
       return getSoundSplitBridge().setMute(pid, muted)
     }
   )
@@ -922,6 +928,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_GET_MASTER,
     (): MasterAudio => {
+      if (!soundSplitAvailable) return { volume: 0, peak: 0 }
       return getSoundSplitBridge().getMaster()
     }
   )
@@ -929,6 +936,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_MASTER,
     (_event, volume: number): boolean => {
+      if (!soundSplitAvailable) return false
       return getSoundSplitBridge().setMaster(volume)
     }
   )

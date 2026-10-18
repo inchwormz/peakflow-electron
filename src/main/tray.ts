@@ -16,6 +16,7 @@ import { sendViaEmail, revealLogFile } from './services/bug-report'
 import { getFocusDimService } from './services/focus-dim'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
+import { isToolSupportedOn } from '@shared/platform-tools'
 
 let tray: Tray | null = null
 
@@ -66,6 +67,7 @@ function buildContextMenu(): Electron.Menu {
 
   for (const id of TRAY_TOOL_ORDER) {
     if (!isToolInstalled(id)) continue
+    if (!isToolSupportedOn(id, process.platform)) continue
 
     if (id === ToolId.FocusDim) {
       // FocusDim gets a submenu with toggle + intensity presets + settings
