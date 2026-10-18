@@ -28,6 +28,7 @@ import { app, powerMonitor, dialog } from 'electron'
 import { Worker } from 'worker_threads'
 import { join } from 'path'
 import { getLogPath } from './logger'
+import { guardModal } from './modal-guard'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ const HEARTBEAT_INTERVAL_MS = 5_000
 const FREEZE_THRESHOLD_MS = 30_000
 /** Gaps longer than this are sleep/hibernate, not a live freeze — reset instead of killing. */
 const SLEEP_GAP_MS = 2 * 60_000
+/** macOS: a dialog promise that has not settled after this long stops pausing the watchdog. */
+const MODAL_MAX_OPEN_MS = 10 * 60_000
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -271,23 +274,13 @@ function pauseDuringNativeDialogs(): void {
   for (const name of methods) {
     const original = target[name]
     if (typeof original !== 'function') continue
-    target[name] = (...args: unknown[]): unknown => {
-      worker?.postMessage({ type: 'modal-open' })
-      const close = (): void => { worker?.postMessage({ type: 'modal-close' }) }
-      let result: unknown
-      try {
-        result = original.apply(dialog, args)
-      } catch (err) {
-        close()
-        throw err
-      }
-      if (result && typeof (result as Promise<unknown>).then === 'function') {
-        ;(result as Promise<unknown>).then(close, close)
-      } else {
-        close()
-      }
-      return result
-    }
+    target[name] = guardModal(
+      original,
+      dialog,
+      () => worker?.postMessage({ type: 'modal-open' }),
+      () => worker?.postMessage({ type: 'modal-close' }),
+      MODAL_MAX_OPEN_MS
+    )
   }
 }
 
