@@ -8,15 +8,16 @@
  * was in, so the paste lands there.
  */
 
-import { runMacHelperSync } from './mac-helper'
+import { runMacHelper } from './mac-helper'
 import { notifyAccessibilityNeeded } from '../services/permissions-darwin'
 
 /**
  * Simulate Cmd+V keystroke to paste from clipboard on macOS.
- * Returns true if the keystroke was sent successfully.
+ * Resolves true if the keystroke was sent. Runs the helper asynchronously so
+ * the main thread (tray, hotkeys, IPC) never stalls for up to 2 s waiting on it.
  */
-export function simulateCmdV(): boolean {
-  const result = runMacHelperSync(['paste'], 2000)
+export async function simulateCmdV(): Promise<boolean> {
+  const result = await runMacHelper(['paste'], 2000)
   if (!result) return false
   if (result.trusted === false) {
     console.warn('[Keyboard-Darwin] Paste skipped: Accessibility permission not granted')

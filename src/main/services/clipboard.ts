@@ -677,8 +677,9 @@ class ClipboardService {
     // target app before simulating Ctrl+V. The renderer closes after ~400ms
     // (toast animation), so 500ms ensures focus has returned.
     setTimeout(() => {
-      const success = simulateCtrlV()
-      console.log(`[QuickBoard] Paste ${success ? 'sent' : 'failed'} for item ${itemId}`)
+      void simulateCtrlV().then((success) => {
+        console.log(`[QuickBoard] Paste ${success ? 'sent' : 'failed'} for item ${itemId}`)
+      })
     }, 500)
   }
 

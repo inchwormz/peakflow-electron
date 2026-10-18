@@ -60,8 +60,9 @@ export function pasteNext(): boolean {
 
   // Short delay for clipboard to settle, then paste (user is already in target app)
   setTimeout(() => {
-    const ok = simulateCtrlV()
-    console.log(`[QuickBoard] Queue Ctrl+V ${ok ? 'sent' : 'FAILED'}`)
+    void simulateCtrlV().then((ok) => {
+      console.log(`[QuickBoard] Queue Ctrl+V ${ok ? 'sent' : 'FAILED'}`)
+    })
   }, 80)
 
   queue.currentIndex++

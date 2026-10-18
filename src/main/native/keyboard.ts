@@ -5,10 +5,14 @@ import { isMac } from './platform'
 import * as winImpl from './keyboard-win32'
 import * as macImpl from './keyboard-darwin'
 
-export function simulateCtrlV(): boolean {
+/**
+ * Paste the clipboard into the focused app. On Windows the keystroke is sent
+ * synchronously, exactly as before; the result is only wrapped in a promise.
+ */
+export function simulateCtrlV(): Promise<boolean> {
   if (isMac) {
     return macImpl.simulateCmdV()
   }
 
-  return winImpl.simulateCtrlV()
+  return Promise.resolve(winImpl.simulateCtrlV())
 }
