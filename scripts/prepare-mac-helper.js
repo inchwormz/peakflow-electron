@@ -15,30 +15,40 @@ function ensureMac() {
   return true
 }
 
-function runSwiftBuild() {
-  const result = spawnSync('swift', ['build', '-c', 'release'], {
-    cwd: helperRoot,
-    stdio: 'inherit'
-  })
+// Build one binary per CPU with the plain SwiftPM build system (works with the
+// Command Line Tools; multi-arch `--arch a --arch b` needs full Xcode), then
+// merge them with lipo so one helper serves both the Apple-silicon and the
+// Intel downloads.
+const TRIPLES = ['arm64-apple-macosx13.0', 'x86_64-apple-macosx13.0']
 
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1)
+function runSwiftBuild() {
+  for (const triple of TRIPLES) {
+    const result = spawnSync('swift', ['build', '-c', 'release', '--triple', triple], {
+      cwd: helperRoot,
+      stdio: 'inherit'
+    })
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1)
+    }
   }
 }
 
 function findBuiltHelper() {
-  const candidates = [
-    path.join(helperRoot, '.build', 'apple', 'Products', 'Release', 'PeakFlowHelper'),
-    path.join(helperRoot, '.build', 'release', 'PeakFlowHelper')
-  ]
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate
+  const slices = TRIPLES.map((triple) =>
+    path.join(helperRoot, '.build', triple.replace(/13\.0$/, ''), 'release', 'PeakFlowHelper')
+  )
+  for (const slice of slices) {
+    if (!fs.existsSync(slice)) {
+      throw new Error(`PeakFlowHelper slice not found after swift build: ${slice}`)
     }
   }
 
-  throw new Error('PeakFlowHelper binary not found after swift build')
+  const universal = path.join(helperRoot, '.build', 'PeakFlowHelper-universal')
+  const lipo = spawnSync('lipo', ['-create', ...slices, '-output', universal], { stdio: 'inherit' })
+  if (lipo.status !== 0) {
+    process.exit(lipo.status ?? 1)
+  }
+  return universal
 }
 
 function copyHelper(sourcePath) {

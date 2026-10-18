@@ -23,18 +23,36 @@ files:
   - '!{CLAUDE.md,ROADMAP.md,eslint.config.js,.env.example}'
 mac:
   category: public.app-category.productivity
+  # Matches the Swift helper's deployment target (Package.swift: macOS 13)
+  minimumSystemVersion: '13.0'
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
+  # Signing: electron-builder uses a "Developer ID Application" identity from
+  # the keychain (or CSC_LINK/CSC_KEY_PASSWORD). With none present it skips
+  # signing and still produces an unsigned app.
+  # Notarization runs in scripts/notarize.js (afterSign) from env vars, so the
+  # built-in step stays off to avoid notarizing twice.
+  notarize: false
+  # Separate Apple-silicon and Intel downloads (each about half a universal build)
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  artifactName: PeakFlow-${version}-${arch}.${ext}
   extendInfo:
     NSCameraUsageDescription: PeakFlow needs camera access for meeting prep and focus tools.
     NSMicrophoneUsageDescription: PeakFlow needs microphone access for meeting prep and mic mute controls.
     LSUIElement: true
   extraResources:
+    - from: resources/darwin/peakflow-helper
+      to: peakflow-helper
     - from: resources/trayTemplate.png
       to: trayTemplate.png
     - from: resources/trayTemplate@2x.png
@@ -63,8 +81,6 @@ extraResources:
     to: icon.png
   - from: resources/tray-icon.png
     to: tray-icon.png
-  - from: resources/darwin/peakflow-helper
-    to: peakflow-helper
 asarUnpack:
   - "**/*.node"
   - "node_modules/koffi/**/*"
