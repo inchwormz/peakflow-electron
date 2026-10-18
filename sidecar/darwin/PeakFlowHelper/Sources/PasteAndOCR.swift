@@ -10,15 +10,6 @@ import Cocoa
 import ApplicationServices
 import Vision
 
-/// Encode a dictionary as one line of JSON (handles all string escaping).
-func jsonLine(_ object: [String: Any]) -> String {
-    guard let data = try? JSONSerialization.data(withJSONObject: object, options: []),
-          let text = String(data: data, encoding: .utf8) else {
-        return "{\"error\":\"json encoding failed\"}"
-    }
-    return text
-}
-
 /// Frontmost on-screen app window that does not belong to `excludedPid`.
 /// CGWindowList returns windows front-to-back, so the first match is the
 /// app the user was in before PeakFlow took focus.

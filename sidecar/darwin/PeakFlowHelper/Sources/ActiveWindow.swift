@@ -20,16 +20,12 @@ struct WindowInfo {
     let bundleId: String
     let appName: String
 
-    func toJSON() -> String {
-        let escapedTitle = title.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedName = appName.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return """
-        {"pid":\(pid),"x":\(x),"y":\(y),"w":\(w),"h":\(h),\
-        "title":"\(escapedTitle)","bundleId":"\(bundleId)","appName":"\(escapedName)"}
-        """
+    var jsonObject: [String: Any] {
+        return ["pid": Int(pid), "x": x, "y": y, "w": w, "h": h,
+                "title": title, "bundleId": bundleId, "appName": appName]
     }
+
+    func toJSON() -> String { return jsonString(jsonObject) }
 }
 
 struct WindowRect {
@@ -38,31 +34,21 @@ struct WindowRect {
     let w: Double
     let h: Double
 
-    func toJSON() -> String {
-        return "{\"x\":\(x),\"y\":\(y),\"w\":\(w),\"h\":\(h)}"
-    }
+    var jsonObject: [String: Any] { return ["x": x, "y": y, "w": w, "h": h] }
 }
 
 struct AppInfo {
     let bundleId: String
     let name: String
 
-    func toJSON() -> String {
-        let escapedName = name.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "{\"exe\":\"\(bundleId)\",\"name\":\"\(escapedName)\"}"
-    }
+    var jsonObject: [String: Any] { return ["exe": bundleId, "name": name] }
 }
 
 struct ProcessInfo {
     let name: String
     let bundleId: String
 
-    func toJSON() -> String {
-        let escapedName = name.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "{\"name\":\"\(escapedName)\",\"bundleId\":\"\(bundleId)\"}"
-    }
+    func toJSON() -> String { return jsonString(["name": name, "bundleId": bundleId]) }
 }
 
 // MARK: - Ignored bundle IDs (macOS equivalents of Windows IGNORED_CLASSES)

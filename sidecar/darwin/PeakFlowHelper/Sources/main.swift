@@ -34,8 +34,7 @@ func respond(_ json: String) {
 }
 
 func respondError(_ message: String) {
-    let escaped = message.replacingOccurrences(of: "\"", with: "\\\"")
-    respond("{\"error\":\"\(escaped)\"}")
+    respond(jsonString(["error": message]))
 }
 
 func runOneShot(_ command: String, _ arg: String?) -> String? {
@@ -46,7 +45,7 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
         guard let path = arg else { return jsonLine(["text": "", "error": "ocr requires a file path"]) }
         return recognizeText(path: path)
     case "accessibility-check":
-        return "{\"trusted\":\(checkAccessibility())}"
+        return jsonString(["trusted": checkAccessibility()])
     default:
         return nil
     }
@@ -82,23 +81,17 @@ while let line = readLine(strippingNewline: true) {
 
     case "all-windows":
         let pid = arg.flatMap { Int32($0) }
-        let windows = getAllVisibleWindows(filterPid: pid)
-        let jsonArray = windows.map { $0.toJSON() }.joined(separator: ",")
-        respond("[\(jsonArray)]")
+        respond(jsonString(getAllVisibleWindows(filterPid: pid).map { $0.jsonObject }))
 
     case "app-windows":
         guard let bundleId = arg else {
             respondError("app-windows requires a bundle ID argument")
             continue
         }
-        let windows = getWindowsForBundleId(bundleId)
-        let jsonArray = windows.map { $0.toJSON() }.joined(separator: ",")
-        respond("[\(jsonArray)]")
+        respond(jsonString(getWindowsForBundleId(bundleId).map { $0.jsonObject }))
 
     case "visible-apps":
-        let apps = getVisibleAppList()
-        let jsonArray = apps.map { $0.toJSON() }.joined(separator: ",")
-        respond("[\(jsonArray)]")
+        respond(jsonString(getVisibleAppList().map { $0.jsonObject }))
 
     case "process-name":
         guard let pidStr = arg, let pid = Int32(pidStr) else {
@@ -112,8 +105,7 @@ while let line = readLine(strippingNewline: true) {
         }
 
     case "accessibility-check":
-        let trusted = checkAccessibility()
-        respond("{\"trusted\":\(trusted)}")
+        respond(jsonString(["trusted": checkAccessibility()]))
 
     case "paste":
         respond(pasteCmdV())
