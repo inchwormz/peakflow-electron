@@ -12,9 +12,6 @@
  *   app-windows <bid>     → windows filtered by bundle ID
  *   visible-apps          → deduplicated list of visible apps
  *   process-name <pid>    → app name + bundle ID for a PID
- *   mic-get-mute          → {"muted": true/false}
- *   mic-set-mute <0|1>    → {"muted": true/false}
- *   mic-toggle-mute       → {"muted": true/false}
  *   accessibility-check   → {"trusted": true/false}
  *   paste                 → {"ok": bool, "trusted": bool}  (Cmd+V via CGEvent)
  *   ocr <path>            → {"text": "..."}               (Apple Vision)
@@ -113,19 +110,6 @@ while let line = readLine(strippingNewline: true) {
         } else {
             respond("null")
         }
-
-    case "mic-get-mute":
-        let result = getMicMuteState()
-        respond(result)
-
-    case "mic-set-mute":
-        let mute = arg == "1" || arg == "true"
-        let result = setMicMute(muted: mute)
-        respond(result)
-
-    case "mic-toggle-mute":
-        let result = toggleMicMute()
-        respond(result)
 
     case "accessibility-check":
         let trusted = checkAccessibility()
