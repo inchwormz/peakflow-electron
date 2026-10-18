@@ -12,8 +12,8 @@
  */
 
 import type { AccessStatus } from '@shared/ipc-types'
-import { isLicensed, isToolLicensed as isLicenseForTool } from './license'
-import { isToolInstalled, getToolTrialDaysRemaining } from './trial'
+import { isLicensed, isToolLicensed as isLicenseForTool, isSuiteLicense } from './license'
+import { isToolInstalled, getToolTrialDaysRemaining, getTrialDaysRemaining } from './trial'
 
 /**
  * Determine whether the user has access to a PeakFlow tool.
@@ -30,34 +30,51 @@ import { isToolInstalled, getToolTrialDaysRemaining } from './trial'
  */
 export async function checkAccess(toolId = 'PeakFlow'): Promise<AccessStatus> {
   try {
-    // 1. Tool not installed → storefront gate
-    if (toolId !== 'PeakFlow' && !isToolInstalled(toolId)) {
+    const licensed = await isLicensed()
+
+    // Suite hub: any paying customer is "licensed" for dashboard chrome (StatusBar, key UI)
+    if (toolId === 'PeakFlow' && licensed) {
       return {
-        allowed: false,
-        message: 'tool_not_installed',
-        daysRemaining: 0,
-        isLicensed: false,
-        isToolLicensed: false
+        allowed: true,
+        message: 'Licensed',
+        daysRemaining: -1,
+        isLicensed: true,
+        isToolLicensed: isLicenseForTool(toolId),
+        isSuiteLicense: isSuiteLicense()
       }
     }
 
-    const licensed = await isLicensed()
+    // License covers this tool — access is not blocked by storefront install state
     const toolCovered = licensed && isLicenseForTool(toolId)
-    const daysRemaining = getToolTrialDaysRemaining(toolId)
-    const trialActive = daysRemaining > 0
-
-    // 2. License covers this specific tool → full access
     if (toolCovered) {
       return {
         allowed: true,
         message: 'Licensed',
         daysRemaining: -1,
         isLicensed: true,
-        isToolLicensed: true
+        isToolLicensed: true,
+        isSuiteLicense: isSuiteLicense()
       }
     }
 
-    // 3. Per-tool trial still running → access with countdown
+    // Trial storefront: tool must be "installed" before trial access
+    if (toolId !== 'PeakFlow' && !isToolInstalled(toolId)) {
+      return {
+        allowed: false,
+        message: 'tool_not_installed',
+        daysRemaining: 0,
+        isLicensed: licensed,
+        isToolLicensed: false
+      }
+    }
+
+    const daysRemaining =
+      toolId === 'PeakFlow'
+        ? Math.max(getToolTrialDaysRemaining('PeakFlow'), getTrialDaysRemaining())
+        : getToolTrialDaysRemaining(toolId)
+    const trialActive = daysRemaining > 0
+
+    // Per-tool trial still running → access with countdown
     if (trialActive) {
       return {
         allowed: true,
@@ -90,9 +107,9 @@ export async function checkAccess(toolId = 'PeakFlow'): Promise<AccessStatus> {
   } catch (error) {
     console.warn('[PeakFlow:AccessCheck] checkAccess failed:', error)
     return {
-      allowed: true,
-      message: 'Access check unavailable',
-      daysRemaining: -1,
+      allowed: false,
+      message: 'access_check_failed',
+      daysRemaining: 0,
       isLicensed: false,
       isToolLicensed: false
     }

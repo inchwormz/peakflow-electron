@@ -169,7 +169,7 @@ export function SoundSplit(): React.JSX.Element {
             fontSize: 10,
             color: DS.textMuted,
             letterSpacing: '0.5px',
-            padding: '2px 24px 16px'
+            padding: '10px 24px 16px'
           }}
         >
           Per-app volume control

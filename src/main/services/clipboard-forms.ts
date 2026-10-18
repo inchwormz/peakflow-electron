@@ -5,8 +5,8 @@
  */
 
 import Store from 'electron-store'
-import { clipboard } from 'electron'
 import { simulateCtrlV } from '../native/keyboard'
+import { getClipboardService } from './clipboard'
 
 export interface FormField {
   label: string
@@ -70,8 +70,8 @@ export function saveBulkFormProfiles(
   profiles: Array<{ name: string; fields: FormField[] }>
 ): FormProfile[] {
   const existing = store.get('profiles', [])
-  const created: FormProfile[] = profiles.map((p) => ({
-    id: `fp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  const created: FormProfile[] = profiles.map((p, index) => ({
+    id: `fp_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 6)}`,
     name: p.name,
     fields: p.fields,
     createdAt: new Date().toISOString(),
@@ -99,8 +99,7 @@ export function startFormFill(
     return { active: false, current: 0, total: 0, label: '' }
   }
   activeFill = { profile, currentIndex: 0 }
-  // Write first field value to clipboard
-  clipboard.writeText(profile.fields[0].value)
+  getClipboardService().writeText(profile.fields[0].value)
   return {
     active: true,
     current: 1,
@@ -117,25 +116,27 @@ export function formPasteNext(): {
 } | null {
   if (!activeFill) return null
 
-  // Paste current field
+  // Stage the CURRENT field, then paste. The next field must not be written
+  // until the next call — writing it now races the delayed Ctrl+V and the
+  // paste inserts the wrong value.
+  const fields = activeFill.profile.fields
+  const current = fields[activeFill.currentIndex]
+  getClipboardService().writeText(current.value)
   setTimeout(() => simulateCtrlV(), 80)
 
   activeFill.currentIndex++
 
-  if (activeFill.currentIndex >= activeFill.profile.fields.length) {
-    const total = activeFill.profile.fields.length
+  if (activeFill.currentIndex >= fields.length) {
+    const total = fields.length
     activeFill = null
     return { active: false, current: total, total, label: '' }
   }
 
-  // Write next field value to clipboard
-  const next = activeFill.profile.fields[activeFill.currentIndex]
-  clipboard.writeText(next.value)
-
+  const next = fields[activeFill.currentIndex]
   return {
     active: true,
     current: activeFill.currentIndex + 1,
-    total: activeFill.profile.fields.length,
+    total: fields.length,
     label: next.label
   }
 }

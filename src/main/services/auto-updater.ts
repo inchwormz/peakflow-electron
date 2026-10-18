@@ -184,6 +184,16 @@ function downloadInstaller(url: string, fileName: string): Promise<string> {
   })
 }
 
+/**
+ * Launch the NSIS installer and exit so files are not locked during upgrade.
+ * `--updated` tells electron-builder's installer to auto-close PeakFlow instead of
+ * blocking on the "application is running" dialog.
+ */
+function launchInstallerAndQuit(installerPath: string): void {
+  spawn(installerPath, ['--updated'], { detached: true, stdio: 'ignore' }).unref()
+  app.quit()
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -238,7 +248,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
         console.log(`[AutoUpdater] Downloading: ${release.installerUrl}`)
 
         try {
-          const fileName = `PeakFlow-Setup-${release.tag}.exe`
+          const fileName = `PeakFlow-Setup-${release.tag.replace(/^v/, '')}.exe`
           const installerPath = await downloadInstaller(release.installerUrl, fileName)
           console.log(`[AutoUpdater] Downloaded to: ${installerPath}`)
 
@@ -253,8 +263,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
           })
 
           if (installResult.response === 0) {
-            spawn(installerPath, { detached: true, stdio: 'ignore' }).unref()
-            app.quit()
+            launchInstallerAndQuit(installerPath)
           }
         } catch (dlErr) {
           const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr)

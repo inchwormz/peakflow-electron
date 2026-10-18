@@ -106,7 +106,7 @@ export function NavButton({
   onClick,
   isClose = false
 }: {
-  icon: string
+  icon: React.ReactNode
   onClick: () => void
   isClose?: boolean
 }): React.JSX.Element {
@@ -133,8 +133,9 @@ export function NavButton({
         outline: 'none',
         padding: 0
       }}
-      dangerouslySetInnerHTML={{ __html: icon }}
-    />
+    >
+      {icon}
+    </button>
   )
 }
 

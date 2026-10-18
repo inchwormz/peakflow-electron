@@ -83,7 +83,20 @@ export function simulateCtrlV(): boolean {
   }
 }
 
-function makeKeyInput(vk: number, flags: number): unknown {
+type KeyboardInput = {
+  type: number
+  _padding1: number
+  ki: {
+    wVk: number
+    wScan: number
+    dwFlags: number
+    time: number
+    dwExtraInfo: number
+  }
+  _padding2: number[]
+}
+
+function makeKeyInput(vk: number, flags: number): KeyboardInput {
   return {
     type: INPUT_TYPE_KEYBOARD,
     _padding1: 0,

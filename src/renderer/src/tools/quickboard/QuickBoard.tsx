@@ -35,6 +35,7 @@ import { TagBar } from './components/TagBar'
 import { QueueBanner } from './components/QueueBanner'
 import { EditModal } from './components/EditModal'
 import { TransformPicker } from './components/TransformPicker'
+import { Check, ListChecks, Settings, Minus, X } from 'lucide-react'
 import { OnboardingWizard } from './components/OnboardingWizard'
 import { WorkflowPanel } from './components/WorkflowPanel'
 import { FormFillPanel } from './components/FormFillPanel'
@@ -103,6 +104,13 @@ export function QuickBoard(): React.JSX.Element {
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS).then((data) => {
       if (Array.isArray(data)) setAllTags(data as string[])
     }).catch(() => {})
+
+    window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_QUEUE_STATUS).then((data) => {
+      if (data && typeof data === 'object') {
+        const s = data as { active: boolean; current: number; total: number }
+        setQueueStatus(s)
+      }
+    }).catch(() => {})
   }, [])
 
   // ── Check onboarding + suggestions on mount ────────────────────────────────
@@ -114,7 +122,13 @@ export function QuickBoard(): React.JSX.Element {
         if (conf && typeof conf === 'object') {
           const c = conf as Record<string, unknown>
           if (c.ai_onboarding_complete !== true) {
-            setView('onboarding')
+            // Check if user has AI access (licensed, not trial)
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
+              .then((res: unknown) => {
+                const r = res as { allowed: boolean }
+                if (r.allowed) setView('onboarding')
+              })
+              .catch(() => {})
           }
         }
       })
@@ -134,13 +148,25 @@ export function QuickBoard(): React.JSX.Element {
   // ── Listen for clipboard changes from main process ─────────────────────
 
   useEffect(() => {
-    const unsub = window.peakflow.on(
+    const unsubChange = window.peakflow.on(
       IPC_SEND.CLIPBOARD_ON_CHANGE,
       (data: unknown) => {
         if (Array.isArray(data)) setHistory(data as ClipboardItem[])
       }
     )
-    return unsub
+    const unsubSuggestions = window.peakflow.on(
+      IPC_SEND.CLIPBOARD_AI_SUGGESTIONS_READY,
+      (data: unknown) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setSuggestions(data as AiSuggestion[])
+          setShowSuggestions(true)
+        }
+      }
+    )
+    return () => {
+      unsubChange()
+      unsubSuggestions()
+    }
   }, [])
 
   // ── Load settings from config on mount ─────────────────────────────────
@@ -313,23 +339,37 @@ export function QuickBoard(): React.JSX.Element {
   // ── Suggestion handlers ─────────────────────────────────────────────────
 
   const handleApplySuggestion = useCallback((sug: AiSuggestion) => {
-    // Apply the suggestion action
-    if (sug.type === 'pin_template' && sug.action.text) {
-      window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, sug.action.text as string)
-        .then(() => {
-          return window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_HISTORY)
-        })
+    if (sug.type === 'pin_template' && typeof sug.action.text === 'string') {
+      window.peakflow
+        .invoke(IPC_INVOKE.CLIPBOARD_ADD_PINNED_ITEM, sug.action.text)
         .then((data) => {
-          if (Array.isArray(data)) {
-            setHistory(data as ClipboardItem[])
-            // Pin the newly added item
-            if (data.length > 0) {
-              window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_PIN_ITEM, (data[0] as ClipboardItem).id)
-            }
-          }
+          if (Array.isArray(data)) setHistory(data as ClipboardItem[])
         })
+        .catch(() => {})
+    } else if (sug.type === 'create_tag') {
+      const name = (sug.action.name ?? sug.action.tag) as string | undefined
+      if (name) {
+        window.peakflow
+          .invoke(IPC_INVOKE.CLIPBOARD_MANAGE_TAGS, 'create', { name })
+          .then((data) => {
+            if (Array.isArray(data)) setAllTags(data as string[])
+          })
+          .catch(() => {})
+      }
+    } else if (sug.type === 'create_workflow') {
+      const name = sug.action.name as string | undefined
+      const items = sug.action.items as Array<{ label: string; text: string }> | undefined
+      if (name && Array.isArray(items)) {
+        window.peakflow
+          .invoke(IPC_INVOKE.CLIPBOARD_SAVE_WORKFLOW, {
+            name,
+            description: (sug.action.description as string) ?? '',
+            items,
+            isAiGenerated: true
+          })
+          .catch(() => {})
+      }
     }
-    // Dismiss after applying
     window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_AI_DISMISS_SUGGESTION, sug.id)
     setSuggestions((prev) => prev.filter((s) => s.id !== sug.id))
   }, [])
@@ -461,7 +501,15 @@ export function QuickBoard(): React.JSX.Element {
       {view === 'onboarding' ? (
         /* ═══════════════ ONBOARDING VIEW ═══════════════ */
         <OnboardingWizard
-          onComplete={() => setView('main')}
+          onComplete={() => {
+            setView('main')
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_HISTORY).then((data) => {
+              if (Array.isArray(data)) setHistory(data as ClipboardItem[])
+            }).catch(() => {})
+            window.peakflow.invoke(IPC_INVOKE.CLIPBOARD_GET_ALL_TAGS).then((data) => {
+              if (Array.isArray(data)) setAllTags(data as string[])
+            }).catch(() => {})
+          }}
           onSkip={() => {
             window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, {
               tool: 'quickboard',
@@ -495,7 +543,7 @@ export function QuickBoard(): React.JSX.Element {
               <span style={{ fontSize: 13, fontWeight: 400, color: DS.textPrimary, fontFamily: "'Silkscreen', cursive" }}>
                 QuickBoard
               </span>
-              <span style={{ fontSize: 10, color: DS.textDim }}>
+              <span style={{ fontSize: 10, color: DS.textDim, whiteSpace: 'nowrap' }}>
                 {filteredHistory.length} items
               </span>
               {suggestions.length > 0 && !showSuggestions && (
@@ -521,15 +569,15 @@ export function QuickBoard(): React.JSX.Element {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' }}>
               {/* Multi-select toggle */}
               <NavButton
-                icon={multiSelectMode ? '&#10003;' : '&#9776;'}
+                icon={multiSelectMode ? <Check size={15} /> : <ListChecks size={15} />}
                 onClick={() => {
                   setMultiSelectMode(!multiSelectMode)
                   if (multiSelectMode) setSelectedIds(new Set())
                 }}
               />
-              <NavButton icon="&#9881;" onClick={switchToSettings} />
-              <NavButton icon="&#8212;" onClick={handleMinimize} />
-              <NavButton icon="&#10005;" onClick={handleClose} isClose />
+              <NavButton icon={<Settings size={15} />} onClick={switchToSettings} />
+              <NavButton icon={<Minus size={15} />} onClick={handleMinimize} />
+              <NavButton icon={<X size={15} />} onClick={handleClose} isClose />
             </div>
           </div>
 

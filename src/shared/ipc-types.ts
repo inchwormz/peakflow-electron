@@ -17,6 +17,8 @@ export interface AccessStatus {
   isLicensed: boolean
   /** True only when the license specifically covers THIS tool (not just "user has any license") */
   isToolLicensed: boolean
+  /** True when the license covers the full suite (subscription / bundle / legacy key) */
+  isSuiteLicense?: boolean
 }
 
 export interface LicenseActivationResult {
@@ -94,6 +96,7 @@ export const IPC_INVOKE = {
   CLIPBOARD_SIMULATE_PASTE: 'clipboard:simulate-paste',
   CLIPBOARD_DELETE_ITEM: 'clipboard:delete-item',
   CLIPBOARD_PIN_ITEM: 'clipboard:pin-item',
+  CLIPBOARD_ADD_PINNED_ITEM: 'clipboard:add-pinned-item',
   CLIPBOARD_CLEAR_HISTORY: 'clipboard:clear-history',
   CLIPBOARD_SET_TAGS: 'clipboard:set-tags',
   CLIPBOARD_GET_ALL_TAGS: 'clipboard:get-all-tags',
@@ -102,6 +105,7 @@ export const IPC_INVOKE = {
   CLIPBOARD_QUEUE_START: 'clipboard:queue-start',
   CLIPBOARD_QUEUE_NEXT: 'clipboard:queue-next',
   CLIPBOARD_QUEUE_CANCEL: 'clipboard:queue-cancel',
+  CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-get-status',
   CLIPBOARD_GET_TRANSFORMS: 'clipboard:get-transforms',
   CLIPBOARD_SAVE_TRANSFORM: 'clipboard:save-transform',
   CLIPBOARD_DELETE_TRANSFORM: 'clipboard:delete-transform',
@@ -141,7 +145,6 @@ export const IPC_INVOKE = {
 
   // Calendar (shared by ScreenSlap + MeetReady)
   CALENDAR_GET_EVENTS: 'calendar:get-events',
-  CALENDAR_AUTHENTICATE: 'calendar:authenticate',
   CALENDAR_GET_STATUS: 'calendar:get-status',
   CALENDAR_DISCONNECT: 'calendar:disconnect',
   CALENDAR_FETCH_NOW: 'calendar:fetch-now',
@@ -200,6 +203,7 @@ export const IPC_INVOKE = {
 /** Send channels (main → renderer, push notifications) */
 export const IPC_SEND = {
   CLIPBOARD_ON_CHANGE: 'clipboard:on-change',
+  CLIPBOARD_AI_SUGGESTIONS_READY: 'clipboard:ai-suggestions-ready',
   CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-status',
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',

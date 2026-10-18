@@ -116,6 +116,10 @@ class SoundSplitBridge {
   private recentlyChanged = new Map<number, number>()
   /** Accumulates multi-line RESULT data (C# joins with real newlines) */
   private resultLines: string[] | null = null
+  /** Pending crash-recovery respawn — must be cancellable by destroy() */
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
+  /** Crash-recovery delay, doubles per consecutive failure (reset on READY) */
+  private restartDelayMs = 2000
 
   // ─── Sidecar lifecycle ──────────────────────────────────────────────────
 
@@ -168,20 +172,38 @@ class SoundSplitBridge {
       console.log(`[SoundSplit] Sidecar exited with code ${code}`)
       this.ps = null
       this.ready = false
-
-      // Restart if we didn't intentionally destroy
-      if (this.pollInterval) {
-        console.log('[SoundSplit] Restarting sidecar...')
-        setTimeout(() => this.spawnSidecar(), 2000)
-      }
+      // A poll that died mid-flight must not block all future polls
+      this.pollInFlight = false
+      this.resultLines = null
+      this.scheduleRestart()
     })
 
     this.ps.on('error', (err) => {
       console.error('[SoundSplit] Failed to spawn sidecar:', err.message)
       this.ps = null
+      this.ready = false
+      this.pollInFlight = false
+      this.resultLines = null
+      // 'error' can fire without 'exit' (e.g. respawn fails) — recover here too
+      this.scheduleRestart()
     })
 
     console.log('[SoundSplit] Spawning PowerShell sidecar...')
+  }
+
+  /**
+   * Schedule a crash-recovery respawn with exponential backoff.
+   * Only runs while polling is active (i.e. not after destroy()), and never
+   * stacks: an already-pending restart wins.
+   */
+  private scheduleRestart(): void {
+    if (!this.pollInterval || this.restartTimer) return
+    console.log(`[SoundSplit] Restarting sidecar in ${this.restartDelayMs}ms...`)
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      this.spawnSidecar()
+    }, this.restartDelayMs)
+    this.restartDelayMs = Math.min(this.restartDelayMs * 2, 60_000)
   }
 
   private processOutput(): void {
@@ -209,6 +231,7 @@ class SoundSplitBridge {
 
       if (trimmed === 'READY') {
         this.ready = true
+        this.restartDelayMs = 2000 // healthy again — reset crash backoff
         dbg('Sidecar READY')
         console.log('[SoundSplit] Sidecar ready')
         // Start polling
@@ -311,7 +334,9 @@ class SoundSplitBridge {
       const parts = line.split('|')
 
       if (parts[0] === 'MASTER' && parts.length >= 4) {
-        this.masterVolume = parseFloat(parts[2]) || 1
+        // Number.isFinite, not `|| 1`: a master volume of 0 is legitimate
+        const master = parseFloat(parts[2])
+        this.masterVolume = Number.isFinite(master) ? master : 1
         this.masterPeak = parseFloat(parts[3]) || 0
         continue
       }
@@ -410,6 +435,10 @@ class SoundSplitBridge {
     if (this.pollInterval) {
       clearInterval(this.pollInterval)
       this.pollInterval = null
+    }
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer)
+      this.restartTimer = null
     }
     if (this.ps && !this.ps.killed) {
       // Capture reference to avoid killing a respawned process in the timeout

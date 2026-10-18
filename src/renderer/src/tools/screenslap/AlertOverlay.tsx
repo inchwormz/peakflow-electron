@@ -19,6 +19,7 @@
  */
 
 import { useState, useEffect, useRef, type CSSProperties } from 'react'
+import { Zap, AlarmClock, Check, Video } from 'lucide-react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 
 // ─── Design Tokens ──────────────────────────────────────────────────────────
@@ -248,7 +249,10 @@ export function AlertOverlay(): React.JSX.Element {
       {/* Content */}
       <div style={styles.content}>
         {/* Upcoming label with pulse animation */}
-        <div style={styles.upcoming}>&#9889; UPCOMING</div>
+        <div style={styles.upcoming}>
+          <Zap size={14} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
+          UPCOMING
+        </div>
 
         {/* Event title */}
         <div style={styles.title}>{displayTitle}</div>
@@ -271,7 +275,7 @@ export function AlertOverlay(): React.JSX.Element {
         <div style={styles.btns}>
           {alert.meetingLink && (
             <AlertButton
-              label={`\uD83C\uDFA5 Join ${alert.meetingService ?? 'Meeting'}`}
+              label={<><Video size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} /> Join {alert.meetingService ?? 'Meeting'}</>}
               bg={DS.joinBg}
               hoverBg={DS.joinHover}
               color={DS.joinText}
@@ -281,7 +285,7 @@ export function AlertOverlay(): React.JSX.Element {
             />
           )}
           <AlertButton
-            label="&#9200; 5 min"
+            label={<><AlarmClock size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> 5 min</>}
             bg={DS.snoozeBg}
             hoverBg={DS.snoozeHover}
             color={DS.snoozeText}
@@ -289,7 +293,7 @@ export function AlertOverlay(): React.JSX.Element {
             onClick={() => handleSnooze(5)}
           />
           <AlertButton
-            label="&#9200; 10 min"
+            label={<><AlarmClock size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> 10 min</>}
             bg={DS.snoozeBg}
             hoverBg={DS.snoozeHover}
             color={DS.snoozeText}
@@ -297,7 +301,7 @@ export function AlertOverlay(): React.JSX.Element {
             onClick={() => handleSnooze(10)}
           />
           <AlertButton
-            label="&#10003; Dismiss"
+            label={<><Check size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> Dismiss</>}
             bg={DS.dismissBg}
             hoverBg={DS.dismissHover}
             color={DS.dismissText}
@@ -341,7 +345,7 @@ function AlertButton({
   onClick,
   wide
 }: {
-  label: string
+  label: React.ReactNode
   bg: string
   hoverBg: string
   color: string
@@ -364,8 +368,9 @@ function AlertButton({
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      dangerouslySetInnerHTML={{ __html: label }}
-    />
+    >
+      {label}
+    </button>
   )
 }
 

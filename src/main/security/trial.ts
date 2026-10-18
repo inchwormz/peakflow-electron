@@ -189,7 +189,22 @@ export function getToolTrialStart(toolId: ToolId | string): Date | null {
     const raw = new Date(stored)
     if (!isNaN(raw.getTime())) return raw
 
-    return null
+    // Unreadable ciphertext (DPAPI rotation, corrupt migration, etc.) — re-stamp
+    console.warn(`[PeakFlow:Trial] Could not parse stored date for ${toolId}, resetting`)
+    const now = new Date()
+    const isoString = now.toISOString()
+    const key = `tool_install_${toolId}`
+
+    if (isAvailable()) {
+      const encrypted = encryptString(isoString)
+      if (encrypted !== null) {
+        licenseStore.set(key, encrypted)
+        return now
+      }
+    }
+
+    licenseStore.set(key, isoString)
+    return now
   } catch {
     return null
   }

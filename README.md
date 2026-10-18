@@ -102,3 +102,5 @@ If you want to support the developer, grab the installer at [getpeakflow.pro](ht
 - **$6.99/month** ... all 7 tools, cancel anytime
 - **$9.99** ... one tool, yours forever (v1)
 - **$49.99** ... all 7 tools, yours forever (v1)
+
+See our other platform: https://iter0.com : AI website design

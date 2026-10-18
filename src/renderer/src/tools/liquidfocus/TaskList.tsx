@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
+import { ChevronLeft, Settings, Check } from 'lucide-react'
 import { DS, type LiquidFocusTask } from './LiquidFocus'
 import { IPC_INVOKE } from '@shared/ipc-types'
 
@@ -224,7 +225,7 @@ export function TaskList({
       {/* Nav bar */}
       <div style={navBar}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <NavBtn onClick={onBack}>&#9664;</NavBtn>
+          <NavBtn onClick={onBack}><ChevronLeft size={15} /></NavBtn>
         </div>
         <span
           style={{
@@ -238,7 +239,7 @@ export function TaskList({
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
           <TodoistImportBtn onClick={handleImportTodoist} importing={importing} />
-          <NavBtn onClick={onShowSettings}>&#9881;</NavBtn>
+          <NavBtn onClick={onShowSettings}><Settings size={15} /></NavBtn>
         </div>
       </div>
 
@@ -372,7 +373,7 @@ export function TaskList({
                         gap: 8
                       }}
                     >
-                      <span style={{ color: DS.accent, fontSize: 10 }}>&#10003;</span>
+                      <Check size={10} style={{ color: DS.accent, flexShrink: 0 }} />
                       <span style={{ textDecoration: 'line-through' }}>{task.name}</span>
                     </div>
                   ))}
@@ -457,7 +458,7 @@ function TaskRow({
           padding: 0
         }}
       >
-        &#10003;
+        <Check size={10} strokeWidth={3} />
       </button>
 
       {/* Task body */}

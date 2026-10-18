@@ -9,7 +9,7 @@
 
 import type { ClipboardItem } from './clipboard'
 import { getClipboardService } from './clipboard'
-import { clipboard, type Tray } from 'electron'
+import type { Tray } from 'electron'
 import { simulateCtrlV } from '../native/keyboard'
 
 interface PasteQueue {
@@ -47,22 +47,16 @@ export function pasteNext(): boolean {
   const item = queue.items[queue.currentIndex]
   console.log(`[QuickBoard] Queue paste ${queue.currentIndex + 1}/${queue.items.length}: ${item.id}`)
 
+  const svc = getClipboardService()
   // Write directly to clipboard (bypass simulatePaste's 500ms window-close delay)
   const text = item.editedText ?? item.text ?? ''
   if (item.type === 'text' && text) {
-    clipboard.writeText(text)
+    svc.writeText(text)
   } else if (item.type === 'image' && item.imagePath) {
-    const svc = getClipboardService()
     svc.writeImage(item.imagePath)
   }
 
-  // Update usage count
-  const svc = getClipboardService()
-  const liveItem = svc.getHistory().find((h) => h.id === item.id)
-  if (liveItem) {
-    liveItem.copyCount += 1
-    liveItem.timestamp = new Date().toISOString()
-  }
+  svc.recordItemUse(item.id)
 
   // Short delay for clipboard to settle, then paste (user is already in target app)
   setTimeout(() => {

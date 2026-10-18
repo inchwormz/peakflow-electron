@@ -10,7 +10,7 @@
  *
  * Communicates with main process via IPC:
  *   - calendar:get-events     → fetch upcoming events
- *   - calendar:authenticate   → connect Google Calendar
+ *   - calendar:set-ical-url   → connect via iCal secret URL
  *   - calendar:get-status     → connection status
  *   - calendar:disconnect     → disconnect calendar
  *   - screenslap:get-state    → monitoring state + active alert
@@ -18,6 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
+import { X, Minus, CalendarDays, Settings, Zap, Check } from 'lucide-react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import { ToolId } from '@shared/tool-ids'
 
@@ -64,7 +65,7 @@ interface CalendarEvent {
 
 interface CalendarStatus {
   connected: boolean
-  source: 'google' | 'ical' | null
+  source: 'ical' | null
   email: string | null
   lastFetched: string | null
   error: string | null
@@ -245,26 +246,6 @@ export function ScreenSlap(): React.JSX.Element {
 
   // ─── Actions ────────────────────────────────────────────────────────────
 
-  const connectCalendar = async (): Promise<void> => {
-    try {
-      const result = (await api.invoke(IPC_INVOKE.CALENDAR_AUTHENTICATE)) as CalendarStatus
-      setCalStatus(result)
-      if (result.connected) {
-        showToast('Connected to Google Calendar')
-        // Start monitoring now that calendar is connected
-        await api.invoke(IPC_INVOKE.SCREENSLAP_START)
-        // Refresh events
-        const evts = (await api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)) as CalendarEvent[]
-        setEvents(evts ?? [])
-        // Update state
-        const stateRes = (await api.invoke(IPC_INVOKE.SCREENSLAP_GET_STATE)) as ScreenSlapState
-        setState(stateRes)
-      }
-    } catch (err) {
-      console.error('[ScreenSlap] Auth failed:', err)
-    }
-  }
-
   const connectIcal = async (): Promise<void> => {
     const url = icalInput.trim()
     if (!url) return
@@ -399,28 +380,28 @@ export function ScreenSlap(): React.JSX.Element {
             ;(e.target as HTMLElement).style.color = DS.textMuted
           }}
         >
-          &#10005;
+          <X size={16} />
         </button>
         <button
           style={styles.floatBtn}
           title="Minimize"
           onClick={() => api.invoke(IPC_INVOKE.WINDOW_MINIMIZE)}
         >
-          &#8212;
+          <Minus size={16} />
         </button>
         <button
           style={styles.floatBtn}
           title="Today's Events"
           onClick={() => setView(view === 'events' ? 'main' : 'events')}
         >
-          &#128197;
+          <CalendarDays size={16} />
         </button>
         <button
           style={styles.floatBtn}
           title="Settings"
           onClick={() => setView(view === 'settings' ? 'main' : 'settings')}
         >
-          &#9881;
+          <Settings size={16} />
         </button>
       </div>
 
@@ -430,18 +411,11 @@ export function ScreenSlap(): React.JSX.Element {
           {!calStatus.connected ? (
             /* Not connected state */
             <div style={styles.idle}>
-              <div style={styles.idleIcon}>&#128197;</div>
+              <div style={styles.idleIcon}><CalendarDays size={48} strokeWidth={1.5} /></div>
               <div style={styles.idleTitle}>Connect Calendar</div>
               <div style={styles.idleSub}>
-                Get full-screen alerts before meetings start.
-              </div>
-              <button style={styles.connectBtn} onClick={connectCalendar}>
-                Connect Google Calendar
-              </button>
-              <div style={styles.orDivider}>
-                <div style={styles.orLine} />
-                <span style={styles.orText}>or</span>
-                <div style={styles.orLine} />
+                Get full-screen alerts before meetings start. Paste your
+                calendar&apos;s iCal secret URL to connect.
               </div>
               <div style={styles.icalRow}>
                 <input
@@ -473,7 +447,7 @@ export function ScreenSlap(): React.JSX.Element {
           ) : state.activeAlert ? (
             /* Active alert indicator (alert itself is fullscreen in separate window) */
             <div style={styles.idle}>
-              <div style={{ ...styles.idleIcon, color: DS.red }}>&#9889;</div>
+              <div style={{ ...styles.idleIcon, color: DS.red }}><Zap size={48} strokeWidth={1.5} /></div>
               <div style={styles.idleTitle}>{state.activeAlert.summary}</div>
               <div style={styles.idleSub}>
                 Alert is showing on screen — {state.activeAlert.timeUntil}
@@ -482,7 +456,7 @@ export function ScreenSlap(): React.JSX.Element {
           ) : (
             /* Idle / watching state */
             <div style={styles.idle}>
-              <div style={styles.idleIcon}>&#128197;</div>
+              <div style={styles.idleIcon}><CalendarDays size={48} strokeWidth={1.5} /></div>
               <div style={styles.idleTitle}>All Clear</div>
               <div style={styles.idleSub}>
                 {nextEvent
@@ -541,7 +515,7 @@ export function ScreenSlap(): React.JSX.Element {
                 style={styles.panelClose}
                 onClick={() => setView('main')}
               >
-                &#10005;
+                <X size={14} />
               </button>
             </div>
             <div style={styles.panelSub}>Configure alerts</div>
@@ -603,7 +577,7 @@ export function ScreenSlap(): React.JSX.Element {
                     showToast('Test alert fired!')
                   }}
                 >
-                  ⚡ Fire Test Alert
+                  <Zap size={12} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> Fire Test Alert
                 </button>
               </div>
 
@@ -634,17 +608,16 @@ export function ScreenSlap(): React.JSX.Element {
               {calStatus.connected ? (
                 <>
                   <div style={styles.calStatusSm}>
-                    &#10003; Connected via {calStatus.source === 'ical' ? 'iCal URL' : 'Google'}
-                    {calStatus.email ? ` (${calStatus.email})` : ''}
+                    <Check size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} /> Connected via iCal URL
                   </div>
                   <button style={styles.disconnectBtn} onClick={disconnectCalendar}>
                     Disconnect Calendar
                   </button>
                 </>
               ) : (
-                <button style={styles.connectBtnSmall} onClick={connectCalendar}>
-                  Connect Google Calendar
-                </button>
+                <div style={styles.calStatusSm}>
+                  Not connected — paste your iCal secret URL on the main screen.
+                </div>
               )}
             </div>
           </div>
@@ -661,7 +634,7 @@ export function ScreenSlap(): React.JSX.Element {
                 style={styles.panelClose}
                 onClick={() => setView('main')}
               >
-                &#10005;
+                <X size={14} />
               </button>
             </div>
             <div style={styles.panelSub}>
@@ -991,46 +964,11 @@ const styles: Record<string, CSSProperties> = {
     color: DS.textGhost
   },
 
-  connectBtn: {
-    marginTop: 20,
-    padding: '12px 24px',
-    background: DS.blueBright,
-    color: DS.white,
-    border: 'none',
-    borderRadius: 12,
-    fontSize: 13,
-    fontWeight: 600,
-    fontFamily: 'inherit',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-
-  orDivider: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    width: 200,
-    margin: '16px 0 4px'
-  },
-
-  orLine: {
-    flex: 1,
-    height: 1,
-    background: DS.border
-  },
-
-  orText: {
-    fontSize: 10,
-    color: DS.textDim,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 1.5
-  },
-
   icalRow: {
     display: 'flex',
     gap: 6,
     width: 280,
-    marginTop: 8
+    marginTop: 16
   },
 
   icalInput: {
@@ -1057,21 +995,6 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.2s',
     flexShrink: 0
-  },
-
-  connectBtnSmall: {
-    marginTop: 8,
-    padding: '10px 16px',
-    width: '100%',
-    background: DS.blueBright,
-    color: DS.white,
-    border: 'none',
-    borderRadius: 10,
-    fontSize: 12,
-    fontWeight: 600,
-    fontFamily: 'inherit',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
   },
 
   // Panel

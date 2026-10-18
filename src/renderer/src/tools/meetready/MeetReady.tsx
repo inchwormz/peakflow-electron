@@ -12,11 +12,12 @@
  *
  * Architecture:
  *   - Camera/mic are entirely renderer-side (Web APIs)
- *   - Calendar integration uses shared google-calendar service via IPC
+ *   - Calendar integration uses the shared iCal calendar service via IPC
  *   - Config persistence via config:get / config:set IPC
  */
 
 import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
+import { Calendar, Settings, Minus, X, Check, AlertTriangle, ChevronLeft } from 'lucide-react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import { ToolId } from '@shared/tool-ids'
 import { useMediaDevices } from '../../hooks/useMediaDevices'
@@ -59,7 +60,7 @@ interface CalendarEvent {
 
 interface CalendarStatus {
   connected: boolean
-  source: 'google' | 'ical' | null
+  source: 'ical' | null
   email: string | null
   lastFetched: string | null
   error: string | null
@@ -303,17 +304,6 @@ export function MeetReady(): React.JSX.Element {
     }
   }
 
-  const connectCalendar = async (): Promise<void> => {
-    try {
-      const result = (await api.invoke(IPC_INVOKE.CALENDAR_AUTHENTICATE)) as CalendarStatus
-      setCalStatus(result)
-      const evts = (await api.invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)) as CalendarEvent[]
-      setEvents(evts ?? [])
-    } catch (err) {
-      console.error('[MeetReady] Auth failed:', err)
-    }
-  }
-
   const connectIcal = async (): Promise<void> => {
     const url = icalInput.trim()
     if (!url) return
@@ -409,7 +399,8 @@ export function MeetReady(): React.JSX.Element {
               <span style={styles.navTitle}>MeetReady</span>
               {nextEvent && nextDiff !== null && nextDiff < 10 * 60_000 && (
                 <span style={styles.meetingBadge}>
-                  &#128197; {nextEvent.summary.length > 14
+                  <Calendar size={11} style={{ verticalAlign: 'text-bottom', marginRight: 3 }} />
+                  {' '}{nextEvent.summary.length > 14
                     ? nextEvent.summary.slice(0, 11) + '...'
                     : nextEvent.summary
                   } in {formatRelativeShort(nextDiff)}
@@ -417,12 +408,12 @@ export function MeetReady(): React.JSX.Element {
               )}
             </div>
             <div style={styles.navRight}>
-              <NavBtn onClick={openSettings} title="Settings">&#9881;</NavBtn>
+              <NavBtn onClick={openSettings} title="Settings"><Settings size={15} /></NavBtn>
               <NavBtn onClick={() => api.invoke(IPC_INVOKE.WINDOW_MINIMIZE)} title="Minimize">
-                &#8212;
+                <Minus size={15} />
               </NavBtn>
               <NavBtn onClick={() => api.invoke(IPC_INVOKE.WINDOW_CLOSE)} title="Close" isClose>
-                &#10005;
+                <X size={15} />
               </NavBtn>
             </div>
           </div>
@@ -513,10 +504,10 @@ export function MeetReady(): React.JSX.Element {
               }}
             >
               {allGood ? (
-                <>&#10003; All Clear &mdash; You look great</>
+                <><Check size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} /> All Clear &mdash; You look great</>
               ) : (
                 <>
-                  &#9888; Check{' '}
+                  <AlertTriangle size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} /> Check{' '}
                   {[
                     !lightOk ? 'lighting' : null,
                     !micOk ? (micMuted ? 'microphone (muted)' : 'microphone') : null
@@ -540,7 +531,7 @@ export function MeetReady(): React.JSX.Element {
           <div style={styles.navBar}>
             <div style={styles.navLeft}>
               <NavBtn onClick={saveAndCloseSettings} title="Back" style={{ fontSize: 16 }}>
-                &#9664;
+                <ChevronLeft size={16} />
               </NavBtn>
               <span style={{ ...styles.navTitle, marginLeft: 4 }}>Settings</span>
             </div>
@@ -627,8 +618,7 @@ export function MeetReady(): React.JSX.Element {
             {calStatus.connected ? (
               <>
                 <div style={styles.calStatus}>
-                  &#10003; Connected via {calStatus.source === 'ical' ? 'iCal URL' : 'Google'}
-                  {calStatus.email ? ` (${calStatus.email})` : ''}
+                  <Check size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} /> Connected via iCal URL
                 </div>
                 <button
                   style={styles.disconnectBtn}
@@ -645,25 +635,8 @@ export function MeetReady(): React.JSX.Element {
               </>
             ) : (
               <>
-                <div style={styles.calStatusOff}>Not connected</div>
-                <button
-                  style={styles.connectBtn}
-                  onClick={connectCalendar}
-                  onMouseEnter={(e) => {
-                    ;(e.target as HTMLElement).style.background = DS.elevated
-                    ;(e.target as HTMLElement).style.borderColor = DS.white
-                  }}
-                  onMouseLeave={(e) => {
-                    ;(e.target as HTMLElement).style.background = DS.bgLight
-                    ;(e.target as HTMLElement).style.borderColor = DS.border
-                  }}
-                >
-                  Connect Google Calendar
-                </button>
-                <div style={styles.icalOrRow}>
-                  <div style={styles.icalOrLine} />
-                  <span style={styles.icalOrText}>or</span>
-                  <div style={styles.icalOrLine} />
+                <div style={styles.calStatusOff}>
+                  Not connected — paste your calendar&apos;s iCal secret URL
                 </div>
                 <div style={styles.icalRow}>
                   <input
@@ -1129,21 +1102,6 @@ const styles: Record<string, CSSProperties> = {
     color: '#555'
   },
 
-  connectBtn: {
-    padding: '8px 16px',
-    border: `1px solid ${DS.border}`,
-    borderRadius: 10,
-    background: DS.bgLight,
-    color: DS.white,
-    fontFamily: 'inherit',
-    fontSize: 11,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    outline: 'none',
-    width: '100%'
-  },
-
   disconnectBtn: {
     padding: '8px 16px',
     width: '100%',
@@ -1156,26 +1114,6 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.2s',
     outline: 'none'
-  },
-
-  icalOrRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    margin: '12px 0 4px'
-  },
-
-  icalOrLine: {
-    flex: 1,
-    height: 1,
-    background: DS.border
-  },
-
-  icalOrText: {
-    fontSize: 9,
-    color: DS.textDim,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 1.5
   },
 
   icalRow: {

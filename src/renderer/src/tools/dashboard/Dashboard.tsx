@@ -11,7 +11,7 @@ import { StatusBar } from '@renderer/components/layout/StatusBar'
 import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
 import { ShareAndEarn } from '@renderer/components/sharing/ShareAndEarn'
 import peakflowLogo from '@renderer/assets/peakflow-logo.png'
-import { IPC_INVOKE } from '@shared/ipc-types'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { LicenseActivationResult } from '@shared/ipc-types'
 
 // ─── Tool metadata ──────────────────────────────────────────────────────────
@@ -177,16 +177,27 @@ export function Dashboard(): React.JSX.Element {
   }, [licenseKey, refreshToolAccess])
 
   useEffect(() => {
-    window.peakflow
-      .invoke(IPC_INVOKE.SECURITY_CHECK_ACCESS)
-      .then((status) => {
-        if (status && typeof status === 'object') {
-          const ts = toTrialStatus(status as Record<string, unknown>)
-          if (ts) setTrialStatus(ts)
-        }
-      })
-      .catch(() => {})
+    const refreshGlobalTrial = (): void => {
+      window.peakflow
+        .invoke(IPC_INVOKE.SECURITY_CHECK_ACCESS)
+        .then((status) => {
+          if (status && typeof status === 'object') {
+            const ts = toTrialStatus(status as Record<string, unknown>)
+            if (ts) setTrialStatus(ts)
+          }
+        })
+        .catch(() => {})
+    }
+
+    refreshGlobalTrial()
     refreshToolAccess()
+
+    const unsubLicense = window.peakflow.on(IPC_SEND.LICENSE_STATUS_CHANGED, () => {
+      refreshGlobalTrial()
+      refreshToolAccess()
+    })
+
+    return unsubLicense
   }, [refreshToolAccess])
 
   // ── Styles ──────────────────────────────────────────────────────────────
@@ -420,12 +431,12 @@ function ToolCard({
   let badgeBg = ''
   let badgeColor = ''
 
-  if (installed) {
-    if (toolLicensed && isToolAllowed) {
-      badgeLabel = 'Licensed'
-      badgeBg = 'rgba(255,255,255,0.1)'
-      badgeColor = '#ffffff'
-    } else if (daysRemaining > 0) {
+  if (toolLicensed && isToolAllowed) {
+    badgeLabel = 'Licensed'
+    badgeBg = 'rgba(255,255,255,0.1)'
+    badgeColor = '#ffffff'
+  } else if (installed) {
+    if (daysRemaining > 0) {
       badgeLabel = `${daysRemaining}d trial`
       badgeBg = daysRemaining > 7 ? 'rgba(255,255,255,0.1)' : 'rgba(234,179,8,0.15)'
       badgeColor = daysRemaining > 7 ? '#ffffff' : '#eab308'
@@ -486,7 +497,7 @@ function ToolCard({
           onMouseEnter={(e) => { e.currentTarget.style.background = tool.accent + '35' }}
           onMouseLeave={(e) => { e.currentTarget.style.background = tool.accent + '20' }}
         >
-          Try Free — 14 days
+          {toolLicensed ? 'Open' : 'Try Free — 14 days'}
         </button>
       )}
     </div>

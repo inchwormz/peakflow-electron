@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, type CSSProperties } from 'react'
+import { ChevronLeft } from 'lucide-react'
 import { DS } from './LiquidFocus'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import { ToolId } from '@shared/tool-ids'
@@ -123,7 +124,7 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
       {/* Nav bar */}
       <div style={navBar}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <NavBtn onClick={handleBack}>&#9664;</NavBtn>
+          <NavBtn onClick={handleBack}><ChevronLeft size={15} /></NavBtn>
         </div>
         <span
           style={{
