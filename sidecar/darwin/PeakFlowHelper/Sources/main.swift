@@ -16,6 +16,11 @@
  *   paste                 → {"ok": bool, "trusted": bool}  (Cmd+V via CGEvent)
  *   ocr <path>            → {"text": "..."}               (Apple Vision)
  *
+ * Request IDs: a line may start with a numeric ID ("17 active-window"). The
+ * reply is then prefixed with the same ID ("17 {...}"), so the Node side can
+ * pair replies with requests even after it gave up on a slow one. Lines
+ * without an ID get a bare reply (handy for manual testing).
+ *
  * One-shot mode: `peakflow-helper <command> [arg]` runs one command, prints
  * its JSON result and exits (used for paste and OCR so a slow OCR never
  * blocks the 60fps window polling on the persistent process).
@@ -28,8 +33,15 @@ import Foundation
 // Flush stdout after every write
 setbuf(stdout, nil)
 
+/// ID of the request being answered (persistent mode), echoed before the reply.
+var currentRequestId: String? = nil
+
 func respond(_ json: String) {
-    print(json)
+    if let id = currentRequestId {
+        print("\(id) \(json)")
+    } else {
+        print(json)
+    }
     fflush(stdout)
 }
 
@@ -64,8 +76,19 @@ if cliArgs.count > 1 {
 
 // Main loop: read commands from stdin
 while let line = readLine(strippingNewline: true) {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    var trimmed = line.trimmingCharacters(in: .whitespaces)
     if trimmed.isEmpty { continue }
+
+    currentRequestId = nil
+    if let first = trimmed.split(separator: " ", maxSplits: 1).first,
+       first.allSatisfy({ $0.isASCII && $0.isNumber }) {
+        currentRequestId = String(first)
+        trimmed = String(trimmed.dropFirst(first.count)).trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            respondError("missing command")
+            continue
+        }
+    }
 
     let parts = trimmed.split(separator: " ", maxSplits: 1)
     let command = String(parts[0])

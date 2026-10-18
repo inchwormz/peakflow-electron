@@ -8,8 +8,8 @@
  * to get window positions and the frontmost application.
  */
 
-import { spawn, ChildProcess } from 'child_process'
 import { getMacHelperPath } from './mac-helper'
+import { HelperClient } from './helper-client'
 
 // ─── Types (matching the shared interfaces in active-window.ts router) ──────
 
@@ -40,108 +40,31 @@ export interface DisplayBounds {
 
 // ─── Swift sidecar management ───────────────────────────────────────────────
 
-let helper: ChildProcess | null = null
-let pendingData = ''
-let requestQueue: Array<{ resolve: (data: string) => void; reject: (err: Error) => void }> = []
-let restartTimeout: ReturnType<typeof setTimeout> | null = null
-
-const getHelperPath = getMacHelperPath
-
-function ensureHelper(): void {
-  if (helper && !helper.killed) return
-
-  const helperPath = getHelperPath()
-  try {
-    helper = spawn(helperPath, [], {
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-  } catch (err) {
-    console.error('[ActiveWindow-Darwin] Failed to spawn helper:', err)
-    return
-  }
-
-  pendingData = ''
-
-  helper.stdout?.setEncoding('utf8')
-  helper.stdout?.on('data', (chunk: string) => {
-    pendingData += chunk
-    processOutput()
-  })
-
-  helper.stderr?.setEncoding('utf8')
-  helper.stderr?.on('data', (data: string) => {
-    console.warn('[ActiveWindow-Darwin] Helper stderr:', data.trim())
-  })
-
-  helper.on('exit', (code) => {
-    console.warn(`[ActiveWindow-Darwin] Helper exited with code ${code}`)
-    helper = null
-    // Reject any pending requests
-    while (requestQueue.length > 0) {
-      const req = requestQueue.shift()!
-      req.reject(new Error('Helper process exited'))
-    }
-    // Auto-restart after delay
-    if (!restartTimeout) {
-      restartTimeout = setTimeout(() => {
-        restartTimeout = null
-        ensureHelper()
-      }, 2000)
-    }
-  })
-}
-
-function processOutput(): void {
-  // Each response is a single line of JSON
-  const lines = pendingData.split('\n')
-  // Keep the last incomplete line
-  pendingData = lines.pop() || ''
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-
-    const req = requestQueue.shift()
-    if (req) {
-      req.resolve(trimmed)
-    }
-  }
-}
+const helperClient = new HelperClient({
+  getPath: getMacHelperPath,
+  requestTimeoutMs: 1000,
+  log: (level, message) => console[level](`[ActiveWindow-Darwin] ${message}`)
+})
 
 function sendCommand(command: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    ensureHelper()
-    if (!helper || !helper.stdin) {
-      reject(new Error('Helper not available'))
-      return
-    }
-
-    requestQueue.push({ resolve, reject })
-    helper.stdin.write(command + '\n')
-  })
+  return helperClient.send(command)
 }
 
-/** Synchronous wrapper — blocks using a cached result for polling. */
 let cachedActiveWindow: ActiveWindowInfo | null = null
-let lastActiveWindowTime = 0
-const CACHE_TTL_MS = 8 // ~120fps cache, caller polls at 16ms
 
-function sendCommandSync(command: string): string {
-  // For synchronous callers, we fire-and-forget and return cached data.
-  // This is necessary because the Win32 API is synchronous but the
-  // macOS sidecar is async. We warm the cache via a background loop.
-  return ''
-}
-
-// Background polling loop: keeps cachedActiveWindow fresh
+// Background polling loop: keeps cachedActiveWindow fresh. At most one
+// active-window request is in flight, so a slow Accessibility call can never
+// pile up requests behind it.
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollInFlight = false
 
 function startPolling(): void {
-  if (pollTimer) return
-  pollTimer = setInterval(async () => {
-    try {
-      const raw = await sendCommand('active-window')
-      if (raw === 'null' || raw.startsWith('{\"error\"')) {
+  if (pollTimer || helperClient.isDestroyed) return
+  pollTimer = setInterval(() => {
+    if (pollInFlight) return
+    pollInFlight = true
+    sendCommand('active-window').then((raw) => {
+      if (raw === 'null' || raw.startsWith('{"error"')) {
         cachedActiveWindow = null
       } else {
         const data = JSON.parse(raw)
@@ -156,10 +79,11 @@ function startPolling(): void {
           className: data.bundleId || ''
         }
       }
-      lastActiveWindowTime = Date.now()
-    } catch {
+    }).catch(() => {
       cachedActiveWindow = null
-    }
+    }).finally(() => {
+      pollInFlight = false
+    })
   }, 16) // 60fps polling
 }
 
@@ -230,12 +154,15 @@ const cachedExeWindows: { data: WindowRect[]; inFlight: boolean } = { data: [], 
 
 /** PID → bundleId cache */
 const pidBundleCache = new Map<number, string>()
+const pidLookupsInFlight = new Set<number>()
 
 export function getProcessExeName(pid: number): string | null {
   const cached = pidBundleCache.get(pid)
   if (cached !== undefined) return cached
 
   // Async fetch, return null first time
+  if (pidLookupsInFlight.has(pid)) return null
+  pidLookupsInFlight.add(pid)
   sendCommand(`process-name ${pid}`).then((raw) => {
     try {
       const data = JSON.parse(raw)
@@ -243,7 +170,9 @@ export function getProcessExeName(pid: number): string | null {
         pidBundleCache.set(pid, data.bundleId)
       }
     } catch { /* skip */ }
-  }).catch(() => { /* skip */ })
+  }).catch(() => { /* skip */ }).finally(() => {
+    pidLookupsInFlight.delete(pid)
+  })
 
   return null
 }
@@ -273,20 +202,11 @@ export function getVisibleAppList(_skipSet?: Set<string>): Array<{ exe: string; 
 
 const cachedAppList: { data: Array<{ exe: string; name: string }>; inFlight: boolean } = { data: [], inFlight: false }
 
-/** Clean up the helper process. Called on app quit. */
+/** Stop polling and the helper process for good. Called on app quit. */
 export function destroyHelper(): void {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  if (restartTimeout) {
-    clearTimeout(restartTimeout)
-    restartTimeout = null
-  }
-  if (helper && !helper.killed) {
-    helper.stdin?.write('exit\n')
-    setTimeout(() => {
-      if (helper && !helper.killed) helper.kill()
-    }, 500)
-  }
+  helperClient.destroy()
 }

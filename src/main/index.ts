@@ -29,6 +29,7 @@ import { migrateExistingInstalls, isToolInstalled, installTool } from './securit
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting, createToolWindow } from './windows'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
+import { destroyActiveWindowHelper } from './native/active-window'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
@@ -252,6 +253,7 @@ if (!gotLock) {
     destroyCalendar()
     destroyClipboard()
     destroyFocusDim()
+    destroyActiveWindowHelper() // after FocusDim, so its polling can't restart the helper
     unregisterHotkeys()
     destroyTray()
     flushLogger()

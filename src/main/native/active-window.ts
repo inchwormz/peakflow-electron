@@ -42,3 +42,8 @@ export function clearPidExeCache() {
 export function getVisibleAppList(skipSet?: Set<string>) {
   return getImpl().getVisibleAppList(skipSet)
 }
+
+/** Stop the macOS helper process on quit (nothing to stop on Windows). */
+export function destroyActiveWindowHelper(): void {
+  if (isMac) macImpl.destroyHelper()
+}
