@@ -27,7 +27,12 @@ mac:
   extendInfo:
     NSCameraUsageDescription: PeakFlow needs camera access for meeting prep and focus tools.
     NSMicrophoneUsageDescription: PeakFlow needs microphone access for meeting prep and mic mute controls.
-    NSAppleEventsUsageDescription: PeakFlow needs automation access to send paste shortcuts and control supported workflows.
+    LSUIElement: true
+  extraResources:
+    - from: resources/trayTemplate.png
+      to: trayTemplate.png
+    - from: resources/trayTemplate@2x.png
+      to: trayTemplate@2x.png
 win:
   target:
     - target: nsis

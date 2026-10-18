@@ -117,6 +117,11 @@ if (!gotLock) {
     // Initialize persistent logger FIRST so all subsequent console.* calls are captured
     await initLogger()
 
+    // macOS: menu-bar app, no Dock icon (packaged builds also set LSUIElement)
+    if (process.platform === 'darwin') {
+      app.dock?.hide()
+    }
+
     // Start watchdog heartbeat monitor (detects main process freezes)
     initWatchdog()
 

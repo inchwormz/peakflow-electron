@@ -24,6 +24,18 @@ let tray: Tray | null = null
  * Load the PeakFlow tray icon from resources.
  */
 function getTrayIcon(): Electron.NativeImage {
+  if (process.platform === 'darwin') {
+    // macOS menu bar: monochrome template image (+ @2x picked up automatically)
+    // so the system tints it for light/dark menu bars.
+    const base = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
+    const template = nativeImage.createFromPath(join(base, 'trayTemplate.png'))
+    if (!template.isEmpty()) {
+      template.setTemplateImage(true)
+      return template
+    }
+    console.warn('[PeakFlow] Template tray icon not found in', base, '— using colour icon')
+  }
+
   const iconPath = join(app.getAppPath(), 'resources', 'tray-icon.png')
   const icon = nativeImage.createFromPath(iconPath)
   if (icon.isEmpty()) {
@@ -44,6 +56,8 @@ function getTrayIcon(): Electron.NativeImage {
  * e.g. "CommandOrControl+Shift+D" -> "Ctrl+Shift+D"
  */
 function formatHotkeyLabel(hotkey: string): string {
+  // macOS menus render CommandOrControl as the Cmd symbol themselves
+  if (process.platform === 'darwin') return hotkey
   return hotkey.replace('CommandOrControl', 'Ctrl')
 }
 
@@ -182,7 +196,7 @@ export function createTray(): void {
   const icon = getTrayIcon()
   tray = new Tray(icon)
 
-  tray.setToolTip('PeakFlow \u2014 Mac-level productivity for Windows')
+  tray.setToolTip(process.platform === 'darwin' ? 'PeakFlow' : 'PeakFlow \u2014 Mac-level productivity for Windows')
   tray.setContextMenu(buildContextMenu())
 
   // Double-click opens the Dashboard hub
