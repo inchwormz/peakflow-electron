@@ -9,6 +9,7 @@
  */
 
 import { runMacHelperSync } from './mac-helper'
+import { notifyAccessibilityNeeded } from '../services/permissions-darwin'
 
 /**
  * Simulate Cmd+V keystroke to paste from clipboard on macOS.
@@ -19,11 +20,7 @@ export function simulateCmdV(): boolean {
   if (!result) return false
   if (result.trusted === false) {
     console.warn('[Keyboard-Darwin] Paste skipped: Accessibility permission not granted')
-    try {
-      // Lazy require: avoids a load-time cycle with the permissions module
-      const { notifyAccessibilityNeeded } = require('../services/permissions-darwin')
-      notifyAccessibilityNeeded('paste')
-    } catch { /* permissions module unavailable */ }
+    notifyAccessibilityNeeded('paste')
     return false
   }
   return result.ok === true

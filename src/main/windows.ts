@@ -13,6 +13,7 @@ import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { checkAccess } from './security/access-check'
 import { getConfig } from './services/config-store'
 import { isToolSupportedOn } from '@shared/platform-tools'
+import { ensureMediaAccess } from './services/permissions-darwin'
 
 /** Cached app icon shared across all windows */
 let _appIcon: Electron.NativeImage | undefined
@@ -357,6 +358,11 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
 
   // Check trial/license status (pass toolId for per-tool gating)
   const access = await checkAccess(toolId)
+  if (access.allowed && process.platform === 'darwin' && (toolId === ToolId.MeetReady || toolId === ToolId.LiquidFocus)) {
+    // macOS: let the OS ask for camera/mic now, or explain how to re-enable it
+    const needs: Array<'camera' | 'microphone'> = toolId === ToolId.MeetReady ? ['camera', 'microphone'] : ['camera']
+    await ensureMediaAccess(toolId === ToolId.MeetReady ? 'MeetReady' : 'LiquidFocus', needs)
+  }
   if (!access.allowed) {
     console.log(`[PeakFlow] Access denied for ${toolId}: ${access.message}`)
     // Tool not installed → Dashboard handles install UX, don't show TrialExpired

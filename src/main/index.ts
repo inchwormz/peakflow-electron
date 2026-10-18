@@ -28,6 +28,7 @@ import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/wa
 import { migrateExistingInstalls, isToolInstalled, installTool } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting, createToolWindow } from './windows'
+import { runMacFirstRunPermissions } from './services/permissions-darwin'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
@@ -217,6 +218,11 @@ if (!gotLock) {
 
     // Open Dashboard on startup so new users aren't left hunting the tray icon
     createToolWindow(SystemWindowId.Dashboard)
+
+    // macOS: one-time plain-English explainer for the Accessibility permission
+    if (process.platform === 'darwin') {
+      setTimeout(() => { void runMacFirstRunPermissions() }, 1500)
+    }
 
     console.log('[PeakFlow] Core started — running in system tray')
   })
