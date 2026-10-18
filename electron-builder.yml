@@ -23,6 +23,8 @@ files:
   - '!{CLAUDE.md,ROADMAP.md,eslint.config.js,.env.example}'
 mac:
   category: public.app-category.productivity
+  # 512px source for the .icns (Windows keeps its own icon.png/icon.ico)
+  icon: resources/icon-mac.png
   # Matches the Swift helper's deployment target (Package.swift: macOS 13)
   minimumSystemVersion: '13.0'
   hardenedRuntime: true
