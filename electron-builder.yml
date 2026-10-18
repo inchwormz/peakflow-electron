@@ -31,6 +31,10 @@ mac:
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
+  # Custom sign hook: identical to the default signing, except the Swift
+  # helper (peakflow-helper) is signed with sidecar/darwin/entitlements.helper.plist
+  # (none) instead of the inherited JIT entitlements Electron's helpers need.
+  sign: scripts/mac-sign.js
   # Signing: electron-builder uses a "Developer ID Application" identity from
   # the keychain (or CSC_LINK/CSC_KEY_PASSWORD). With none present it skips
   # signing and still produces an unsigned app.
