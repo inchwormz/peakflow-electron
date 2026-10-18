@@ -6,18 +6,27 @@
  * downloads the installer directly and launches it.
  *
  * This approach works with manually-uploaded releases (no latest.yml needed).
+ *
+ * macOS never uses the Windows installer path. A Developer ID–signed Mac
+ * build updates through electron-updater, which reads only latest-mac.yml
+ * (and the matching .zip) from the same GitHub release. Unsigned Mac builds
+ * (local/dev/preview) cannot be updated by Squirrel.Mac, so automatic
+ * checks are off and the manual check points to the download page.
  */
 
-import { app, dialog, net, BrowserWindow } from 'electron'
+import { app, dialog, net, BrowserWindow, shell } from 'electron'
 import { createWriteStream } from 'fs'
-import { join } from 'path'
-import { spawn } from 'child_process'
+import { join, dirname } from 'path'
+import { spawn, execFileSync } from 'child_process'
+import type { AppUpdater } from 'electron-updater'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const GITHUB_OWNER = 'inchwormz'
 const GITHUB_REPO = 'peakflow-releases'
 const RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+const RELEASES_PAGE = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+const isMac = process.platform === 'darwin'
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -194,6 +203,139 @@ function launchInstallerAndQuit(installerPath: string): void {
   app.quit()
 }
 
+// ─── macOS ──────────────────────────────────────────────────────────────────
+
+let macSignedCache: boolean | null = null
+
+/**
+ * True only for a packaged app signed with a Developer ID Application
+ * certificate. Squirrel.Mac refuses to install updates into unsigned or
+ * ad-hoc signed apps, so those builds must not try.
+ */
+function isMacUpdateCapable(): boolean {
+  if (!isMac || !app.isPackaged) return false
+  if (macSignedCache !== null) return macSignedCache
+  try {
+    // process.execPath = <PeakFlow.app>/Contents/MacOS/PeakFlow
+    const bundlePath = dirname(dirname(dirname(process.execPath)))
+    // codesign prints signing details on stderr; capture both streams
+    const details = execFileSync('/usr/bin/codesign', ['-dv', '--verbose=2', bundlePath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000
+    })
+    macSignedCache = /Authority=Developer ID Application/.test(details)
+  } catch (err) {
+    const e = err as { stderr?: string }
+    macSignedCache = typeof e.stderr === 'string' && /Authority=Developer ID Application/.test(e.stderr)
+  }
+  return macSignedCache
+}
+
+let macUpdaterInstance: AppUpdater | null = null
+
+/** Loaded on demand so the Windows path never loads electron-updater. */
+function getMacUpdater(): AppUpdater {
+  if (macUpdaterInstance) return macUpdaterInstance
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+  const macUpdater = autoUpdater
+  macUpdaterInstance = macUpdater
+  macUpdater.autoDownload = false
+  macUpdater.autoInstallOnAppQuit = true
+  macUpdater.logger = console
+
+  macUpdater.on('update-downloaded', async (info) => {
+    downloading = false
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Ready',
+      message: `PeakFlow v${info.version} is ready to install.`,
+      detail: 'PeakFlow will restart to finish updating.',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (result.response === 0) macUpdater.quitAndInstall()
+  })
+
+  macUpdater.on('error', (err) => {
+    downloading = false
+    console.error('[AutoUpdater] macOS update error:', err?.message ?? err)
+  })
+  return macUpdater
+}
+
+async function checkForMacUpdates(silent: boolean): Promise<void> {
+  const currentVersion = app.getVersion()
+
+  if (!isMacUpdateCapable()) {
+    console.log('[AutoUpdater] Skipping check: unsigned macOS build')
+    if (!silent) {
+      const result = await dialog.showMessageBox({
+        type: 'info',
+        title: 'Updates',
+        message: `You have PeakFlow v${currentVersion}.`,
+        detail: 'This Mac preview build cannot update itself. Download the newest Mac version from the PeakFlow releases page.',
+        buttons: ['Open Releases Page', 'Close'],
+        defaultId: 0,
+        cancelId: 1
+      })
+      if (result.response === 0) void shell.openExternal(RELEASES_PAGE)
+    }
+    return
+  }
+
+  if (checking || downloading) return
+  checking = true
+  const macUpdater = getMacUpdater()
+  console.log(`[AutoUpdater] Checking latest-mac.yml... (current: v${currentVersion})`)
+
+  try {
+    const result = await macUpdater.checkForUpdates()
+    const latest = result?.updateInfo?.version
+    if (latest && isNewer(latest, currentVersion)) {
+      console.log(`[AutoUpdater] Update available: v${latest}`)
+      const choice = await dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Available',
+        message: `PeakFlow v${latest} is available (you have v${currentVersion}).`,
+        detail: 'Would you like to download the update?',
+        buttons: ['Download', 'Later'],
+        defaultId: 0,
+        cancelId: 1
+      })
+      if (choice.response === 0) {
+        downloading = true
+        await macUpdater.downloadUpdate()
+      }
+    } else {
+      console.log('[AutoUpdater] No updates available — you are on the latest version')
+      if (!silent) {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'No Updates',
+          message: `You are running the latest version of PeakFlow (v${currentVersion}).`
+        })
+      }
+    }
+  } catch (err) {
+    downloading = false
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[AutoUpdater] Check failed:', message)
+    if (!silent) {
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'Update Check Failed',
+        message: 'Could not check for updates.',
+        detail: message
+      })
+    }
+  } finally {
+    checking = false
+  }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -201,6 +343,10 @@ function launchInstallerAndQuit(installerPath: string): void {
  * when an update IS available.
  */
 export async function checkForUpdates(silent = false): Promise<void> {
+  if (isMac) {
+    return checkForMacUpdates(silent)
+  }
+
   if (checking) {
     if (!silent) {
       dialog.showMessageBox({
@@ -309,6 +455,11 @@ export async function checkForUpdates(silent = false): Promise<void> {
  * Initialize the update checker. Runs a silent check on startup.
  */
 export function initAutoUpdater(): void {
+  if (isMac && !isMacUpdateCapable()) {
+    console.log('[AutoUpdater] macOS build is not Developer ID signed — automatic updates disabled')
+    return
+  }
+
   setTimeout(() => {
     checkForUpdates(true)
   }, 5000)
