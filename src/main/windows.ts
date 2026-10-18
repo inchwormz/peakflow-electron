@@ -358,11 +358,6 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
 
   // Check trial/license status (pass toolId for per-tool gating)
   const access = await checkAccess(toolId)
-  if (access.allowed && process.platform === 'darwin' && (toolId === ToolId.MeetReady || toolId === ToolId.LiquidFocus)) {
-    // macOS: let the OS ask for camera/mic now, or explain how to re-enable it
-    const needs: Array<'camera' | 'microphone'> = toolId === ToolId.MeetReady ? ['camera', 'microphone'] : ['camera']
-    await ensureMediaAccess(toolId === ToolId.MeetReady ? 'MeetReady' : 'LiquidFocus', needs)
-  }
   if (!access.allowed) {
     console.log(`[PeakFlow] Access denied for ${toolId}: ${access.message}`)
     // Tool not installed → Dashboard handles install UX, don't show TrialExpired
@@ -375,7 +370,16 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
     return null
   }
 
-  return createToolWindow(toolId)
+  const win = createToolWindow(toolId)
+  if (process.platform === 'darwin' && (toolId === ToolId.MeetReady || toolId === ToolId.LiquidFocus)) {
+    // macOS: let the OS ask for camera/mic, or explain how to re-enable it.
+    // Not awaited: the tool window opens at once and the prompt shows over it.
+    const needs: Array<'camera' | 'microphone'> = toolId === ToolId.MeetReady ? ['camera', 'microphone'] : ['camera']
+    ensureMediaAccess(toolId === ToolId.MeetReady ? 'MeetReady' : 'LiquidFocus', needs).catch((err) => {
+      console.warn(`[PeakFlow] Media access check failed for ${toolId}:`, err)
+    })
+  }
+  return win
 }
 
 /**

@@ -122,9 +122,10 @@ export function notifyAccessibilityNeeded(reason: string): void {
 }
 
 /**
- * Before opening a camera/mic tool: if macOS has never asked, let it ask now;
+ * When a camera/mic tool opens: if macOS has never asked, let it ask now;
  * if access was denied earlier, explain and offer the right settings pane.
- * Never blocks the tool from opening.
+ * Callers run this without awaiting it, so the tool window is never delayed
+ * by a prompt or the explanation dialog.
  */
 export async function ensureMediaAccess(toolName: string, needs: Array<'camera' | 'microphone'>): Promise<void> {
   if (!isMac) return
