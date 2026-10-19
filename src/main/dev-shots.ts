@@ -27,6 +27,8 @@ interface Step {
   name?: string
   route?: string
   eval?: string
+  /** JS run in the panel after navigating to `route`, before the capture (e.g. open the switcher) */
+  then?: string
   mini?: boolean
   card?: boolean
   alert?: boolean
@@ -68,6 +70,10 @@ export async function runDevShots(): Promise<void> {
         closeToolWindow(SystemWindowId.LiquidFocusMini)
         showPanel(step.route)
         await sleep(900)
+        if (step.then) {
+          await getPanel()?.webContents.executeJavaScript(step.then, true)
+          await sleep(500)
+        }
         const p = getPanel()
         if (p && step.name) await capture(p, dir, step.name, step.margin ?? 40)
       }

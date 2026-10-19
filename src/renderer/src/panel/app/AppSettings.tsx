@@ -47,6 +47,35 @@ function planText(a: AccessStatus | undefined): string {
 
 const Ext = (): React.JSX.Element => <Icon name="ext" className="go" />
 
+/**
+ * Plan choices from the prototype. Display only: prices are John's decided
+ * pricing, but the licensing logic is unchanged, so every option opens the
+ * existing checkout page on getpeakflow.pro.
+ */
+export function PlanOptions({ toolName }: { toolName?: string }): React.JSX.Element {
+  const open = (): void => openExternal(CHECKOUT_URL)
+  return (
+    <>
+      <div className="plans">
+        <button className="plan-opt" onClick={open}>
+          <span className="pt">Pro</span>
+          <span className="pp">$2.99<small> / month</small></span>
+          <span className="pd">Every tool, on two Macs</span>
+        </button>
+        <button className="plan-opt" onClick={open}>
+          <span className="pt">Own it</span>
+          <span className="pp">$9.99<small> once</small></span>
+          <span className="pd">{toolName ? `${toolName}, yours to keep` : 'One tool, yours to keep'}</span>
+        </button>
+      </div>
+      <button className="plan-more" onClick={open}>
+        <span>Own all four tools</span>
+        <span className="pp">$29.99 once</span>
+      </button>
+    </>
+  )
+}
+
 /* ─── app ────────────────────────────────────────────────────────────────── */
 
 function Home(): React.JSX.Element {
@@ -113,7 +142,7 @@ function Licence(): React.JSX.Element {
       <>
         <Hero icon="clock" title="Your trial has ended">Your settings are safe. Pick a plan to keep using PeakFlow.</Hero>
         <Gap />
-        <Primary onClick={() => openExternal(CHECKOUT_URL)}>See plans</Primary>
+        <PlanOptions />
         <Grp style={{ marginTop: 14 }}>
           <Row label="Enter a licence key" go="app/licence-key" />
         </Grp>
@@ -131,8 +160,8 @@ function Licence(): React.JSX.Element {
         <i style={{ width: `${Math.min(100, (left / Math.max(1, trial.trialDays)) * 100)}%` }} />
       </div>
       <Gap h={16} />
-      <Grp>
-        <Row label="See plans" right={<Ext />} onClick={() => openExternal(CHECKOUT_URL)} />
+      <PlanOptions />
+      <Grp style={{ marginTop: 14 }}>
         <Row label="Enter a licence key" go="app/licence-key" />
       </Grp>
     </>

@@ -17,7 +17,7 @@ import { NavContext, matchRoute, type NavApi } from './nav'
 import { invoke, useIpcEvent, useInvoke, formatAccelerator } from './hooks'
 import { Btn, Hero, LinkBtn, Primary, Grp, Row, Gap, openExternal } from './kit'
 import { TOOL_MODULES, TOOL_BY_ID } from './tools'
-import { APP_ROUTES } from './app/AppSettings'
+import { APP_ROUTES, PlanOptions } from './app/AppSettings'
 import type { DialogSpec, PanelToolId, RouteDef, RouteTable } from './types'
 
 const ALL_ROUTES: RouteTable = Object.assign({}, ...TOOL_MODULES.map((m) => m.routes), APP_ROUTES)
@@ -339,7 +339,7 @@ function Locked({ tool }: { tool: PanelToolId }): React.JSX.Element {
     <>
       <Hero icon="clock" title={`Your ${m.name} trial has ended`}>Your settings are saved. Pick a plan to keep using it.</Hero>
       <Gap h={16} />
-      <Primary onClick={() => openExternal(CHECKOUT_URL)}>See plans</Primary>
+      <PlanOptions toolName={m.name} />
       <Grp style={{ marginTop: 14 }}>
         <Row label="Enter a licence key" go="app/licence-key" />
       </Grp>

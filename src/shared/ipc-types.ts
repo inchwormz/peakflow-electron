@@ -135,6 +135,8 @@ export const IPC_INVOKE = {
   CLIPBOARD_START_FORM_FILL: 'clipboard:start-form-fill',
   CLIPBOARD_FORM_PASTE_NEXT: 'clipboard:form-paste-next',
   CLIPBOARD_CANCEL_FORM_FILL: 'clipboard:cancel-form-fill',
+  // v2 quickboard: which paste sequence (queue, workflow or form) is running, for the panel's banner
+  CLIPBOARD_PASTE_STATUS: 'clipboard:v2-paste-status',
 
   // SoundSplit
   SOUNDSPLIT_GET_SESSIONS: 'soundsplit:get-sessions',
@@ -175,6 +177,8 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
   LIQUIDFOCUS_TOGGLE_MINI: 'liquidfocus:toggle-mini',
   LIQUIDFOCUS_SET_MINI: 'liquidfocus:set-mini',
+  // v2 liquidfocus: restart the current phase (panel "Reset")
+  LIQUIDFOCUS_RESTART_PHASE: 'liquidfocus:restart-phase',
 
   // Shell
   SHELL_OPEN_EXTERNAL: 'shell:open-external',

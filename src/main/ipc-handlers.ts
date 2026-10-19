@@ -703,6 +703,17 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // v2 quickboard: one status for the panel's "Pasting 2 of 3" banner (no input)
+  ipcMain.handle(IPC_INVOKE.CLIPBOARD_PASTE_STATUS, async () => {
+    const { getWorkflowStatus } = await import('./services/clipboard-workflows')
+    const { getFormFillStatus } = await import('./services/clipboard-forms')
+    const wf = getWorkflowStatus()
+    if (wf.active) return { kind: 'workflow' as const, ...wf }
+    const ff = getFormFillStatus()
+    if (ff.active) return { kind: 'form' as const, ...ff }
+    return { kind: 'queue' as const, label: '', ...getQueueStatus() }
+  })
+
   // ─── QuickBoard: OCR ───────────────────────────────────────────────────────
 
   ipcMain.handle(
@@ -1037,6 +1048,9 @@ export function registerIpcHandlers(): void {
       setMiniCardSize(win, !!payload.card)
     }
   )
+
+  // v2 liquidfocus: restart the current phase (no input)
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE, (): TimerState => getLiquidFocusService().restartPhase())
 
   // ─── One-app panel (v2) ───────────────────────────────────────────────────
 
