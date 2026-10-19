@@ -1,287 +1,206 @@
 /**
- * LiquidFocusMini — Compact floating timer widget.
+ * LiquidFocusMini: the always-on-top mini timer (v2 look, monochrome).
  *
- * Frameless 220x64 window, always-on-top, bottom-right.
- * Premium watch-complication aesthetic: smoked glass surface,
- * living progress ring, precision typography.
+ * Frameless 220x64 window in the corner. Shows a small white ring, the time
+ * and the task (or Paused / Short break / Long break); pause and stop appear
+ * on hover. Clicking it opens the panel on Liquid Focus and closes the mini.
+ * The window drags by its edges and gaps; the ring, text and buttons click.
+ *
+ * When a phase ends and the next one waits for you, it grows (272x148, via
+ * LIQUIDFOCUS_SET_MINI {card:true}) into the break prompt:
+ *   - focus done:  "Focus session done · That's N of M today" [Start break] [Skip]
+ *   - cycle done:  "Four sessions done · … long break" [Start long break] [Stop for now]
+ *   - break over:  "Break's over · Next up: <task>" [Start focus] [Stop]
  */
 
-import { useState, useEffect, useCallback, useMemo, type CSSProperties } from 'react'
-import { DS, type TimerState } from './LiquidFocus'
-import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
-import { ToolId } from '@shared/tool-ids'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { IPC_INVOKE } from '@shared/ipc-types'
+import '../../panel/panel.css'
+import { Ring } from '../../panel/kit'
+import { Icon } from '../../panel/icons'
+import { fmtClock } from '../../panel/hooks'
+import { activeTask, lfPause, lfSkip, lfStart, lfStop, phaseFrac, setMini, useLF, type TimerState } from '../../panel/tools/liquidfocus/store'
 
-const RING = { size: 40, r: 15, cx: 20, cy: 20 }
-const RING_C = 2 * Math.PI * RING.r
+type Card = null | 'done' | 'cycle' | 'breakover'
 
-const noDrag: CSSProperties = { WebkitAppRegion: 'no-drag' as unknown as string }
+const drag = { WebkitAppRegion: 'drag' } as unknown as CSSProperties
+const noDrag = { WebkitAppRegion: 'no-drag' } as unknown as CSSProperties
+const WORDS = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve']
+
+function fmtMinutes(mins: number): string {
+  const h = Math.floor(mins / 60)
+  const m = Math.round(mins % 60)
+  if (!h) return `${m} min`
+  return m ? `${h} h ${m} min` : `${h} h`
+}
+
+/**
+ * Which card a state change calls for: a card, null (a phase is running: show
+ * the pill) or undefined (no change).
+ */
+function cardFor(prev: TimerState, next: TimerState): Card | undefined {
+  if (next.status !== 'idle') return null
+  if (prev.mode === 'work' && next.mode !== 'work' && next.pomodorosCompleted > prev.pomodorosCompleted) {
+    return next.mode === 'long_break' ? 'cycle' : 'done'
+  }
+  if (prev.mode !== 'work' && next.mode === 'work' && prev.status !== 'idle') return 'breakover'
+  return undefined
+}
+
+/** Fills the whole window: the .mini look without its floating position and shadow. */
+const fill: CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  width: 'auto',
+  height: 'auto',
+  borderRadius: 0,
+  boxShadow: 'none',
+  background: '#0a0a0a',
+  ...drag
+}
 
 export function LiquidFocusMini(): React.JSX.Element {
-  const [timer, setTimer] = useState<TimerState>({
-    mode: 'work',
-    status: 'idle',
-    remaining: 25 * 60,
-    total: 25 * 60,
-    pomodorosCompleted: 0,
-    sessionsBeforeLong: 4,
-    activeTaskIndex: -1
-  })
+  const lf = useLF()
+  const t = lf?.timer
+  const [card, setCard] = useState<Card>(null)
+  const prev = useRef<TimerState | null>(null)
 
+  // Watch transitions: grow into the break prompt, shrink back when a phase starts, close after Stop
   useEffect(() => {
-    window.peakflow
-      .invoke(IPC_INVOKE.LIQUIDFOCUS_GET_STATE)
-      .then((state) => {
-        const s = state as { timer: TimerState }
-        if (s?.timer) setTimer(s.timer)
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    const unsub = window.peakflow.on(
-      IPC_SEND.LIQUIDFOCUS_STATE_CHANGED,
-      (data: unknown) => {
-        const update = data as { timer: TimerState }
-        if (update?.timer) setTimer(update.timer)
+    if (!t) return
+    const p = prev.current
+    prev.current = t
+    if (!p) {
+      if (t.status === 'idle') setMini(false)
+      return
+    }
+    const c = cardFor(p, t)
+    if (c === null) {
+      if (card) {
+        setCard(null)
+        setMini(true, false)
       }
-    )
-    return unsub
+      return
+    }
+    if (c) {
+      setCard(c)
+      setMini(true, true)
+      return
+    }
+    // Idle with no prompt showing (stopped or reset elsewhere): the mini isn't needed
+    if (t.status === 'idle' && !card) setMini(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t])
+
+  // Dark right to the window edges
+  useEffect(() => {
+    document.documentElement.style.background = '#0a0a0a'
+    document.body.style.background = '#0a0a0a'
+    document.body.style.margin = '0'
+    document.body.style.overflow = 'hidden'
   }, [])
 
-  const isBreak = timer.mode !== 'work'
-  const progress = timer.total > 0 ? 1 - timer.remaining / timer.total : 0
-  const dashOffset = RING_C * (1 - progress)
+  const openPanel = (): void => {
+    window.peakflow.invoke(IPC_INVOKE.PANEL_SHOW, 'liquidfocus').catch(() => {})
+    setMini(false)
+  }
+  const stop = (): void => {
+    lfStop().then(() => setMini(false))
+  }
 
-  const minutes = Math.floor(timer.remaining / 60)
-  const seconds = timer.remaining % 60
-  const timeDisplay = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  if (!lf || !t) return <div className="pf" style={fill} />
 
-  const modeLabel = useMemo(() => {
-    switch (timer.mode) {
-      case 'work':
-        return 'FOCUS'
-      case 'short_break':
-        return 'SHORT BREAK'
-      case 'long_break':
-        return 'LONG BREAK'
-      default:
-        return 'FOCUS'
-    }
-  }, [timer.mode])
-
-  const pomDots = useMemo(() => {
-    const count = timer.sessionsBeforeLong
-    const filled = timer.pomodorosCompleted % count
-    return Array.from({ length: count }, (_, i) => i < filled)
-  }, [timer.pomodorosCompleted, timer.sessionsBeforeLong])
-
-  const handleToggle = useCallback(() => {
-    if (timer.status === 'running') {
-      window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_PAUSE)
+  if (card) {
+    const n = Math.max(1, Math.min(12, t.sessionsBeforeLong || 4))
+    const inCycle = t.pomodorosCompleted % n || n
+    const mins = Math.round(t.total / 60)
+    const task = activeTask(lf)
+    let title: string
+    let line: string
+    let ask: string | null = null
+    let primary: string
+    let secondary: string
+    let onPrimary: () => void
+    let onSecondary: () => void
+    if (card === 'done') {
+      title = 'Focus session done'
+      line = `That’s ${inCycle} of ${n} today.`
+      ask = `Take a ${mins}-minute break?`
+      primary = 'Start break'
+      secondary = 'Skip'
+      onPrimary = () => void lfStart()
+      // Skip the break and go straight into the next focus session (as the prototype does)
+      onSecondary = () => void lfSkip().then(() => lfStart())
+    } else if (card === 'cycle') {
+      title = `${WORDS[n] ?? n} sessions done`
+      line = `${fmtMinutes(lf.stats.today * lf.workDurationMinutes)} of focus today.`
+      ask = `Time for a ${mins}-minute long break.`
+      primary = 'Start long break'
+      secondary = 'Stop for now'
+      onPrimary = () => void lfStart()
+      onSecondary = stop
     } else {
-      window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_START)
+      title = 'Break’s over'
+      line = `Next up: ${task?.name || 'another focus session'}`
+      primary = 'Start focus'
+      secondary = 'Stop'
+      onPrimary = () => void lfStart()
+      onSecondary = stop
     }
-  }, [timer.status])
+    return (
+      <div className="pf">
+        <div className="mini card" style={{ ...fill, justifyContent: 'center' }}>
+          <div className="hd">
+            <div className="mr">
+              <Ring size={38} frac={1} stroke={8} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h4>{title}</h4>
+              <p style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line}</p>
+            </div>
+          </div>
+          {ask ? <p>{ask}</p> : null}
+          <div className="btn-row" style={noDrag}>
+            <button className="btn primary" onClick={onPrimary}>
+              {primary}
+            </button>
+            <button className="btn" onClick={onSecondary}>
+              {secondary}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
-  const handleOpenFull = useCallback(() => {
-    window.peakflow.invoke(IPC_INVOKE.WINDOW_OPEN, { toolId: ToolId.LiquidFocus })
-  }, [])
-
-  const handleClose = useCallback(() => {
-    window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_TOGGLE_MINI)
-  }, [])
-
-  const isRunning = timer.status === 'running'
-  const accent = isBreak ? DS.accent : DS.orange
-  const glowColor = isBreak ? 'rgba(255,225,124,' : 'rgba(255,112,67,'
-  const [playHover, setPlayHover] = useState(false)
-  const [closeHover, setCloseHover] = useState(false)
-
+  const paused = t.status !== 'running'
+  const sub =
+    t.status === 'paused'
+      ? 'Paused'
+      : t.mode === 'short_break'
+        ? 'Short break'
+        : t.mode === 'long_break'
+          ? 'Long break'
+          : activeTask(lf)?.name || 'Focus'
   return (
-    <div
-      style={{
-        width: '100vw',
-        height: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '0 10px 0 12px',
-        background: 'linear-gradient(160deg, rgba(22, 22, 28, 0.97) 0%, rgba(10, 10, 14, 0.97) 100%)',
-        border: 'none',
-        borderRadius: 0,
-        fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
-        cursor: 'default',
-        WebkitAppRegion: 'drag' as unknown as string,
-        overflow: 'hidden'
-      }}
-    >
-      {/* Ring — click to open full window */}
-      <div style={{ flexShrink: 0, cursor: 'pointer', ...noDrag }} onClick={handleOpenFull}>
-        <svg
-          viewBox="0 0 40 40"
-          width={RING.size}
-          height={RING.size}
-          style={{
-            transform: 'rotate(-90deg)',
-            filter: isRunning
-              ? `drop-shadow(0 0 6px ${glowColor}0.35))`
-              : 'none',
-            transition: 'filter 0.4s'
-          }}
-        >
-          {/* Center fill — gives the ring body */}
-          <circle
-            cx={RING.cx}
-            cy={RING.cy}
-            r={RING.r - 2}
-            fill={isRunning ? `${glowColor}0.08)` : 'rgba(255,255,255,0.02)'}
-            style={{ transition: 'fill 0.4s' }}
-          />
-          {/* Track */}
-          <circle
-            cx={RING.cx}
-            cy={RING.cy}
-            r={RING.r}
-            fill="none"
-            stroke="rgba(255,255,255,0.08)"
-            strokeWidth={2.5}
-          />
-          {/* Progress arc — thicker than track for emphasis */}
-          <circle
-            cx={RING.cx}
-            cy={RING.cy}
-            r={RING.r}
-            fill="none"
-            stroke={accent}
-            strokeWidth={3}
-            strokeLinecap="round"
-            strokeDasharray={RING_C}
-            strokeDashoffset={dashOffset}
-            style={{ transition: 'stroke-dashoffset 0.8s ease' }}
-          />
-        </svg>
-      </div>
-
-      {/* Center: time + session dots + mode — drag handle */}
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: 'flex',
-          flexDirection: 'column' as const,
-          justifyContent: 'center',
-          gap: 3
-        }}
-      >
-        <div
-          style={{
-            fontSize: 21,
-            fontWeight: 500,
-            color: 'rgba(255,255,255,0.95)',
-            lineHeight: 1,
-            letterSpacing: 2,
-            fontFeatureSettings: "'tnum'"
-          }}
-        >
-          {timeDisplay}
+    <div className="pf">
+      <div className="mini" style={fill} title="Click to open Liquid Focus">
+        <div className="mr" style={noDrag} onClick={openPanel}>
+          <Ring size={38} frac={phaseFrac(t)} stroke={8} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <div style={{ display: 'flex', gap: 3 }}>
-            {pomDots.map((filled, i) => (
-              <div
-                key={i}
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: filled ? accent : 'rgba(255,255,255,0.18)',
-                  boxShadow: filled ? `0 0 6px ${glowColor}0.4)` : 'none',
-                  transition: 'background 0.3s, box-shadow 0.3s'
-                }}
-              />
-            ))}
-          </div>
-          <div
-            style={{
-              fontSize: 8.5,
-              fontWeight: 600,
-              letterSpacing: 1.5,
-              color: 'rgba(255,255,255,0.45)',
-              textTransform: 'uppercase'
-            }}
-          >
-            {modeLabel}
-          </div>
+        <div className="tx" style={noDrag} onClick={openPanel}>
+          <b>{fmtClock(t.remaining)}</b>
+          <span>{sub}</span>
+        </div>
+        <div className="mc" style={noDrag}>
+          <button aria-label={paused ? 'Resume' : 'Pause'} title={paused ? 'Resume' : 'Pause'} onClick={() => (paused ? lfStart() : lfPause())}>
+            <Icon name={paused ? 'play' : 'pause'} />
+          </button>
+          <button aria-label="Stop" title="Stop" onClick={stop}>
+            <Icon name="stop" />
+          </button>
         </div>
       </div>
-
-      {/* Play / Pause */}
-      <button
-        onClick={handleToggle}
-        onMouseEnter={() => setPlayHover(true)}
-        onMouseLeave={() => setPlayHover(false)}
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: '50%',
-          border: `1px solid ${playHover ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)'}`,
-          background: playHover ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          padding: 0,
-          transition: 'background 0.15s, border-color 0.15s',
-          ...noDrag
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          {isRunning ? (
-            <>
-              <rect x="2.5" y="2" width="2.5" height="8" rx="0.75"
-                fill={playHover ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.7)'} />
-              <rect x="7" y="2" width="2.5" height="8" rx="0.75"
-                fill={playHover ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.7)'} />
-            </>
-          ) : (
-            <path d="M3 1.5L10.5 6L3 10.5V1.5Z"
-              fill={playHover ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.7)'} />
-          )}
-        </svg>
-      </button>
-
-      {/* Close */}
-      <button
-        onClick={handleClose}
-        onMouseEnter={() => setCloseHover(true)}
-        onMouseLeave={() => setCloseHover(false)}
-        style={{
-          width: 22,
-          height: 22,
-          borderRadius: '50%',
-          border: 'none',
-          background: closeHover ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          padding: 0,
-          transition: 'background 0.15s',
-          ...noDrag
-        }}
-      >
-        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-          <path
-            d="M1 1L7 7M7 1L1 7"
-            stroke={closeHover ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)'}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            style={{ transition: 'stroke 0.15s' }}
-          />
-        </svg>
-      </button>
     </div>
   )
 }

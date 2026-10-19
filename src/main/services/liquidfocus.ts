@@ -187,6 +187,14 @@ class LiquidFocusService {
     return this.getTimerState()
   }
 
+  // v2 liquidfocus: restart the current phase from its full length (the panel's "Reset"),
+  // keeping the mode, the cycle count and whether it is running.
+  restartPhase(): TimerState {
+    this.remaining = this.total
+    this.broadcastState()
+    return this.getTimerState()
+  }
+
   /** Reload durations from config. Called when settings change. */
   refreshConfig(): void {
     const cfg = this.getConfigSafe()
