@@ -71,7 +71,6 @@ export function SettingsPanel({
     >
       {/* Nav bar */}
       <div style={navBarStyle}>
-        {/* @ts-expect-error -- Electron-specific CSS */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, WebkitAppRegion: 'no-drag' }}>
           <NavButton icon={<ChevronLeft size={15} />} onClick={onBack} />
           <span style={{ fontSize: 13, fontWeight: 400, color: DS.textPrimary, fontFamily: "'Silkscreen', cursive" }}>

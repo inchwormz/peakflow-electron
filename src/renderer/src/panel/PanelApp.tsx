@@ -77,7 +77,7 @@ export function PanelApp(): React.JSX.Element {
   const confirm = useCallback((spec: DialogSpec) => new Promise<string | null>((resolve) => setDialog({ ...spec, resolve })), [])
 
   const back = useCallback(() => {
-    if (def.kind === 'sub') go(def.back)
+    if (def.kind === 'sub') go(def.back === '__last' ? lastTool.current : def.back)
     else go(currentTool)
   }, [def, go, currentTool])
 
