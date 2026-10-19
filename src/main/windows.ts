@@ -15,6 +15,7 @@ import { getConfig } from './services/config-store'
 import { isToolSupportedOn } from '@shared/platform-tools'
 import { ensureMediaAccess } from './services/permissions-darwin'
 import { getPanel, showPanel } from './panel'
+import { layoutMini } from './mini-window'
 
 /** Cached app icon shared across all windows */
 let _appIcon: Electron.NativeImage | undefined
@@ -202,10 +203,12 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
 
   // Show when the renderer has painted its first frame
   win.once('ready-to-show', () => {
-    if (!overrides.fullscreen && overrides.width && overrides.height) {
+    const isMini = toolId === SystemWindowId.LiquidFocusMini
+    if (!isMini && !overrides.fullscreen && overrides.width && overrides.height) {
       win.setContentSize(overrides.width, overrides.height)
     }
-    win.show()
+    // The mini timer is sized, placed and shown (without taking focus) by layoutMini
+    if (!isMini) win.show()
     // 'screen-saver' level keeps windows above fullscreen apps (Chrome, etc.).
     // Re-assert on blur/show/restore because Windows can silently drop it.
     if (toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert || toolId === SystemWindowId.LiquidFocusMini) {
@@ -218,11 +221,8 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
       win.on('restore', pinAbove)
     }
 
-    // Position mini widget at bottom-right of primary display
-    if (toolId === SystemWindowId.LiquidFocusMini) {
-      const workArea = screen.getPrimaryDisplay().workArea
-      win.setPosition(workArea.x + workArea.width - 220 - 16, workArea.y + workArea.height - 64 - 16)
-    }
+    // Mini timer: remembered size and spot (or the bottom-right corner)
+    if (isMini) layoutMini(win, false)
   })
 
   // Dashboard: hide to tray instead of closing (app stays resident)

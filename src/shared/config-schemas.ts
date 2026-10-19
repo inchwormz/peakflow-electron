@@ -63,6 +63,12 @@ export interface LiquidFocusConfig {
   focus_detection_enabled: boolean
   /** Seconds of looking away before counting as a distraction (default: 5) */
   focus_away_threshold_secs: number
+  /** v2 mini timer: size as a multiple of its 220x64 base (resizing changes it) */
+  mini_size: number
+  /** v2 mini timer colour */
+  mini_theme: 'dark' | 'light'
+  /** v2 mini timer: last top-left position, or null for the bottom-right corner */
+  mini_position: { x: number; y: number } | null
 }
 
 export interface SoundSplitConfig {
@@ -134,6 +140,9 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     todoist_project_filter: '',
     focus_detection_enabled: false,
     focus_away_threshold_secs: 5,
+    mini_size: 1.4,
+    mini_theme: 'dark' as const,
+    mini_position: null,
     distraction_sites: [
       'youtube.com',
       'facebook.com',

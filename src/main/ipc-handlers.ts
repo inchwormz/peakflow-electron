@@ -7,7 +7,7 @@
 
 import { ipcMain, BrowserWindow, shell, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { IPC_INVOKE } from '@shared/ipc-types'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig } from '@shared/config-schemas'
@@ -16,6 +16,7 @@ import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
 import { resizePanel, hidePanel, showPanel } from './panel'
+import { layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
 import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
 import { checkForUpdates } from './services/auto-updater'
@@ -208,6 +209,11 @@ export function registerIpcHandlers(): void {
         // Propagate config changes to running services
         if (payload.tool === ToolId.LiquidFocus) {
           getLiquidFocusService().refreshConfig()
+          const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
+          if (payload.key === 'mini_size') refreshMiniSize(mini)
+          if (payload.key === 'mini_theme' && mini && !mini.isDestroyed()) {
+            mini.webContents.send(IPC_SEND.LIQUIDFOCUS_MINI_THEME, payload.value === 'light' ? 'light' : 'dark')
+          }
         }
         if (payload.tool === ToolId.ScreenSlap) {
           getScreenSlapService().refreshConfig()
@@ -1047,9 +1053,17 @@ export function registerIpcHandlers(): void {
         return
       }
       const win = getToolWindow(SystemWindowId.LiquidFocusMini) ?? createToolWindow(SystemWindowId.LiquidFocusMini)
-      setMiniCardSize(win, !!payload.card)
+      layoutMini(win, !!payload.card)
     }
   )
+
+  // v2 mini timer: the renderer drags the window (so a plain click can still open the panel)
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_MINI_MOVE, (event, p: { x: number; y: number; done?: boolean }): void => {
+    const win = getToolWindow(SystemWindowId.LiquidFocusMini)
+    if (!win || event.sender !== win.webContents) return
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || Math.abs(p.x) > 1e5 || Math.abs(p.y) > 1e5) return
+    moveMini(win, Math.round(p.x), Math.round(p.y), !!p.done)
+  })
 
   // v2 liquidfocus: restart the current phase (no input)
   ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE, (): TimerState => getLiquidFocusService().restartPhase())
@@ -1158,17 +1172,3 @@ export function registerIpcHandlers(): void {
 }
 
 /** The mini timer is a 220×64 pill; the break prompt grows it into a card in the same corner. */
-function setMiniCardSize(win: BrowserWindow, card: boolean): void {
-  const apply = (): void => {
-    if (win.isDestroyed()) return
-    const { screen } = require('electron') as typeof import('electron')
-    const [w, h] = card ? [272, 148] : [220, 64]
-    const wa = screen.getDisplayMatching(win.getBounds()).workArea
-    win.setResizable(true)
-    win.setBounds({ x: wa.x + wa.width - w - 16, y: wa.y + wa.height - h - 16, width: w, height: h })
-    win.setResizable(false)
-    if (!win.isVisible()) win.showInactive()
-  }
-  if (win.webContents.isLoading()) win.once('ready-to-show', apply)
-  else apply()
-}

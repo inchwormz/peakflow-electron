@@ -1,10 +1,12 @@
 /**
  * LiquidFocusMini: the always-on-top mini timer (v2 look, monochrome).
  *
- * Frameless 220x64 window in the corner. Shows a small white ring, the time
- * and the task (or Paused / Short break / Long break); pause and stop appear
- * on hover. Clicking it opens the panel on Liquid Focus and closes the mini.
- * The window drags by its edges and gaps; the ring, text and buttons click.
+ * Frameless window in the corner (220x64 at size 1; 1.4 by default). Shows a
+ * ring, the time and the task (or Paused / Short break / Long break); pause and
+ * stop appear on hover. Clicking it opens the panel on Liquid Focus and closes
+ * the mini. Drag from anywhere except the buttons; drag an edge or corner to
+ * resize (the content scales with it). Dark or light (liquidfocus.mini_theme);
+ * right-click to switch.
  *
  * When a phase ends and the next one waits for you, it grows (272x148, via
  * LIQUIDFOCUS_SET_MINI {card:true}) into the break prompt:
@@ -13,8 +15,9 @@
  *   - break over:  "Break's over · Next up: <task>" [Start focus] [Stop]
  */
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { IPC_INVOKE } from '@shared/ipc-types'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
+import { ToolId } from '@shared/tool-ids'
 import '../../panel/panel.css'
 import { Ring } from '../../panel/kit'
 import { Icon } from '../../panel/icons'
@@ -23,8 +26,10 @@ import { activeTask, lfPause, lfSkip, lfStart, lfStop, phaseFrac, setMini, useLF
 
 type Card = null | 'done' | 'cycle' | 'breakover'
 
-const drag = { WebkitAppRegion: 'drag' } as unknown as CSSProperties
-const noDrag = { WebkitAppRegion: 'no-drag' } as unknown as CSSProperties
+type Theme = 'dark' | 'light'
+/** The layout's own size; the window is this times liquidfocus.mini_size and the content is scaled to fit */
+const BASE = { pill: [220, 64], card: [272, 148] } as const
+const DRAG_THRESHOLD = 4
 const WORDS = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve']
 
 function fmtMinutes(mins: number): string {
@@ -47,23 +52,109 @@ function cardFor(prev: TimerState, next: TimerState): Card | undefined {
   return undefined
 }
 
-/** Fills the whole window: the .mini look without its floating position and shadow. */
-const fill: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  width: 'auto',
-  height: 'auto',
-  borderRadius: 0,
-  boxShadow: 'none',
-  background: '#0a0a0a',
-  ...drag
+/** The .mini look at its base size, without its floating position and shadow; scaled to the window. */
+function boxStyle(card: boolean, scale: number): CSSProperties {
+  const [w, h] = card ? BASE.card : BASE.pill
+  return {
+    position: 'fixed',
+    left: 0,
+    top: 0,
+    right: 'auto',
+    bottom: 'auto',
+    width: w,
+    height: h,
+    borderRadius: 0,
+    boxShadow: 'none',
+    background: 'var(--bg)',
+    transform: `scale(${scale})`,
+    transformOrigin: '0 0',
+    userSelect: 'none',
+    cursor: 'default'
+  }
 }
+
+/** The window's scale relative to the layout's base width. */
+function useScale(card: boolean): number {
+  const base = card ? BASE.card[0] : BASE.pill[0]
+  const [w, setW] = useState(window.innerWidth)
+  useEffect(() => {
+    const on = (): void => setW(window.innerWidth)
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [])
+  return Math.max(0.5, w / base)
+}
+
+function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>('dark')
+  useEffect(() => {
+    window.peakflow
+      .invoke(IPC_INVOKE.CONFIG_GET, { tool: ToolId.LiquidFocus })
+      .then((c) => setTheme((c as { mini_theme?: Theme } | null)?.mini_theme === 'light' ? 'light' : 'dark'))
+      .catch(() => {})
+    return window.peakflow.on(IPC_SEND.LIQUIDFOCUS_MINI_THEME, (v) => setTheme(v === 'light' ? 'light' : 'dark'))
+  }, [])
+  const toggle = (): void => {
+    const next: Theme = theme === 'light' ? 'dark' : 'light'
+    setTheme(next)
+    window.peakflow.invoke(IPC_INVOKE.CONFIG_SET, { tool: ToolId.LiquidFocus, key: 'mini_theme', value: next }).catch(() => {})
+  }
+  return [theme, toggle]
+}
+
+/**
+ * Drag the window from anywhere (buttons excluded: they stop pointerdown).
+ * Movement under DRAG_THRESHOLD px counts as a click and calls onClick.
+ */
+function useDragAnywhere(onClick?: () => void): {
+  onPointerDown: (e: RPointerEvent) => void
+  onPointerMove: (e: RPointerEvent) => void
+  onPointerUp: (e: RPointerEvent) => void
+} {
+  const s = useRef<{ sx: number; sy: number; wx: number; wy: number; dragging: boolean; frame: number } | null>(null)
+  const move = (x: number, y: number, done: boolean): void => {
+    window.peakflow.invoke(IPC_INVOKE.LIQUIDFOCUS_MINI_MOVE, { x, y, done }).catch(() => {})
+  }
+  return {
+    onPointerDown: (e) => {
+      if (e.button !== 0) return
+      ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+      s.current = { sx: e.screenX, sy: e.screenY, wx: window.screenX, wy: window.screenY, dragging: false, frame: 0 }
+    },
+    onPointerMove: (e) => {
+      const d = s.current
+      if (!d) return
+      const dx = e.screenX - d.sx
+      const dy = e.screenY - d.sy
+      if (!d.dragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+      d.dragging = true
+      if (d.frame) return
+      d.frame = requestAnimationFrame(() => {
+        d.frame = 0
+        move(d.wx + dx, d.wy + dy, false)
+      })
+    },
+    onPointerUp: (e) => {
+      const d = s.current
+      s.current = null
+      if (!d) return
+      if (d.frame) cancelAnimationFrame(d.frame)
+      if (d.dragging) move(d.wx + e.screenX - d.sx, d.wy + e.screenY - d.sy, true)
+      else onClick?.()
+    }
+  }
+}
+
+/** Buttons keep their own clicks and never start a drag. */
+const ownPointer = { onPointerDown: (e: RPointerEvent) => e.stopPropagation() }
 
 export function LiquidFocusMini(): React.JSX.Element {
   const lf = useLF()
   const t = lf?.timer
   const [card, setCard] = useState<Card>(null)
   const prev = useRef<TimerState | null>(null)
+  const scale = useScale(!!card)
+  const [theme, toggleTheme] = useTheme()
 
   // Watch transitions: grow into the break prompt, shrink back when a phase starts, close after Stop
   useEffect(() => {
@@ -92,13 +183,14 @@ export function LiquidFocusMini(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t])
 
-  // Dark right to the window edges
+  // The timer's colour right to the window edges
   useEffect(() => {
-    document.documentElement.style.background = '#0a0a0a'
-    document.body.style.background = '#0a0a0a'
+    const bg = theme === 'light' ? '#ffffff' : '#0a0a0a'
+    document.documentElement.style.background = bg
+    document.body.style.background = bg
     document.body.style.margin = '0'
     document.body.style.overflow = 'hidden'
-  }, [])
+  }, [theme])
 
   const openPanel = (): void => {
     window.peakflow.invoke(IPC_INVOKE.PANEL_SHOW, 'liquidfocus').catch(() => {})
@@ -107,8 +199,15 @@ export function LiquidFocusMini(): React.JSX.Element {
   const stop = (): void => {
     lfStop().then(() => setMini(false))
   }
+  const dragCard = useDragAnywhere()
+  const dragPill = useDragAnywhere(openPanel)
+  const root = theme === 'light' ? 'pf mini-light' : 'pf'
+  const onContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    toggleTheme()
+  }
 
-  if (!lf || !t) return <div className="pf" style={fill} />
+  if (!lf || !t) return <div className={root} style={boxStyle(false, scale)} />
 
   if (card) {
     const n = Math.max(1, Math.min(12, t.sessionsBeforeLong || 4))
@@ -148,8 +247,8 @@ export function LiquidFocusMini(): React.JSX.Element {
       onSecondary = stop
     }
     return (
-      <div className="pf">
-        <div className="mini card" style={{ ...fill, justifyContent: 'center' }}>
+      <div className={root} onContextMenu={onContextMenu}>
+        <div className="mini card" style={{ ...boxStyle(true, scale), justifyContent: 'center' }} {...dragCard}>
           <div className="hd">
             <div className="mr">
               <Ring size={38} frac={1} stroke={8} />
@@ -160,7 +259,7 @@ export function LiquidFocusMini(): React.JSX.Element {
             </div>
           </div>
           {ask ? <p>{ask}</p> : null}
-          <div className="btn-row" style={noDrag}>
+          <div className="btn-row" {...ownPointer}>
             <button className="btn primary" onClick={onPrimary}>
               {primary}
             </button>
@@ -183,16 +282,16 @@ export function LiquidFocusMini(): React.JSX.Element {
           ? 'Long break'
           : activeTask(lf)?.name || 'Focus'
   return (
-    <div className="pf">
-      <div className="mini" style={fill} title="Click to open Liquid Focus">
-        <div className="mr" style={noDrag} onClick={openPanel}>
+    <div className={root} onContextMenu={onContextMenu}>
+      <div className="mini" style={boxStyle(false, scale)} title="Click to open Liquid Focus · drag to move · right-click for light or dark" {...dragPill}>
+        <div className="mr">
           <Ring size={38} frac={phaseFrac(t)} stroke={8} />
         </div>
-        <div className="tx" style={noDrag} onClick={openPanel}>
+        <div className="tx">
           <b>{fmtClock(t.remaining)}</b>
           <span>{sub}</span>
         </div>
-        <div className="mc" style={noDrag}>
+        <div className="mc" {...ownPointer}>
           <button aria-label={paused ? 'Resume' : 'Pause'} title={paused ? 'Resume' : 'Pause'} onClick={() => (paused ? lfStart() : lfPause())}>
             <Icon name={paused ? 'play' : 'pause'} />
           </button>

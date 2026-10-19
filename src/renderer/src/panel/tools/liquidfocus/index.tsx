@@ -17,7 +17,7 @@ import { useNav } from '../../nav'
 import { Background } from './Background'
 import { Tasks, TasksRight } from './Tasks'
 import { Stats } from './Stats'
-import { Behaviour, Durations, Settings, Sites, Todoist } from './Settings'
+import { Behaviour, Durations, MiniTimer, Settings, Sites, Todoist } from './Settings'
 import {
   activeTask,
   cycleDots,
@@ -122,6 +122,7 @@ export const liquidfocusTool: PanelToolModule = {
     'liquidfocus/settings/durations': { kind: 'sub', back: 'liquidfocus/settings', title: 'Durations', view: Durations },
     'liquidfocus/settings/behaviour': { kind: 'sub', back: 'liquidfocus/settings', title: 'Sounds and detection', view: Behaviour },
     'liquidfocus/settings/sites': { kind: 'sub', back: 'liquidfocus/settings', title: 'Blocked sites', view: Sites },
+    'liquidfocus/settings/mini': { kind: 'sub', back: 'liquidfocus/settings', title: 'Mini timer', view: MiniTimer },
     ...(TODOIST_ENABLED
       ? { 'liquidfocus/settings/todoist': { kind: 'sub' as const, back: 'liquidfocus/settings', title: 'Todoist', view: Todoist } }
       : {})

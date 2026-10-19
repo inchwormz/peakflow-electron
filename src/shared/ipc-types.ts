@@ -177,6 +177,8 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
   LIQUIDFOCUS_TOGGLE_MINI: 'liquidfocus:toggle-mini',
   LIQUIDFOCUS_SET_MINI: 'liquidfocus:set-mini',
+  /** v2 mini timer: move it while you drag ({x, y, done}) */
+  LIQUIDFOCUS_MINI_MOVE: 'liquidfocus:mini-move',
   // v2 liquidfocus: restart the current phase (panel "Reset")
   LIQUIDFOCUS_RESTART_PHASE: 'liquidfocus:restart-phase',
 
@@ -242,7 +244,9 @@ export const IPC_SEND = {
 
   // One-app panel (v2): main asks the panel to show a route (e.g. 'quickboard')
   PANEL_NAVIGATE: 'panel:navigate',
-  PANEL_VISIBILITY: 'panel:visibility'
+  PANEL_VISIBILITY: 'panel:visibility',
+  /** v2 mini timer: its colour changed ('dark' | 'light') */
+  LIQUIDFOCUS_MINI_THEME: 'liquidfocus:mini-theme'
 } as const
 
 /** What the renderer asks APP_GET_ICON for: an app bundle id, an app name, a file path or a link. */

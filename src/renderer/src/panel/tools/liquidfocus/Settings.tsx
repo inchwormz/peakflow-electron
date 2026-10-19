@@ -9,7 +9,7 @@ import { IPC_INVOKE } from '@shared/ipc-types'
 import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
 import { invoke, useInvoke, useToolConfig } from '../../hooks'
-import { Banner, Btn, Gap, Grp, Hero, LinkBtn, Note, NumIn, Picker, Primary, Row, Toggle } from '../../kit'
+import { Banner, Btn, Gap, Grp, Hero, LinkBtn, Note, NumIn, Picker, Primary, Row, Seg, Toggle } from '../../kit'
 import { Icon } from '../../icons'
 import { useNav } from '../../nav'
 import { useDetector } from './store'
@@ -44,10 +44,52 @@ export function Settings(): React.JSX.Element {
       <Row label="Sounds and auto-start" go="liquidfocus/settings/behaviour" />
       <Row label="Focus detection" value={cfg.focus_detection_enabled ? 'On' : 'Off'} go="liquidfocus/settings/behaviour" />
       <Row label="Blocked sites" value={`${n} ${n === 1 ? 'site' : 'sites'}`} go="liquidfocus/settings/sites" />
+      <Row label="Mini timer" value={`${sizeName(cfg.mini_size)} · ${cfg.mini_theme === 'light' ? 'Light' : 'Dark'}`} go="liquidfocus/settings/mini" />
       {TODOIST_ENABLED ? (
         <Row label="Todoist" value={todo ? (todo.connected ? 'Connected' : 'Not connected') : ''} go="liquidfocus/settings/todoist" />
       ) : null}
     </Grp>
+  )
+}
+
+/* ─── mini timer ─────────────────────────────────────────────────────────── */
+
+const MINI_SIZES: Array<['small' | 'medium' | 'large', string, number]> = [
+  ['small', 'Small', 1],
+  ['medium', 'Medium', 1.4],
+  ['large', 'Large', 1.9]
+]
+
+/** The preset nearest a stored size (resizing by hand can land between them). */
+function sizeKey(scale: number | undefined): 'small' | 'medium' | 'large' {
+  const s = typeof scale === 'number' ? scale : 1.4
+  return MINI_SIZES.reduce((best, cur) => (Math.abs(cur[2] - s) < Math.abs(best[2] - s) ? cur : best))[0]
+}
+const sizeName = (scale: number | undefined): string => MINI_SIZES.find((m) => m[0] === sizeKey(scale))![1]
+
+export function MiniTimer(): React.JSX.Element {
+  const [cfg, set] = useCfg()
+  if (!cfg) return <div style={{ height: 120 }} />
+  return (
+    <>
+      <Grp>
+        <Row
+          label="Size"
+          right={
+            <Seg
+              value={sizeKey(cfg.mini_size)}
+              options={MINI_SIZES.map(([k, l]) => [k, l] as ['small' | 'medium' | 'large', string])}
+              onChange={(k) => set('mini_size', MINI_SIZES.find((m) => m[0] === k)![2])}
+            />
+          }
+        />
+        <Row
+          label="Colour"
+          right={<Seg value={cfg.mini_theme === 'light' ? 'light' : 'dark'} options={[['dark', 'Dark'], ['light', 'Light']]} onChange={(v) => set('mini_theme', v)} />}
+        />
+      </Grp>
+      <Note style={{ marginTop: 10 }}>Drag the timer from anywhere to move it, or drag an edge to resize it. Right-click it to switch between dark and light.</Note>
+    </>
   )
 }
 

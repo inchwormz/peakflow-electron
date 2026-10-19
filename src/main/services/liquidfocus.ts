@@ -117,7 +117,10 @@ class LiquidFocusService {
         focus_detection_enabled: false,
         focus_away_threshold_secs: 5,
         todoist_project_filter: '',
-        distraction_sites: []
+        distraction_sites: [],
+        mini_size: 1.4,
+        mini_theme: 'dark',
+        mini_position: null
       }
     }
   }

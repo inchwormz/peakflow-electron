@@ -37,6 +37,10 @@ interface Step {
   wait?: number
   /** Margin (px) of real screen to include around the window in -screen.png */
   margin?: number
+  /** Mouse events sent into the open mini timer (window coordinates); logs its bounds and the panel after */
+  miniInput?: Array<{ type: 'mouseDown' | 'mouseUp' | 'mouseMove'; x: number; y: number; button?: 'left' | 'right' }>
+  /** Log the mini timer's bounds */
+  miniBounds?: boolean
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -98,6 +102,28 @@ export async function runDevShots(): Promise<void> {
         await getPanel()?.webContents.executeJavaScript(`window.peakflow.invoke('liquidfocus:set-mini', { open: true, card: ${!!step.card} })`, true)
         await sleep(1200)
         if (step.name) await capture(win, dir, step.name, step.margin ?? 40)
+      }
+      if (step.miniInput) {
+        const win = getToolWindow(SystemWindowId.LiquidFocusMini)
+        if (!win) console.warn('[Shots] miniInput: no mini open')
+        else {
+          const before = win.getBounds()
+          for (const ev of step.miniInput) {
+            // Real drags move the window under a fixed pointer: keep the screen point (globalX/Y) honest
+            const b = win.getBounds()
+            const gx = before.x + ev.x
+            const gy = before.y + ev.y
+            win.webContents.sendInputEvent({ type: ev.type, x: gx - b.x, y: gy - b.y, globalX: gx, globalY: gy, button: ev.button ?? 'left', clickCount: 1 })
+            await sleep(120)
+          }
+          await sleep(600)
+          const open = getToolWindow(SystemWindowId.LiquidFocusMini)
+          console.log(`[Shots] miniInput ${JSON.stringify({ before, after: open?.getBounds() ?? null, miniOpen: !!open, panelVisible: !!getPanel()?.isVisible() })}`)
+        }
+      }
+      if (step.miniBounds) {
+        const win = getToolWindow(SystemWindowId.LiquidFocusMini)
+        console.log(`[Shots] miniBounds ${JSON.stringify(win ? win.getBounds() : null)}`)
       }
       if (step.alert) {
         hidePanel()
