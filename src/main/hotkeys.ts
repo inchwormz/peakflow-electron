@@ -204,18 +204,9 @@ function registerQueueHotkeys(): void {
       accel: 'CommandOrControl+Shift+N',
       id: 'quickboard:paste-next',
       action: () => {
-        const { getWorkflowStatus, workflowPasteNext } = require('./services/clipboard-workflows')
-        if (getWorkflowStatus().active) {
-          workflowPasteNext()
-          return
-        }
-        const { getFormFillStatus, formPasteNext } = require('./services/clipboard-forms')
-        if (getFormFillStatus().active) {
-          formPasteNext()
-          return
-        }
-        const { pasteNext } = require('./services/clipboard-sequential')
-        pasteNext()
+        // Same access check as the panel's paste buttons
+        const { guardedPasteNextAny } = require('./quickboard-paste')
+        void guardedPasteNextAny()
       }
     },
     {

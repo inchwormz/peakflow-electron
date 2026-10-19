@@ -22,7 +22,7 @@ import { checkAccessibility, requestAccessibility } from './services/permissions
 import { checkForUpdates } from './services/auto-updater'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
-import { startQueue, pasteNext, cancelQueue, getQueueStatus } from './services/clipboard-sequential'
+import { cancelQueue, getQueueStatus } from './services/clipboard-sequential'
 import {
   getSavedPipelines,
   AVAILABLE_TRANSFORMS,
@@ -40,7 +40,6 @@ import {
   saveWorkflow,
   deleteWorkflow,
   startWorkflow,
-  workflowPasteNext,
   cancelWorkflow,
   saveBulkWorkflows
 } from './services/clipboard-workflows'
@@ -49,13 +48,13 @@ import {
   saveFormProfile,
   deleteFormProfile,
   startFormFill,
-  formPasteNext,
   cancelFormFill,
   saveBulkFormProfiles
 } from './services/clipboard-forms'
 import { runOcr } from './services/clipboard-ocr'
 import { checkAccess } from './security/access-check'
 import { withToolAccess } from './security/access-guard'
+import { guardedQueueStart, guardedQueueNext, guardedWorkflowPasteNext, guardedFormPasteNext } from './quickboard-paste'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
@@ -482,15 +481,16 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_START,
-    (_event, itemIds: string[]): void => {
-      startQueue(itemIds)
+    (_event, itemIds: unknown): Promise<void> => {
+      if (!Array.isArray(itemIds) || !itemIds.every((id) => typeof id === 'string')) return Promise.resolve()
+      return guardedQueueStart(itemIds)
     }
   )
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_NEXT,
-    (): boolean => {
-      return pasteNext()
+    (): Promise<boolean> => {
+      return guardedQueueNext()
     }
   )
 
@@ -661,7 +661,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_WORKFLOW_PASTE_NEXT,
     () => {
-      return workflowPasteNext()
+      return guardedWorkflowPasteNext()
     }
   )
 
@@ -705,7 +705,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_FORM_PASTE_NEXT,
     () => {
-      return formPasteNext()
+      return guardedFormPasteNext()
     }
   )
 
