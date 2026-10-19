@@ -20,8 +20,22 @@ if (process.platform !== 'darwin') {
 
 const root = join(import.meta.dirname, '..', '..', 'sidecar', 'darwin', 'PeakFlowHelper')
 const tricky = 'Line one\nline two "quoted" back\\slash\ttab   é 🎉'
-const dir = mkdtempSync(join(tmpdir(), 'pf-json-check-'))
-try {
+// The Swift build needs a scratch folder. A read-only sandbox may have none:
+// then that part is skipped (said plainly), not failed.
+function scratchDir(): string | null {
+  for (const base of [tmpdir(), process.env['TMPDIR'], join(import.meta.dirname, '..', '..', 'node_modules', '.cache')]) {
+    if (!base) continue
+    try {
+      return mkdtempSync(join(base, 'pf-json-check-'))
+    } catch {
+      /* not writable: try the next */
+    }
+  }
+  return null
+}
+const dir = scratchDir()
+if (!dir) console.log('helper-json check: Swift JSON build SKIPPED (no writable temp folder)')
+if (dir) try {
   const bin = join(dir, 'json-check')
   const build = spawnSync('swiftc', [
     '-O', '-o', bin,
