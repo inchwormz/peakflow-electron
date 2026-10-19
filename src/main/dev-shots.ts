@@ -63,7 +63,8 @@ export async function runDevShots(): Promise<void> {
       if (step.wait) await sleep(step.wait)
       if (step.eval) {
         showPanel()
-        await getPanel()?.webContents.executeJavaScript(step.eval, true)
+        const out = await getPanel()?.webContents.executeJavaScript(step.eval, true)
+        if (out !== undefined) console.log('[Shots] eval →', JSON.stringify(out))
         await sleep(400)
       }
       if (step.route) {
@@ -89,16 +90,19 @@ export async function runDevShots(): Promise<void> {
         hidePanel()
         closeToolWindow(SystemWindowId.LiquidFocusMini)
         await getPanel()?.webContents.executeJavaScript(`window.peakflow.invoke('screenslap:test-alert')`, true)
-        await sleep(2200)
-        const win = getToolWindow(SystemWindowId.ScreenSlapAlert)
+        await sleep(3500)
+        // Alert windows are created by the ScreenSlap service, not the tool-window registry
+        const win = BrowserWindow.getAllWindows().find(
+          (w) => !w.isDestroyed() && w.webContents.getURL().includes(`toolId=${SystemWindowId.ScreenSlapAlert}`)
+        )
         if (win && step.name) {
           const img = await win.webContents.capturePage()
           writeFileSync(join(dir, `${step.name}.png`), img.toPNG())
           console.log(`[Shots] ${step.name}`)
-        }
+        } else console.warn('[Shots] no alert window found')
         win?.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
         await sleep(600)
-        if (win && !win.isDestroyed()) closeToolWindow(SystemWindowId.ScreenSlapAlert)
+        if (win && !win.isDestroyed()) win.close()
       }
     } catch (err) {
       console.warn('[Shots] step failed', step, err)

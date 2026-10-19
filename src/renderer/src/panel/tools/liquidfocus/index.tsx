@@ -59,7 +59,7 @@ function Main(): React.JSX.Element {
         <span>{task?.name || 'Pick a task'}</span>
         <Icon name="chev" />
       </button>
-      <div className="ring">
+      <div className="lf-ring">
         <Ring size={168} frac={phaseFrac(t)} />
         <div className="c">
           <span className="tm">{fmtClock(t.remaining)}</span>
