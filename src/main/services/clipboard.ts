@@ -28,6 +28,7 @@ import { looksLikeSecret } from '../security/secret-detection'
 import { isExcludedApp } from '../security/excluded-apps'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { simulateCtrlV } from '../native/keyboard'
+import { writeClip, type ClipWriters } from './clip-write'
 import { getActiveWindow, getProcessExeName } from '../native/active-window'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -700,12 +701,24 @@ class ClipboardService {
   /**
    * Write an image to clipboard from its path on disk.
    */
-  writeImage(imagePath: string): void {
-    if (!existsSync(imagePath)) return
+  writeImage(imagePath: string): boolean {
+    if (!existsSync(imagePath)) return false
     const img = nativeImage.createFromPath(imagePath)
+    if (img.isEmpty()) return false
     clipboard.writeImage(img)
     this.lastImageHash = this.hashImage(img)
     console.log('[QuickBoard] Image written to clipboard from path')
+    return true
+  }
+
+  /** Put a clip back on the clipboard (text, image or files). False if nothing was written. */
+  writeItem(item: ClipboardItem, plainText = false, textOverride?: string): boolean {
+    const w: ClipWriters = {
+      text: (t) => this.writeText(plainText ? t.replace(/[\r]/g, '') : t),
+      image: (p) => this.writeImage(p),
+      files: (p) => this.writeFiles(p)
+    }
+    return writeClip(item, w, textOverride)
   }
 
   /**
@@ -720,21 +733,7 @@ class ClipboardService {
     }
 
     // Write to clipboard (prefer editedText if user has edited)
-    let wrote = false
-    if (item.type === 'text') {
-      const textToWrite = textOverride ?? item.editedText ?? item.text ?? ''
-      if (plainText) {
-        this.writeText(textToWrite.replace(/[\r]/g, ''))
-      } else {
-        this.writeText(textToWrite)
-      }
-      wrote = true
-    } else if (item.type === 'image' && item.imagePath) {
-      this.writeImage(item.imagePath)
-      wrote = true
-    } else if (item.type === 'file') {
-      wrote = this.writeFiles(item.filePaths ?? [])
-    }
+    const wrote = this.writeItem(item, plainText, textOverride)
 
     if (!wrote) {
       console.warn(`[QuickBoard] simulatePaste: nothing to paste for item ${itemId}`)
