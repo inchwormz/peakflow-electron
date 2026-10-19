@@ -183,7 +183,7 @@ class ScreenSlapService {
     const now = new Date()
     const fakeEvent: CalendarEvent = {
       id: `test-${Date.now()}`,
-      summary: '⚡ TEST ALERT — Check if this stays on top!',
+      summary: 'Test alert', // v2 screenslap: plain title, no emoji (John, 19 Oct)
       startTime: new Date(now.getTime() + 60_000).toISOString(),
       endTime: new Date(now.getTime() + 31 * 60_000).toISOString(),
       durationMinutes: 30,
@@ -311,7 +311,14 @@ class ScreenSlapService {
     // Close any lingering alert windows from a previous alert
     this.closeAllAlertWindows()
 
-    const displays = screen.getAllDisplays()
+    // v2 screenslap: honour monitor_index ("Show the alert on"). -1 (the
+    // default) or an index that no longer exists means every display.
+    const allDisplays = screen.getAllDisplays()
+    const monitorIndex = Number(this.getScreenSlapConfig().monitor_index)
+    const displays =
+      Number.isInteger(monitorIndex) && monitorIndex >= 0 && monitorIndex < allDisplays.length
+        ? [allDisplays[monitorIndex]]
+        : allDisplays
     const preloadPath = join(__dirname, '../preload/index.js')
     const toolId = SystemWindowId.ScreenSlapAlert
 

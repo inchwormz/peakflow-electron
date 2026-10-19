@@ -115,7 +115,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     alert_check_seconds: 30,
     alert_duration_seconds: 60,
     alert_sound: true,
-    monitor_index: 0
+    // v2 screenslap: -1 = every display (what the alert has always done); 0+ = that display
+    monitor_index: -1
   },
   [ToolId.MeetReady]: {
     auto_popup_minutes_before: 2,

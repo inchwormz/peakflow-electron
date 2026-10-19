@@ -151,7 +151,7 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
       const ssConfig = getConfig(ToolId.ScreenSlap) as { monitor_index?: number } | null
       if (ssConfig?.monitor_index !== undefined) {
         const displays = screen.getAllDisplays()
-        if (ssConfig.monitor_index < displays.length) {
+        if (ssConfig.monitor_index >= 0 && ssConfig.monitor_index < displays.length) {
           targetDisplay = displays[ssConfig.monitor_index]
         }
       }

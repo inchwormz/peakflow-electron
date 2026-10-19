@@ -193,6 +193,10 @@ class CalendarService {
     const data = await ical.async.fromURL(fetchUrl)
 
     const now = new Date()
+    // v2 screenslap: keep today's earlier events too, so "All of today" can
+    // show them dimmed. Alerts still need now < end, so nothing re-alerts.
+    const startOfToday = new Date(now)
+    startOfToday.setHours(0, 0, 0, 0)
     const tomorrow = new Date(now)
     tomorrow.setDate(tomorrow.getDate() + 1)
     tomorrow.setHours(23, 59, 59, 999)
@@ -208,7 +212,7 @@ class CalendarService {
       // Handle recurring events — expand into the date range
       if (event.rrule) {
         const instances = ical.expandRecurringEvent(event, {
-          from: now,
+          from: startOfToday,
           to: tomorrow
         })
         for (const inst of instances) {
@@ -223,8 +227,8 @@ class CalendarService {
 
       if (!startDate) continue
 
-      // Skip events that ended before now
-      if (endDate && endDate.getTime() < now.getTime()) continue
+      // Skip events that ended before today
+      if (endDate && endDate.getTime() < startOfToday.getTime()) continue
       // Skip events that start after tomorrow
       if (startDate.getTime() > tomorrow.getTime()) continue
 

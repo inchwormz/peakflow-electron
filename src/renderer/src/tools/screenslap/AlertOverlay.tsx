@@ -1,500 +1,199 @@
 /**
- * AlertOverlay — Full-Screen Meeting Alert
+ * AlertOverlay: the full-screen meeting alert.
  *
- * Rendered in a fullscreen BrowserWindow (SystemWindowId.ScreenSlapAlert).
- * Matches ScreenSlap_Redesign.html alert section pixel-for-pixel:
- *   - Dark background (#0a0a1a) with animated gradient bars
- *   - Radial glow effect behind content
- *   - Pulsing "UPCOMING" label in blue
- *   - Large event title (52px), time, and countdown
- *   - Urgency states: blue (normal) → yellow (< 3 min) → red (< 1 min)
- *   - Join Meeting button (if meeting link detected)
- *   - Snooze 5 min / Snooze 10 min buttons
- *   - Dismiss button
- *   - "Press any key to dismiss" hint
- *   - Fade-in animation on mount
+ * Rendered in a fullscreen BrowserWindow (SystemWindowId.ScreenSlapAlert),
+ * one per display the alert is shown on. v2 look (approved round 5, John
+ * 19 Oct: "just black and white takes over the full screen"): solid black,
+ * a grey "3:32 PM · in 2 minutes" line, a large title (two lines at most),
+ * one white Join button with the real meeting-app icon (only with a link),
+ * text buttons Snooze 5 min / Snooze 10 min / Dismiss, and "Press any key to
+ * dismiss". Under a minute the countdown turns white: "Starting now". With
+ * no link, Dismiss is the white button. If another meeting starts at the
+ * same time it shows "Also at …" with its own Join.
  *
- * Receives alert data via IPC: 'screenslap:alert-data'
- * Actions via IPC: screenslap:snooze, screenslap:dismiss, screenslap:join-meeting
+ * Behaviour kept from the previous overlay:
+ *   - alert data arrives on screenslap:alert-data, or is pulled from
+ *     screenslap:get-state if the push came before React mounted
+ *   - fade in on arrival, fade out before snooze/dismiss/join
+ *   - the three-note chime (now only when "Play a sound" is on, once per alert)
+ *   - any key dismisses; the countdown ticks every second
+ *   - snooze/dismiss/join go through screenslap:snooze/dismiss/join-meeting
+ *   - auto-dismiss after "Alert closes after" is done by the main process
  */
 
-import { useState, useEffect, useRef, type CSSProperties } from 'react'
-import { Zap, AlarmClock, Check, Video } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
-
-// ─── Design Tokens ──────────────────────────────────────────────────────────
-
-const DS = {
-  bg: '#0a0a1a',
-  textPrimary: '#ffffff',
-  textSecondary: '#5eb8ff',
-  textTime: '#888888',
-  textHint: '#444444',
-  blue: '#5eb8ff',
-  accent: '#ffe17c',
-  yellow: '#eab308',
-  red: '#f05858',
-  dismissBg: '#1a1a1a',
-  dismissHover: '#222222',
-  dismissText: '#888888',
-  dismissBorder: '#333333',
-  snoozeBg: '#1a2f2a',
-  snoozeHover: '#254540',
-  snoozeText: '#4ae08a',
-  snoozeBorder: '#22c55e',
-  joinBg: '#0a84ff',
-  joinHover: '#5eb8ff',
-  joinText: '#ffffff',
-  joinBorder: '#0a84ff'
-} as const
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-interface AlertInfo {
-  eventId: string
-  summary: string
-  startTime: string
-  timeFormatted: string
-  timeUntil: string
-  meetingLink: string | null
-  meetingService: string | null
-  durationMinutes: number
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
+import { ToolId } from '@shared/tool-ids'
+import type { ScreenSlapConfig } from '@shared/config-schemas'
+import { AppIcon } from '../../panel/kit'
+import { appName, fmtGapLong, fmtTime, type AlertInfo, type CalendarEvent } from '../../panel/tools/screenslap/format'
+import './AlertOverlay.css'
 
 const api = window.peakflow
 
-function formatRelative(ms: number): string {
-  if (ms <= 0) return 'Starting now!'
-  const sec = Math.floor(ms / 1000)
-  if (sec < 60) return 'Starting now!'
-  const min = Math.ceil(ms / 60_000)
-  if (min === 1) return 'In 1 minute'
-  if (min < 60) return `In ${min} minutes`
-  const hrs = Math.floor(min / 60)
-  const rem = min % 60
-  if (hrs === 1 && rem === 0) return 'In 1 hour'
-  if (rem === 0) return `In ${hrs} hours`
-  return `In ${hrs}h ${rem}m`
+/** Ascending C5–E5–G5 chime, synthesised so it works on every platform. */
+function playChime(): void {
+  try {
+    const audioCtx = new AudioContext()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(523, audioCtx.currentTime)
+    osc.frequency.setValueAtTime(659, audioCtx.currentTime + 0.15)
+    osc.frequency.setValueAtTime(784, audioCtx.currentTime + 0.3)
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5)
+    osc.start(audioCtx.currentTime)
+    osc.stop(audioCtx.currentTime + 0.5)
+    osc.onended = () => audioCtx.close()
+  } catch {
+    // Sound not critical
+  }
 }
-
-// ─── Component ──────────────────────────────────────────────────────────────
 
 export function AlertOverlay(): React.JSX.Element {
   const [alert, setAlert] = useState<AlertInfo | null>(null)
-  const [opacity, setOpacity] = useState(0)
   const [dismissed, setDismissed] = useState(false)
-  const [, forceUpdate] = useState(0)
-  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [also, setAlso] = useState<CalendarEvent | null>(null)
+  const [, tick] = useState(0)
+  const chimed = useRef<string | null>(null)
+  const dismissedRef = useRef(false)
 
-  // ─── Receive alert data from main process ───────────────────────────────
-
+  // ─── Receive alert data from main ───────────────────────────────────────
   useEffect(() => {
-    // Listen for pushed alert data from main
     const unsub = api.on(IPC_SEND.SCREENSLAP_ALERT_DATA, (data: unknown) => {
-      setAlert(data as AlertInfo)
+      if (data) setAlert(data as AlertInfo)
     })
-    // Also pull current state on mount — the push may have arrived before
-    // React mounted and registered the listener above
-    api.invoke(IPC_INVOKE.SCREENSLAP_GET_STATE).then((state: unknown) => {
-      const s = state as { activeAlert: AlertInfo | null }
-      if (s?.activeAlert && !alert) {
-        setAlert(s.activeAlert)
-      }
-    })
+    // The push may have arrived before React mounted and registered the listener
+    api
+      .invoke(IPC_INVOKE.SCREENSLAP_GET_STATE)
+      .then((state: unknown) => {
+        const s = state as { activeAlert: AlertInfo | null } | null
+        if (s?.activeAlert) setAlert((prev) => prev ?? s.activeAlert)
+      })
+      .catch(() => {})
     return unsub
   }, [])
 
-  // ─── Fade in on mount / when alert arrives ──────────────────────────────
-
+  // ─── Chime once per alert, when "Play a sound" is on ────────────────────
   useEffect(() => {
-    if (alert && !dismissed) {
-      // Animate opacity from 0 to 1 over 300ms
-      let frame = 0
-      const steps = 15
-      const step = (): void => {
-        frame++
-        setOpacity(Math.min(frame / steps, 1))
-        if (frame < steps) {
-          fadeTimer.current = setTimeout(step, 20)
-        }
-      }
-      step()
+    if (!alert || chimed.current === alert.eventId) return
+    chimed.current = alert.eventId
+    api
+      .invoke(IPC_INVOKE.CONFIG_GET, { tool: ToolId.ScreenSlap })
+      .then((c: unknown) => {
+        if ((c as ScreenSlapConfig | null)?.alert_sound !== false) playChime()
+      })
+      .catch(() => playChime())
+  }, [alert])
 
-      // Play notification sound via synthesized tone (reliable across platforms)
-      try {
-        const audioCtx = new AudioContext()
-        const osc = audioCtx.createOscillator()
-        const gain = audioCtx.createGain()
-        osc.connect(gain)
-        gain.connect(audioCtx.destination)
-        osc.type = 'sine'
-        // Two-tone alert: ascending beep
-        osc.frequency.setValueAtTime(523, audioCtx.currentTime) // C5
-        osc.frequency.setValueAtTime(659, audioCtx.currentTime + 0.15) // E5
-        osc.frequency.setValueAtTime(784, audioCtx.currentTime + 0.3) // G5
-        gain.gain.setValueAtTime(0.3, audioCtx.currentTime)
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5)
-        osc.start(audioCtx.currentTime)
-        osc.stop(audioCtx.currentTime + 0.5)
-        osc.onended = () => audioCtx.close()
-      } catch {
-        // Sound not critical
-      }
-    }
-
-    return () => {
-      if (fadeTimer.current) clearTimeout(fadeTimer.current)
-    }
-  }, [alert, dismissed])
+  // ─── Another meeting starting at the same minute ────────────────────────
+  const alertId = alert?.eventId
+  const alertStart = alert?.startTime
+  useEffect(() => {
+    if (!alertId || !alertStart) return
+    const start = Math.floor(new Date(alertStart).getTime() / 60_000)
+    api
+      .invoke(IPC_INVOKE.CALENDAR_GET_EVENTS)
+      .then((list: unknown) => {
+        const other = ((list as CalendarEvent[] | null) ?? []).find(
+          (e) => !e.allDay && e.id !== alertId && Math.floor(new Date(e.startTime).getTime() / 60_000) === start
+        )
+        setAlso(other ?? null)
+      })
+      .catch(() => setAlso(null))
+  }, [alertId, alertStart])
 
   // ─── Countdown tick ─────────────────────────────────────────────────────
-
   useEffect(() => {
-    const interval = setInterval(() => forceUpdate((n) => n + 1), 1000)
-    return () => clearInterval(interval)
+    const t = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(t)
   }, [])
 
-  // ─── Keyboard dismiss ──────────────────────────────────────────────────
+  // ─── Actions (fade out first, then tell main) ───────────────────────────
+  const finish = (then: () => void): void => {
+    if (dismissedRef.current) return
+    dismissedRef.current = true
+    setDismissed(true)
+    setTimeout(then, 200)
+  }
+  const handleDismiss = (): void => finish(() => void api.invoke(IPC_INVOKE.SCREENSLAP_DISMISS).catch(() => {}))
+  const handleSnooze = (minutes: number): void => {
+    if (!alert) return
+    const id = alert.eventId
+    finish(() => void api.invoke(IPC_INVOKE.SCREENSLAP_SNOOZE, id, minutes).catch(() => {}))
+  }
+  const handleJoin = (link: string | null): void => {
+    if (!link || dismissedRef.current) return
+    // Open straight away; main closes the alert windows after opening the link
+    api.invoke(IPC_INVOKE.SCREENSLAP_JOIN_MEETING, link).catch(() => {})
+    finish(() => {})
+  }
 
+  // ─── Any key dismisses ──────────────────────────────────────────────────
   useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if (!dismissed) {
-        handleDismiss()
-      }
-    }
+    const handler = (): void => handleDismiss()
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [dismissed])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // ─── Actions ────────────────────────────────────────────────────────────
+  if (!alert) return <div className="ssa" />
 
-  const handleDismiss = (): void => {
-    if (dismissed) return
-    setDismissed(true)
-    fadeOut(() => {
-      api.invoke(IPC_INVOKE.SCREENSLAP_DISMISS)
-    })
-  }
-
-  const handleSnooze = (minutes: number): void => {
-    if (dismissed || !alert) return
-    setDismissed(true)
-    fadeOut(() => {
-      api.invoke(IPC_INVOKE.SCREENSLAP_SNOOZE, alert.eventId, minutes)
-    })
-  }
-
-  const handleJoinMeeting = (): void => {
-    if (!alert?.meetingLink) return
-    api.invoke(IPC_INVOKE.SCREENSLAP_JOIN_MEETING, alert.meetingLink)
-    setDismissed(true)
-    fadeOut(() => {})
-  }
-
-  const fadeOut = (onComplete: () => void): void => {
-    let frame = 10
-    const step = (): void => {
-      frame--
-      setOpacity(Math.max(frame / 10, 0))
-      if (frame > 0) {
-        setTimeout(step, 20)
-      } else {
-        onComplete()
-      }
-    }
-    step()
-  }
-
-  // ─── Computed values ────────────────────────────────────────────────────
-
-  const diff = alert
-    ? new Date(alert.startTime).getTime() - Date.now()
-    : 0
-
-  const countdownText = alert ? formatRelative(diff) : ''
-
-  // Urgency class: blue → yellow (< 3 min) → red (< 1 min)
-  let countdownColor = DS.textSecondary
-  let countdownAnimation: string | undefined
-  if (diff < 60_000) {
-    countdownColor = DS.red
-    countdownAnimation = 'blink 1s infinite'
-  } else if (diff < 180_000) {
-    countdownColor = DS.yellow
-  }
-
-  const displayTitle = alert
-    ? alert.summary.length < 60
-      ? alert.summary
-      : alert.summary.slice(0, 57) + '\u2026'
-    : ''
-
-  // ─── Render ─────────────────────────────────────────────────────────────
-
-  if (!alert) {
-    return <div style={{ ...styles.root, opacity: 0 }} />
-  }
+  const diff = new Date(alert.startTime).getTime() - Date.now()
+  const urgent = diff < 60_000
+  const when = diff <= -60_000 ? `Started ${fmtGapLong(-diff)} ago` : urgent ? 'Starting now' : `in ${fmtGapLong(diff)}`
+  const name = appName(alert.meetingService)
+  const hasLink = !!alert.meetingLink
 
   return (
-    <div style={{ ...styles.root, opacity }}>
-      {/* Gradient accent bars */}
-      <div style={styles.barTop} />
-      <div style={styles.barBot} />
-
-      {/* Radial glow */}
-      <div style={styles.glow} />
-
-      {/* Content */}
-      <div style={styles.content}>
-        {/* Upcoming label with pulse animation */}
-        <div style={styles.upcoming}>
-          <Zap size={14} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
-          UPCOMING
+    <div className={`ssa in${urgent ? ' urgent' : ''}${dismissed ? ' out' : ''}`} role="alertdialog" aria-label={alert.summary}>
+      <div className="wrap">
+        <div className="when">
+          <span>{alert.timeFormatted}</span>
+          <span className="dot">·</span>
+          <b>{when}</b>
         </div>
-
-        {/* Event title */}
-        <div style={styles.title}>{displayTitle}</div>
-
-        {/* Event time */}
-        <div style={styles.time}>{alert.timeFormatted}</div>
-
-        {/* Countdown with urgency color */}
-        <div
-          style={{
-            ...styles.countdown,
-            color: countdownColor,
-            animation: countdownAnimation
-          }}
-        >
-          {diff <= 0 ? 'Starting now!' : countdownText}
-        </div>
-
-        {/* Action buttons */}
-        <div style={styles.btns}>
-          {alert.meetingLink && (
-            <AlertButton
-              label={<><Video size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} /> Join {alert.meetingService ?? 'Meeting'}</>}
-              bg={DS.joinBg}
-              hoverBg={DS.joinHover}
-              color={DS.joinText}
-              borderColor={DS.joinBorder}
-              onClick={handleJoinMeeting}
-              wide
-            />
+        <h1 title={alert.summary}>{alert.summary}</h1>
+        <div className="acts">
+          {hasLink ? (
+            <button className="big" onClick={() => handleJoin(alert.meetingLink)}>
+              <AppIcon q={{ url: alert.meetingLink ?? undefined }} size={18} /> Join {name}
+            </button>
+          ) : (
+            <button className="big" onClick={handleDismiss}>
+              Dismiss
+            </button>
           )}
-          <AlertButton
-            label={<><AlarmClock size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> 5 min</>}
-            bg={DS.snoozeBg}
-            hoverBg={DS.snoozeHover}
-            color={DS.snoozeText}
-            borderColor={DS.snoozeBorder}
-            onClick={() => handleSnooze(5)}
-          />
-          <AlertButton
-            label={<><AlarmClock size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> 10 min</>}
-            bg={DS.snoozeBg}
-            hoverBg={DS.snoozeHover}
-            color={DS.snoozeText}
-            borderColor={DS.snoozeBorder}
-            onClick={() => handleSnooze(10)}
-          />
-          <AlertButton
-            label={<><Check size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} /> Dismiss</>}
-            bg={DS.dismissBg}
-            hoverBg={DS.dismissHover}
-            color={DS.dismissText}
-            borderColor={DS.dismissBorder}
-            onClick={handleDismiss}
-          />
+          <button className="tx" onClick={() => handleSnooze(5)}>
+            Snooze 5 min
+          </button>
+          <button className="tx" onClick={() => handleSnooze(10)}>
+            Snooze 10 min
+          </button>
+          {hasLink ? (
+            <button className="tx" onClick={handleDismiss}>
+              Dismiss
+            </button>
+          ) : null}
         </div>
+        {also ? (
+          <div className="also">
+            <span className="aw">Also at {fmtTime(also.startTime)}</span>
+            <span className="at" title={also.summary}>
+              {also.summary}
+            </span>
+            {also.meetingLink ? (
+              <button className="tx" onClick={() => handleJoin(also.meetingLink)}>
+                <AppIcon q={{ url: also.meetingLink }} size={14} /> Join {appName(also.meetingService)}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-
-      {/* Hint */}
-      <div style={styles.hint}>Press any key to dismiss</div>
-
-      {/* Inline keyframe styles */}
-      <style>{`
-        @keyframes barShift {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
+      <div className="foot">Press any key to dismiss</div>
     </div>
   )
-}
-
-// ─── Alert Button ───────────────────────────────────────────────────────────
-
-function AlertButton({
-  label,
-  bg,
-  hoverBg,
-  color,
-  borderColor,
-  onClick,
-  wide
-}: {
-  label: React.ReactNode
-  bg: string
-  hoverBg: string
-  color: string
-  borderColor: string
-  onClick: () => void
-  wide?: boolean
-}): React.JSX.Element {
-  const [hovered, setHovered] = useState(false)
-
-  return (
-    <button
-      style={{
-        ...styles.btn,
-        background: hovered ? hoverBg : bg,
-        color,
-        borderColor,
-        minWidth: wide ? 180 : 120,
-        transform: hovered ? 'translateY(-2px)' : 'none'
-      }}
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {label}
-    </button>
-  )
-}
-
-// ─── Styles ─────────────────────────────────────────────────────────────────
-
-const styles: Record<string, CSSProperties> = {
-  root: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 10,
-    background: DS.bg,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
-    transition: 'opacity 0.3s ease',
-    cursor: 'default'
-  },
-
-  barTop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 6,
-    background: 'linear-gradient(90deg, #5eb8ff, #ffe17c, #5eb8ff, #ffe17c)',
-    backgroundSize: '200% 100%',
-    animation: 'barShift 8s ease infinite'
-  },
-
-  barBot: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 6,
-    background: 'linear-gradient(90deg, #ffe17c, #5eb8ff, #ffe17c, #5eb8ff)',
-    backgroundSize: '200% 100%',
-    animation: 'barShift 8s ease infinite reverse'
-  },
-
-  glow: {
-    position: 'absolute',
-    top: '40%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    width: 600,
-    height: 600,
-    borderRadius: '50%',
-    background:
-      'radial-gradient(circle, rgba(94,184,255,0.1) 0%, rgba(255,225,124,0.05) 40%, transparent 70%)',
-    pointerEvents: 'none'
-  },
-
-  content: {
-    textAlign: 'center',
-    width: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    zIndex: 5
-  },
-
-  upcoming: {
-    fontSize: 16,
-    fontWeight: 700,
-    letterSpacing: 5,
-    textTransform: 'uppercase',
-    color: DS.textSecondary,
-    marginBottom: 20,
-    animation: 'pulse 2s ease-in-out infinite'
-  },
-
-  title: {
-    fontSize: 52,
-    fontWeight: 700,
-    color: DS.textPrimary,
-    marginBottom: 12,
-    textAlign: 'center',
-    maxWidth: '80vw',
-    lineHeight: 1.15,
-    padding: '0 40px'
-  },
-
-  time: {
-    fontSize: 26,
-    color: DS.textTime,
-    marginBottom: 6,
-    fontWeight: 500
-  },
-
-  countdown: {
-    fontSize: 18,
-    marginBottom: 36,
-    fontWeight: 400,
-    letterSpacing: 0.5
-  },
-
-  btns: {
-    display: 'flex',
-    gap: 14,
-    flexWrap: 'wrap',
-    justifyContent: 'center'
-  },
-
-  btn: {
-    padding: '14px 28px',
-    borderRadius: 14,
-    border: '2px solid transparent',
-    fontFamily: "'Be Vietnam Pro', 'Segoe UI', sans-serif",
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    letterSpacing: 0.3,
-    outline: 'none'
-  },
-
-  hint: {
-    position: 'absolute',
-    bottom: 28,
-    fontSize: 11,
-    color: DS.textHint,
-    letterSpacing: 1.5
-  }
 }
