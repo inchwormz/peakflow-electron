@@ -18,6 +18,7 @@ import * as tf from '@tensorflow/tfjs'
 import * as blazeface from '@tensorflow-models/blazeface'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import { DS } from './LiquidFocus'
+import { stopStream } from './camera'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -87,10 +88,7 @@ export function FocusDetector({
   useEffect(() => {
     if (!active) {
       // Clean up when not active
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-      }
+      streamRef.current = stopStream(streamRef.current)
       if (rafRef.current) {
         clearTimeout(rafRef.current)
         rafRef.current = null
@@ -120,7 +118,7 @@ export function FocusDetector({
           video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 5 } }
         })
         if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop())
+          stopStream(stream)
           return
         }
         streamRef.current = stream
@@ -210,10 +208,7 @@ export function FocusDetector({
         clearTimeout(rafRef.current)
         rafRef.current = null
       }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-      }
+      streamRef.current = stopStream(streamRef.current)
       if (modelRef.current) {
         modelRef.current.dispose()
         modelRef.current = null

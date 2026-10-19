@@ -14,6 +14,7 @@ import { ToolId } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
 import { invoke, useIpcEvent, usePanelVisible, useToolConfig } from '../../hooks'
 import { useNav } from '../../nav'
+import { detectorShouldRun } from '../../../tools/liquidfocus/camera'
 import { detectorStore, isActive, refreshLF, setMini, useLF, type DetectorStatus } from './store'
 
 const FocusDetector = lazy(() => import('../../../tools/liquidfocus/FocusDetector').then((m) => ({ default: m.FocusDetector })))
@@ -53,7 +54,9 @@ export function Background(): React.JSX.Element | null {
 
   // Focus detection
   const enabled = !!cfg?.focus_detection_enabled
-  const detActive = enabled && t?.mode === 'work' && t?.status === 'running'
+  // Settings changes arrive at once (CONFIG_CHANGED), so turning detection off,
+  // pausing or stopping unmounts/deactivates the detector and its camera tracks stop
+  const detActive = detectorShouldRun(enabled, t)
   const lastStatus = useRef<DetectorStatus>('off')
   const detActiveRef = useRef(detActive)
   detActiveRef.current = detActive

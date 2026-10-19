@@ -220,6 +220,11 @@ export function registerIpcHandlers(): void {
         if (payload.tool === ToolId.ScreenSlap) {
           getScreenSlapService().refreshConfig()
         }
+        // The panel's background jobs (focus detection) follow settings at once
+        const panelWin = getPanel()
+        if (panelWin && !panelWin.webContents.isDestroyed() && !panelWin.webContents.isLoading()) {
+          panelWin.webContents.send(IPC_SEND.CONFIG_CHANGED, { tool: payload.tool, key: payload.key, value: payload.value })
+        }
         return true
       } catch (error) {
         console.warn('[PeakFlow] config:set failed:', error)

@@ -92,6 +92,13 @@ export function useToolConfig<T extends object>(tool: ToolId): [T | null, <K ext
   useEffect(() => {
     if (visible) load()
   }, [load, visible])
+  // A change saved anywhere (another screen, main) reaches every user of this config
+  useIpcEvent(IPC_SEND.CONFIG_CHANGED, (p) => {
+    const c = p as { tool?: string; key?: string; value?: unknown } | null
+    if (!c || c.tool !== tool || typeof c.key !== 'string') return
+    const k = c.key
+    setCfg((prev) => (prev ? { ...prev, [k]: c.value } : prev))
+  })
   const set = useCallback(
     <K extends keyof T>(key: K, value: T[K]) => {
       setCfg((prev) => (prev ? { ...prev, [key]: value } : prev))

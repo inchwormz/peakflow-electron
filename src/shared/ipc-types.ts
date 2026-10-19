@@ -254,7 +254,9 @@ export const IPC_SEND = {
   /** v2: the detector's state, forwarded to the mini timer */
   LIQUIDFOCUS_DETECTOR: 'liquidfocus:detector',
   /** v2: a focus session was reset because you looked away */
-  LIQUIDFOCUS_AWAY_RESET: 'liquidfocus:away-reset'
+  LIQUIDFOCUS_AWAY_RESET: 'liquidfocus:away-reset',
+  /** v2: a tool setting changed ({ tool, key, value }), so every screen and the background detector follow it at once */
+  CONFIG_CHANGED: 'config:changed'
 } as const
 
 /** What the renderer asks APP_GET_ICON for: an app bundle id, an app name, a file path or a link. */
