@@ -15,7 +15,7 @@ import { ToolId, SystemWindowId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
-import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool } from './panel'
+import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool, panelRendererReady } from './panel'
 import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
 import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
@@ -1107,6 +1107,7 @@ export function registerIpcHandlers(): void {
     if (typeof h === 'number') resizePanel(h)
   })
   ipcMain.handle(IPC_INVOKE.PANEL_HIDE, (): void => hidePanel())
+  ipcMain.handle(IPC_INVOKE.PANEL_READY, (event): string | null => panelRendererReady(event.sender))
   ipcMain.handle(IPC_INVOKE.PANEL_ROUTE, (_event, route: unknown): void => {
     if (typeof route === 'string' && /^[a-z0-9/_:.-]{1,120}$/i.test(route)) setPanelRoute(route)
   })

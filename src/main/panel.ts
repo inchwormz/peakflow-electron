@@ -115,13 +115,8 @@ function create(): BrowserWindow {
     rendererReady = false
     if (!quitting && d.reason !== 'clean-exit' && !win.isDestroyed()) win.webContents.reload()
   })
-  win.webContents.on('did-finish-load', () => {
-    rendererReady = true
-    if (pendingRoute) {
-      send(win, IPC_SEND.PANEL_NAVIGATE, pendingRoute)
-      pendingRoute = null
-    }
-  })
+  // No did-finish-load delivery: the page's listeners aren't up yet then. The
+  // panel asks for the pending route itself once mounted (panelRendererReady).
 
   const query = { toolId: SystemWindowId.Panel }
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -134,6 +129,19 @@ function create(): BrowserWindow {
     })
   }
   return win
+}
+
+/**
+ * The panel page has mounted and is listening (PANEL_READY). Returns the route
+ * asked for while it was loading, if any; later routes are sent directly.
+ */
+export function panelRendererReady(sender: Electron.WebContents): string | null {
+  const win = getPanel()
+  if (!win || sender !== win.webContents) return null
+  rendererReady = true
+  const route = pendingRoute
+  pendingRoute = null
+  return route
 }
 
 export function getPanel(): BrowserWindow | null {

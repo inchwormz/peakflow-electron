@@ -96,6 +96,16 @@ export function PanelApp(): React.JSX.Element {
   useIpcEvent(IPC_SEND.PANEL_NAVIGATE, (r) => {
     if (typeof r === 'string' && matchRoute(ALL_ROUTES, r)) go(r)
   })
+  // Now that the listener above is up, tell main and take any route asked for
+  // while the page was loading (a shortcut pressed during start-up)
+  useEffect(() => {
+    invoke<string | null>(IPC_INVOKE.PANEL_READY)
+      .then((r) => {
+        if (typeof r === 'string' && matchRoute(ALL_ROUTES, r)) go(r)
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   useIpcEvent(IPC_SEND.PANEL_VISIBILITY, (v) => {
     if (!v) setDdOpen(false)
   })

@@ -21,7 +21,10 @@ export function installTsHooks(fakes = {}) {
     load(url, ctx, next) {
       if (!url.startsWith('file:') || !url.endsWith('.ts')) return next(url, ctx)
       const src = readFileSync(fileURLToPath(url), 'utf8')
-      return { format: 'module', source: transformSync(src, { loader: 'ts', format: 'esm' }).code, shortCircuit: true }
+      let code = transformSync(src, { loader: 'ts', format: 'esm' }).code
+      // Main-process files are bundled as CommonJS and use __dirname
+      if (code.includes('__dirname')) code = `const __dirname = ${JSON.stringify(dirname(fileURLToPath(url)))};\n` + code
+      return { format: 'module', source: code, shortCircuit: true }
     }
   })
 }

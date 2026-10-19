@@ -181,6 +181,8 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_MINI_MOVE: 'liquidfocus:mini-move',
   /** v2 panel: the renderer reports its current route (so hotkeys know which tool is showing) */
   PANEL_ROUTE: 'panel:route',
+  /** v2: the panel page has mounted; returns the route asked for while it loaded (or null) */
+  PANEL_READY: 'panel:ready',
   /** v2: the panel's focus detector reports its state ('focused' | 'absent' | 'away' | 'off' …) for the mini */
   LIQUIDFOCUS_DETECTOR_STATUS: 'liquidfocus:detector-status',
   // v2 liquidfocus: restart the current phase (panel "Reset")
