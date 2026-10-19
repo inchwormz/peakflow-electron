@@ -12,6 +12,7 @@
 
 import { useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
+import { EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { AccessStatus, LicenseActivationResult } from '@shared/ipc-types'
 import type { PanelToolId, RouteTable } from '../types'
 import { invoke, useInvoke, formatAccelerator } from '../hooks'
@@ -106,7 +107,7 @@ function Home(): React.JSX.Element {
         <Row label="Updates" icon="refresh" value={info ? `v${info.version}` : ''} go="app/updates" />
       </Grp>
       <Grp>
-        <Row label="Chrome extension" icon="puzzle" go="app/extension" />
+        {EXTENSION_ENABLED ? <Row label="Chrome extension" icon="puzzle" go="app/extension" /> : null}
         <Row label="Share & Earn" icon="gift" value="Get a tool free" go="app/share" />
         <Row label="Help and bug reports" icon="bug" go="app/help" />
       </Grp>
@@ -384,7 +385,7 @@ export const APP_ROUTES: RouteTable = {
   'app/tools': { kind: 'sub', back: 'app', title: 'Tools', view: Tools },
   'app/hotkeys': { kind: 'sub', back: 'app', title: 'Keyboard shortcuts', view: Hotkeys },
   'app/updates': { kind: 'sub', back: 'app', title: 'Updates', view: Updates },
-  'app/extension': { kind: 'sub', back: 'app', title: 'Chrome extension', view: Extension },
+  ...(EXTENSION_ENABLED ? { 'app/extension': { kind: 'sub' as const, back: 'app', title: 'Chrome extension', view: Extension } } : {}),
   'app/share': { kind: 'sub', back: 'app', title: 'Share & Earn', view: Share },
   'app/help': { kind: 'sub', back: 'app', title: 'Help', view: Help }
 }

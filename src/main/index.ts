@@ -35,7 +35,7 @@ import { setTrayTitle } from './tray'
 import { getLiquidFocusService } from './services/liquidfocus'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
 import { destroyActiveWindowHelper } from './native/active-window'
-import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
+import { ToolId, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ if (!gotLock) {
 
     // Lightweight / system-level — always safe to init
     if (TODOIST_ENABLED) initTodoist()
-    initExtensionServer()
+    if (EXTENSION_ENABLED) initExtensionServer()
     initAutoUpdater()
 
     // v2: open the one-app panel on startup so new users aren't left hunting
@@ -263,7 +263,7 @@ if (!gotLock) {
     setAppQuitting(true)
     setPanelQuitting(true)
     console.log('[PeakFlow] Shutting down...')
-    destroyExtensionServer()
+    if (EXTENSION_ENABLED) destroyExtensionServer()
     if (TODOIST_ENABLED) destroyTodoist()
     destroySoundSplit()
     destroyLiquidFocus()

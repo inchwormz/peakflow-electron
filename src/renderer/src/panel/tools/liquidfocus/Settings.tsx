@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
-import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
+import { ToolId, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
 import { invoke, useInvoke, useToolConfig } from '../../hooks'
 import { Banner, Btn, Gap, Grp, Hero, LinkBtn, Note, NumIn, Picker, Primary, Row, Seg, Toggle } from '../../kit'
@@ -43,7 +43,7 @@ export function Settings(): React.JSX.Element {
       <Row label="Durations" value={`${cfg.work_duration} / ${cfg.break_duration} / ${cfg.long_break_duration} min`} go="liquidfocus/settings/durations" />
       <Row label="Sounds and auto-start" go="liquidfocus/settings/behaviour" />
       <Row label="Focus detection" value={cfg.focus_detection_enabled ? 'On' : 'Off'} go="liquidfocus/settings/behaviour" />
-      <Row label="Blocked sites" value={`${n} ${n === 1 ? 'site' : 'sites'}`} go="liquidfocus/settings/sites" />
+      {EXTENSION_ENABLED ? <Row label="Blocked sites" value={`${n} ${n === 1 ? 'site' : 'sites'}`} go="liquidfocus/settings/sites" /> : null}
       <Row label="Mini timer" value={`${sizeName(cfg.mini_size)} · ${cfg.mini_theme === 'light' ? 'Light' : 'Dark'}`} go="liquidfocus/settings/mini" />
       {TODOIST_ENABLED ? (
         <Row label="Todoist" value={todo ? (todo.connected ? 'Connected' : 'Not connected') : ''} go="liquidfocus/settings/todoist" />

@@ -7,7 +7,7 @@
  * liquidfocus/settings(/durations, /behaviour, /sites, /todoist).
  */
 
-import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
+import { ToolId, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
 import type { PanelToolModule } from '../../types'
 import { fmtClock, useToolConfig } from '../../hooks'
@@ -110,7 +110,7 @@ function Main(): React.JSX.Element {
 export const liquidfocusTool: PanelToolModule = {
   id: 'liquidfocus',
   name: 'Liquid Focus',
-  desc: 'Focus timer with tasks and site blocking',
+  desc: EXTENSION_ENABLED ? 'Focus timer with tasks and site blocking' : 'Focus timer with tasks',
   icon: 'liquidfocus',
   useStatus,
   Background,
@@ -121,7 +121,7 @@ export const liquidfocusTool: PanelToolModule = {
     'liquidfocus/settings': { kind: 'sub', back: 'liquidfocus', title: 'Liquid Focus settings', view: Settings },
     'liquidfocus/settings/durations': { kind: 'sub', back: 'liquidfocus/settings', title: 'Durations', view: Durations },
     'liquidfocus/settings/behaviour': { kind: 'sub', back: 'liquidfocus/settings', title: 'Sounds and detection', view: Behaviour },
-    'liquidfocus/settings/sites': { kind: 'sub', back: 'liquidfocus/settings', title: 'Blocked sites', view: Sites },
+    ...(EXTENSION_ENABLED ? { 'liquidfocus/settings/sites': { kind: 'sub' as const, back: 'liquidfocus/settings', title: 'Blocked sites', view: Sites } } : {}),
     'liquidfocus/settings/mini': { kind: 'sub', back: 'liquidfocus/settings', title: 'Mini timer', view: MiniTimer },
     ...(TODOIST_ENABLED
       ? { 'liquidfocus/settings/todoist': { kind: 'sub' as const, back: 'liquidfocus/settings', title: 'Todoist', view: Todoist } }

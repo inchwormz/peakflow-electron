@@ -68,6 +68,15 @@ export const HIDDEN_TOOLS: readonly ToolId[] = [ToolId.MeetReady, ToolId.SoundSp
  */
 export const TODOIST_ENABLED = false
 
+/**
+ * The PeakFlow Focus Chrome extension (site blocking during Liquid Focus).
+ * Not published to the Chrome Web Store yet, so off for v2 (John, 19 Oct 2026).
+ * Off hides the Chrome extension page and Liquid Focus's blocked-sites
+ * settings, and the extension server (port 17832) doesn't start. The code and
+ * peakflow-focus-extension/ are kept; set true to bring it back.
+ */
+export const EXTENSION_ENABLED = false
+
 export function isPanelTool(id: string): boolean {
   return (PANEL_TOOLS as readonly string[]).includes(id)
 }
