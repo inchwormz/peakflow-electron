@@ -199,6 +199,18 @@ export function LiquidFocusMini(): React.JSX.Element {
   const stop = (): void => {
     lfStop().then(() => setMini(false))
   }
+  // Stop on the timer ends the session, so it takes two presses: the first turns
+  // the button into "Stop?" for a few seconds (a mis-click no longer loses the session)
+  const [stopArmed, setStopArmed] = useState(false)
+  useEffect(() => {
+    if (!stopArmed) return
+    const id = setTimeout(() => setStopArmed(false), 3000)
+    return () => clearTimeout(id)
+  }, [stopArmed])
+  const stopTwice = (): void => {
+    if (stopArmed) stop()
+    else setStopArmed(true)
+  }
   const dragCard = useDragAnywhere()
   const dragPill = useDragAnywhere(openPanel)
   const root = theme === 'light' ? 'pf mini-light' : 'pf'
@@ -283,7 +295,7 @@ export function LiquidFocusMini(): React.JSX.Element {
           : activeTask(lf)?.name || 'Focus'
   return (
     <div className={root} onContextMenu={onContextMenu}>
-      <div className="mini" style={boxStyle(false, scale)} title="Click to open Liquid Focus · drag to move · right-click for light or dark" {...dragPill}>
+      <div className={stopArmed ? 'mini hover' : 'mini'} style={boxStyle(false, scale)} title="Click to open Liquid Focus · drag to move · right-click for light or dark" {...dragPill}>
         <div className="mr">
           <Ring size={38} frac={phaseFrac(t)} stroke={8} />
         </div>
@@ -295,8 +307,13 @@ export function LiquidFocusMini(): React.JSX.Element {
           <button aria-label={paused ? 'Resume' : 'Pause'} title={paused ? 'Resume' : 'Pause'} onClick={() => (paused ? lfStart() : lfPause())}>
             <Icon name={paused ? 'play' : 'pause'} />
           </button>
-          <button aria-label="Stop" title="Stop" onClick={stop}>
-            <Icon name="stop" />
+          <button
+            aria-label={stopArmed ? 'Press again to stop the session' : 'Stop'}
+            title={stopArmed ? 'Press again to stop the session' : 'Stop'}
+            className={stopArmed ? 'armed' : undefined}
+            onClick={stopTwice}
+          >
+            {stopArmed ? 'Stop?' : <Icon name="stop" />}
           </button>
         </div>
       </div>
