@@ -29,6 +29,7 @@ import { isExcludedApp } from '../security/excluded-apps'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { simulateCtrlV } from '../native/keyboard'
 import { writeClip, type ClipWriters } from './clip-write'
+import { afterFileCapture } from './clip-dedupe'
 import { getActiveWindow, getProcessExeName } from '../native/active-window'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -310,8 +311,10 @@ class ClipboardService {
         const files = readClipboardFilePaths(formats)
         const key = files.join('\n')
         if (files.length && key !== this.lastFileKey) {
-          this.lastFileKey = key
-          this.lastTextHash = this.hashText(clipboard.readText())
+          const next = afterFileCapture(key, this.hashText(clipboard.readText()))
+          this.lastFileKey = next.lastFileKey
+          this.lastTextHash = next.lastTextHash
+          this.lastImageHash = next.lastImageHash
           this.handleNewFiles(files)
           return
         }
