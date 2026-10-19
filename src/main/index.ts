@@ -107,14 +107,11 @@ if (!gotLock) {
   console.log('[PeakFlow] Another instance is running. Quitting.')
   app.quit()
 } else {
-  // When a second instance tries to launch, focus an existing window (if any)
+  // Launching PeakFlow again opens the panel (the first window in the list could
+  // be a dim overlay or the mini timer, which can't take focus usefully)
   app.on('second-instance', () => {
-    const windows = BrowserWindow.getAllWindows()
-    if (windows.length > 0) {
-      const win = windows[0]
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
+    if (app.isReady()) showPanel()
+    else app.whenReady().then(() => showPanel())
   })
 
   // ─── App Ready ───────────────────────────────────────────────────────────────
