@@ -21,6 +21,9 @@ export const MINI_MAX_SCALE = 2.4
 const MARGIN = 16
 
 const cards = new WeakMap<BrowserWindow, boolean>()
+/** Pending position save per window (moves arrive many times a second while dragging) */
+const saveTimers = new WeakMap<BrowserWindow, ReturnType<typeof setTimeout>>()
+const SAVE_DELAY = 300
 const wired = new WeakSet<BrowserWindow>()
 
 function conf(): LiquidFocusConfig {
@@ -67,16 +70,32 @@ function wire(win: BrowserWindow): void {
       if (win.isDestroyed()) return
       const base = cards.get(win) ? BASE.card : BASE.pill
       const scale = Math.round(clampScale(win.getBounds().width / base[0]) * 100) / 100
-      if (Math.abs(scale - clampScale(conf().mini_size)) >= 0.02) setConfig(ToolId.LiquidFocus, 'mini_size', scale)
-    }, 400)
+      if (Math.abs(scale - clampScale(conf().mini_size)) >= 0.02) setConfig(ToolId.LiquidFocus, 'mini_size', scale, { quiet: true })
+    }, SAVE_DELAY)
   })
-  win.on('moved', () => savePosition(win))
+  // macOS sends 'moved' for every step of a drag: save once things settle
+  win.on('moved', () => savePositionSoon(win))
+  win.on('closed', () => {
+    const t = saveTimers.get(win)
+    if (t) clearTimeout(t)
+  })
+}
+
+function savePositionSoon(win: BrowserWindow): void {
+  const t = saveTimers.get(win)
+  if (t) clearTimeout(t)
+  saveTimers.set(win, setTimeout(() => savePosition(win), SAVE_DELAY))
 }
 
 function savePosition(win: BrowserWindow): void {
+  const t = saveTimers.get(win)
+  if (t) clearTimeout(t)
+  saveTimers.delete(win)
   if (win.isDestroyed()) return
   const b = win.getBounds()
-  setConfig(ToolId.LiquidFocus, 'mini_position', { x: b.x, y: b.y })
+  const p = conf().mini_position
+  if (p && p.x === b.x && p.y === b.y) return
+  setConfig(ToolId.LiquidFocus, 'mini_position', { x: b.x, y: b.y }, { quiet: true })
 }
 
 /**

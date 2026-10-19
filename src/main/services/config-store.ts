@@ -51,7 +51,7 @@ export function getConfig(tool: ToolId): ToolConfig {
 /**
  * Set a single config key for a tool and persist it.
  */
-export function setConfig(tool: ToolId, key: string, value: unknown): void {
+export function setConfig(tool: ToolId, key: string, value: unknown, opts?: { quiet?: boolean }): void {
   const defaults = DEFAULT_CONFIGS[tool]
   if (!defaults) {
     throw new Error(`[PeakFlow] setConfig: unknown tool "${tool}"`)
@@ -63,7 +63,7 @@ export function setConfig(tool: ToolId, key: string, value: unknown): void {
 
   const store = getStore(tool)
   store.set(key, value)
-  console.log(`[PeakFlow] Config saved: ${tool}.${key} = ${JSON.stringify(value)}`)
+  if (!opts?.quiet) console.log(`[PeakFlow] Config saved: ${tool}.${key} = ${JSON.stringify(value)}`)
 }
 
 /**
