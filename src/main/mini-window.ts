@@ -110,6 +110,7 @@ export function layoutMini(win: BrowserWindow, card: boolean): void {
       }
     }
     cards.set(win, card)
+    applyMiniTheme(win)
     win.setResizable(true)
     win.setAspectRatio(base[0] / base[1])
     win.setMinimumSize(Math.round(base[0] * MINI_MIN_SCALE), Math.round(base[1] * MINI_MIN_SCALE))
@@ -119,6 +120,13 @@ export function layoutMini(win: BrowserWindow, card: boolean): void {
   }
   if (win.webContents.isLoading()) win.once('ready-to-show', apply)
   else apply()
+}
+
+/** The window's own background follows the timer colour, so no dark edge shows behind a light timer. */
+export function applyMiniTheme(win: BrowserWindow | undefined | null, theme?: unknown): void {
+  if (!win || win.isDestroyed()) return
+  const t = theme ?? conf().mini_theme
+  win.setBackgroundColor(t === 'light' ? '#ffffff' : '#0a0a0a')
 }
 
 /** Settings changed the size: apply it to an open mini. */

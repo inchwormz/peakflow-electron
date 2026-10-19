@@ -256,7 +256,8 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
 
   // Clean up on close
   win.on('closed', () => {
-    windowMap.delete(toolId)
+    // A replacement may already be registered (closeToolWindow unregisters first)
+    if (windowMap.get(toolId) === win) windowMap.delete(toolId)
   })
 
   // Load the renderer
@@ -402,8 +403,9 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
  */
 export function closeToolWindow(toolId: string): void {
   const win = windowMap.get(toolId)
-  if (win && !win.isDestroyed()) {
-    win.close()
-    // The 'closed' handler will remove it from windowMap
-  }
+  // The mini timer always really closes, and closing finishes asynchronously:
+  // unregister it now so a reopen in the meantime gets a new window rather than
+  // the one about to disappear. (Other windows may veto close and hide instead.)
+  if (toolId === SystemWindowId.LiquidFocusMini) windowMap.delete(toolId)
+  if (win && !win.isDestroyed()) win.close()
 }

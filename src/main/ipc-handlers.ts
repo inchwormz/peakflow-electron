@@ -16,7 +16,7 @@ import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
 import { resizePanel, hidePanel, showPanel } from './panel'
-import { layoutMini, moveMini, refreshMiniSize } from './mini-window'
+import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
 import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
 import { checkForUpdates } from './services/auto-updater'
@@ -212,6 +212,7 @@ export function registerIpcHandlers(): void {
           const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
           if (payload.key === 'mini_size') refreshMiniSize(mini)
           if (payload.key === 'mini_theme' && mini && !mini.isDestroyed()) {
+            applyMiniTheme(mini, payload.value)
             mini.webContents.send(IPC_SEND.LIQUIDFOCUS_MINI_THEME, payload.value === 'light' ? 'light' : 'dark')
           }
         }

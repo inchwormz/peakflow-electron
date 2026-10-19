@@ -102,6 +102,11 @@ export async function runDevShots(): Promise<void> {
         await getPanel()?.webContents.executeJavaScript(`window.peakflow.invoke('liquidfocus:set-mini', { open: true, card: ${!!step.card} })`, true)
         await sleep(1200)
         if (step.name) await capture(win, dir, step.name, step.margin ?? 40)
+        // The real window as macOS draws it (rounded corners, transparent outside), nothing behind it
+        const id = /^window:(\d+):/.exec(win.getMediaSourceId())?.[1]
+        if (step.name && id && process.platform === 'darwin') {
+          await new Promise<void>((r) => execFile('screencapture', ['-x', '-o', `-l${id}`, join(dir, `${step.name}-window.png`)], () => r()))
+        }
       }
       if (step.miniInput) {
         const win = getToolWindow(SystemWindowId.LiquidFocusMini)
