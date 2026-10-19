@@ -161,7 +161,9 @@ if (!gotLock) {
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
       window.webContents.on('render-process-gone', (_event, details) => {
-        crashWrite('FATAL', `Renderer crashed: ${window.getTitle()} — reason=${details.reason}, exitCode=${details.exitCode}`)
+        // During quit the window can already be destroyed; getTitle() would throw
+        const title = window.isDestroyed() ? '(closed window)' : window.getTitle()
+        crashWrite('FATAL', `Renderer crashed: ${title} — reason=${details.reason}, exitCode=${details.exitCode}`)
       })
     })
 

@@ -105,10 +105,18 @@ function create(): BrowserWindow {
     panel = null
     rendererReady = false
   })
+  // A reload (or a renderer restart) queues the route until the page is back
+  win.webContents.on('did-start-loading', () => {
+    rendererReady = false
+  })
+  win.webContents.on('render-process-gone', (_e, d) => {
+    rendererReady = false
+    if (!quitting && d.reason !== 'clean-exit' && !win.isDestroyed()) win.webContents.reload()
+  })
   win.webContents.on('did-finish-load', () => {
     rendererReady = true
     if (pendingRoute) {
-      win.webContents.send(IPC_SEND.PANEL_NAVIGATE, pendingRoute)
+      send(win, IPC_SEND.PANEL_NAVIGATE, pendingRoute)
       pendingRoute = null
     }
   })
@@ -140,14 +148,14 @@ export function showPanel(route?: string): void {
   if (!getPanel()) panel = create()
   const win = panel!
   if (route) {
-    if (rendererReady) win.webContents.send(IPC_SEND.PANEL_NAVIGATE, route)
+    if (rendererReady) send(win, IPC_SEND.PANEL_NAVIGATE, route)
     else pendingRoute = route
   }
   position(win)
   win.show()
   win.focus()
   win.setAlwaysOnTop(true, 'pop-up-menu')
-  win.webContents.send(IPC_SEND.PANEL_VISIBILITY, true)
+  send(win, IPC_SEND.PANEL_VISIBILITY, true)
 }
 
 export function hidePanel(): void {
@@ -155,7 +163,7 @@ export function hidePanel(): void {
   if (!win || !win.isVisible()) return
   win.hide()
   lastHiddenAt = Date.now()
-  win.webContents.send(IPC_SEND.PANEL_VISIBILITY, false)
+  send(win, IPC_SEND.PANEL_VISIBILITY, false)
 }
 
 /** Tray click. A click that itself caused the blur-hide must not re-open it. */
@@ -181,4 +189,15 @@ export function resizePanel(h: number): void {
 
 export function isPanelVisible(): boolean {
   return !!getPanel()?.isVisible()
+}
+
+/** Send to the panel page, skipping a page that is reloading or gone. */
+function send(win: BrowserWindow, channel: string, ...args: unknown[]): void {
+  const wc = win.webContents
+  if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading()) return
+  try {
+    wc.send(channel, ...args)
+  } catch {
+    /* frame disposed mid-reload; the page asks for its state when it loads */
+  }
 }
