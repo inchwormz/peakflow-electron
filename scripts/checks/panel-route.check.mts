@@ -63,4 +63,17 @@ win().loading = false
 win().emit('did-finish-load')
 assert.equal(panel.panelRendererReady(win().webContents), 'focusdim', 'the newest request wins')
 
+// Sol re-review 3: the panel says it's listening while the page is still
+// loading, then a route is requested before loading finishes
+win().emit('did-start-loading')
+win().loading = true
+assert.equal(panel.panelRendererReady(win().webContents), null, 'ready during loading, nothing queued yet')
+panel.showPanel('quickboard')
+assert.deepEqual(navs(), ['liquidfocus'], 'not sent into a loading page (it would be dropped)')
+win().loading = false
+win().emit('did-finish-load')
+assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once loading finishes')
+win().emit('did-finish-load')
+assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once only')
+
 console.log('panel-route: ok')

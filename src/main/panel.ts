@@ -115,8 +115,11 @@ function create(): BrowserWindow {
     rendererReady = false
     if (!quitting && d.reason !== 'clean-exit' && !win.isDestroyed()) win.webContents.reload()
   })
-  // No did-finish-load delivery: the page's listeners aren't up yet then. The
-  // panel asks for the pending route itself once mounted (panelRendererReady).
+  // A route is only sent once the page is listening (panelRendererReady) AND has
+  // finished loading (send() drops messages to a loading page). The panel asks
+  // for any route queued before it was listening; one queued after that, while
+  // the page was still loading, is flushed here.
+  win.webContents.on('did-finish-load', () => flushPendingRoute(win))
 
   const query = { toolId: SystemWindowId.Panel }
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -144,6 +147,13 @@ export function panelRendererReady(sender: Electron.WebContents): string | null 
   return route
 }
 
+/** Deliver the queued route if the page can take it now; otherwise keep it queued. */
+function flushPendingRoute(win: BrowserWindow): void {
+  if (!pendingRoute || !rendererReady || win.webContents.isDestroyed() || win.webContents.isLoading()) return
+  send(win, IPC_SEND.PANEL_NAVIGATE, pendingRoute)
+  pendingRoute = null
+}
+
 export function getPanel(): BrowserWindow | null {
   return panel && !panel.isDestroyed() ? panel : null
 }
@@ -159,8 +169,8 @@ export function showPanel(route?: string): void {
   const win = panel!
   if (route) {
     setPanelRoute(route)
-    if (rendererReady) send(win, IPC_SEND.PANEL_NAVIGATE, route)
-    else pendingRoute = route
+    pendingRoute = route
+    flushPendingRoute(win)
   }
   position(win)
   win.show()
