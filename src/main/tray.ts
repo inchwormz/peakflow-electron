@@ -80,7 +80,7 @@ const SWITCH_ACCELERATORS: Partial<Record<ToolId, string>> = {
 /**
  * Build the tray context menu — only shows installed tools.
  */
-function buildContextMenu(): Electron.Menu {
+export function buildContextMenu(): Electron.Menu {
   const toolItems: Electron.MenuItemConstructorOptions[] = []
 
   for (const id of TRAY_TOOL_ORDER) {
@@ -113,7 +113,8 @@ function buildContextMenu(): Electron.Menu {
           {
             label: fdState.enabled ? 'Disable' : 'Enable',
             accelerator: hotkeyLabel,
-            click: (): void => { svc.toggle() }
+            // Same access check as the panel and the shortcut: a locked FocusDim can't be turned on here
+            click: (): void => { void svc.requestToggle() }
           },
           { type: 'separator' },
           ...intensityPresets.map((p) => ({
