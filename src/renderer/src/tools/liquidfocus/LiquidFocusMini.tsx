@@ -13,6 +13,12 @@
  *   - focus done:  "Focus session done · That's N of M today" [Start break] [Skip]
  *   - cycle done:  "Four sessions done · … long break" [Start long break] [Stop for now]
  *   - break over:  "Break's over · Next up: <task>" [Start focus] [Stop]
+ *   - looked away: "Looked away — timer reset" [Start again] [Close]  (focus
+ *     detection reset the session; liquidfocus.focus_away_action = 'reset')
+ *
+ * While focus detection watches a running focus session, a small eye shows
+ * after the time; it dims while you're looking away (counting toward the
+ * threshold, or past it).
  */
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react'
@@ -24,7 +30,7 @@ import { Icon } from '../../panel/icons'
 import { fmtClock } from '../../panel/hooks'
 import { activeTask, lfPause, lfSkip, lfStart, lfStop, phaseFrac, setMini, useLF, type TimerState } from '../../panel/tools/liquidfocus/store'
 
-type Card = null | 'done' | 'cycle' | 'breakover'
+type Card = null | 'done' | 'cycle' | 'breakover' | 'away'
 
 type Theme = 'dark' | 'light'
 /** The layout's own size; the window is this times liquidfocus.mini_size and the content is scaled to fit */
@@ -145,6 +151,24 @@ function useDragAnywhere(onClick?: () => void): {
   }
 }
 
+type DetState = 'off' | 'loading' | 'focused' | 'absent' | 'away' | 'no-camera' | 'error'
+
+/** The panel's focus detector, as forwarded by main (and whether detection is on at all). */
+function useDetectorState(): DetState {
+  const [s, setS] = useState<DetState>('off')
+  useEffect(() => {
+    // A mini opened mid-session hasn't heard a change yet: assume watching if detection is on
+    window.peakflow
+      .invoke(IPC_INVOKE.CONFIG_GET, { tool: ToolId.LiquidFocus })
+      .then((c) => {
+        if ((c as { focus_detection_enabled?: boolean } | null)?.focus_detection_enabled) setS((cur) => (cur === 'off' ? 'loading' : cur))
+      })
+      .catch(() => {})
+    return window.peakflow.on(IPC_SEND.LIQUIDFOCUS_DETECTOR, (v) => setS(String(v) as DetState))
+  }, [])
+  return s
+}
+
 /** Buttons keep their own clicks and never start a drag. */
 const ownPointer = { onPointerDown: (e: RPointerEvent) => e.stopPropagation() }
 
@@ -155,6 +179,19 @@ export function LiquidFocusMini(): React.JSX.Element {
   const prev = useRef<TimerState | null>(null)
   const scale = useScale(!!card)
   const [theme, toggleTheme] = useTheme()
+  const det = useDetectorState()
+  // The away notice must survive the idle state that follows it (the effect below reads this)
+  const cardRef = useRef<Card>(null)
+  cardRef.current = card
+  useEffect(
+    () =>
+      window.peakflow.on(IPC_SEND.LIQUIDFOCUS_AWAY_RESET, () => {
+        cardRef.current = 'away'
+        setCard('away')
+        setMini(true, true)
+      }),
+    []
+  )
 
   // Watch transitions: grow into the break prompt, shrink back when a phase starts, close after Stop
   useEffect(() => {
@@ -167,7 +204,7 @@ export function LiquidFocusMini(): React.JSX.Element {
     }
     const c = cardFor(p, t)
     if (c === null) {
-      if (card) {
+      if (cardRef.current) {
         setCard(null)
         setMini(true, false)
       }
@@ -179,7 +216,7 @@ export function LiquidFocusMini(): React.JSX.Element {
       return
     }
     // Idle with no prompt showing (stopped or reset elsewhere): the mini isn't needed
-    if (t.status === 'idle' && !card) setMini(false)
+    if (t.status === 'idle' && !cardRef.current) setMini(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t])
 
@@ -233,7 +270,17 @@ export function LiquidFocusMini(): React.JSX.Element {
     let secondary: string
     let onPrimary: () => void
     let onSecondary: () => void
-    if (card === 'done') {
+    if (card === 'away') {
+      title = 'Looked away — timer reset'
+      line = `Focus is back to ${fmtMinutes(Math.round(t.total / 60))}.`
+      primary = 'Start again'
+      secondary = 'Close'
+      onPrimary = () => void lfStart()
+      onSecondary = () => {
+        setCard(null)
+        setMini(false)
+      }
+    } else if (card === 'done') {
       title = 'Focus session done'
       line = `That’s ${inCycle} of ${n} today.`
       ask = `Take a ${mins}-minute break?`
@@ -285,6 +332,7 @@ export function LiquidFocusMini(): React.JSX.Element {
   }
 
   const paused = t.status !== 'running'
+  const watching = t.mode === 'work' && t.status === 'running' && det !== 'off' && det !== 'no-camera' && det !== 'error'
   const sub =
     t.status === 'paused'
       ? 'Paused'
@@ -300,7 +348,17 @@ export function LiquidFocusMini(): React.JSX.Element {
           <Ring size={38} frac={phaseFrac(t)} stroke={8} />
         </div>
         <div className="tx">
-          <b>{fmtClock(t.remaining)}</b>
+          <b>
+            {fmtClock(t.remaining)}
+            {watching ? (
+              <span
+                className={det === 'absent' || det === 'away' ? 'det away' : 'det'}
+                title={det === 'absent' || det === 'away' ? 'Looking away' : 'Focus detection is watching'}
+              >
+                <Icon name="eye" />
+              </span>
+            ) : null}
+          </b>
           <span>{sub}</span>
         </div>
         <div className="mc" {...ownPointer}>

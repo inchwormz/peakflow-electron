@@ -181,6 +181,8 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_MINI_MOVE: 'liquidfocus:mini-move',
   /** v2 panel: the renderer reports its current route (so hotkeys know which tool is showing) */
   PANEL_ROUTE: 'panel:route',
+  /** v2: the panel's focus detector reports its state ('focused' | 'absent' | 'away' | 'off' …) for the mini */
+  LIQUIDFOCUS_DETECTOR_STATUS: 'liquidfocus:detector-status',
   // v2 liquidfocus: restart the current phase (panel "Reset")
   LIQUIDFOCUS_RESTART_PHASE: 'liquidfocus:restart-phase',
 
@@ -248,7 +250,11 @@ export const IPC_SEND = {
   PANEL_NAVIGATE: 'panel:navigate',
   PANEL_VISIBILITY: 'panel:visibility',
   /** v2 mini timer: its colour changed ('dark' | 'light') */
-  LIQUIDFOCUS_MINI_THEME: 'liquidfocus:mini-theme'
+  LIQUIDFOCUS_MINI_THEME: 'liquidfocus:mini-theme',
+  /** v2: the detector's state, forwarded to the mini timer */
+  LIQUIDFOCUS_DETECTOR: 'liquidfocus:detector',
+  /** v2: a focus session was reset because you looked away */
+  LIQUIDFOCUS_AWAY_RESET: 'liquidfocus:away-reset'
 } as const
 
 /** What the renderer asks APP_GET_ICON for: an app bundle id, an app name, a file path or a link. */

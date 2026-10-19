@@ -157,10 +157,26 @@ export function Behaviour(): React.JSX.Element {
           right={<Toggle label="Focus detection" checked={cfg.focus_detection_enabled} onChange={(v) => set('focus_detection_enabled', v)} />}
         />
         {cfg.focus_detection_enabled ? (
-          <Row
-            label="Count as away after"
-            right={<NumIn label="Count as away after" value={cfg.focus_away_threshold_secs} min={1} max={120} unit="s" onCommit={(v) => set('focus_away_threshold_secs', v)} />}
-          />
+          <>
+            <Row
+              label="When you look away"
+              right={
+                <Picker
+                  label="When you look away"
+                  value={cfg.focus_away_action === 'count' ? 'count' : 'reset'}
+                  options={[
+                    ['reset', 'Reset the timer'],
+                    ['count', 'Just count it']
+                  ]}
+                  onChange={(v) => set('focus_away_action', v)}
+                />
+              }
+            />
+            <Row
+              label="Count as away after"
+              right={<NumIn label="Count as away after" value={cfg.focus_away_threshold_secs} min={1} max={120} unit="s" onCommit={(v) => set('focus_away_threshold_secs', v)} />}
+            />
+          </>
         ) : null}
       </Grp>
       <Note style={{ marginTop: 10 }}>Runs on your Mac. No video is stored or sent anywhere.</Note>

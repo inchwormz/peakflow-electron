@@ -63,6 +63,8 @@ export interface LiquidFocusConfig {
   focus_detection_enabled: boolean
   /** Seconds of looking away before counting as a distraction (default: 5) */
   focus_away_threshold_secs: number
+  /** What a detected distraction does during focus: reset the timer (default) or just count it */
+  focus_away_action: 'reset' | 'count'
   /** v2 mini timer: size as a multiple of its 220x64 base (resizing changes it) */
   mini_size: number
   /** v2 mini timer colour */
@@ -140,6 +142,7 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     todoist_project_filter: '',
     focus_detection_enabled: false,
     focus_away_threshold_secs: 5,
+    focus_away_action: 'reset' as const,
     mini_size: 1.4,
     mini_theme: 'dark' as const,
     mini_position: null,

@@ -9,10 +9,10 @@
  */
 
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react'
-import { IPC_SEND } from '@shared/ipc-types'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import { ToolId } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
-import { useIpcEvent, usePanelVisible, useToolConfig } from '../../hooks'
+import { invoke, useIpcEvent, usePanelVisible, useToolConfig } from '../../hooks'
 import { useNav } from '../../nav'
 import { detectorStore, isActive, refreshLF, setMini, useLF, type DetectorStatus } from './store'
 
@@ -26,6 +26,10 @@ export function Background(): React.JSX.Element | null {
   const t = lf?.timer
 
   useIpcEvent(IPC_SEND.LIQUIDFOCUS_PHASE_COMPLETE, (phase) => playPhaseSound(String(phase)))
+  // Looking away reset the session (main did it); say why if the panel is the one on screen
+  useIpcEvent(IPC_SEND.LIQUIDFOCUS_AWAY_RESET, () => {
+    if (visible) nav.toast('Looked away — timer reset')
+  })
 
   // Fresh numbers when the panel opens
   useEffect(() => {
@@ -60,6 +64,8 @@ export function Background(): React.JSX.Element | null {
     if (!detActiveRef.current && status === 'loading') return
     const cur = detectorStore.get()
     const enteringAway = status === 'away' && lastStatus.current !== 'away'
+    // The mini timer's eye icon follows the detector (sent only when it changes)
+    if (status !== lastStatus.current) invoke(IPC_INVOKE.LIQUIDFOCUS_DETECTOR_STATUS, status).catch(() => {})
     lastStatus.current = status
     detectorStore.set({
       status,
@@ -72,18 +78,23 @@ export function Background(): React.JSX.Element | null {
   const sessionKey = t ? (t.mode === 'work' && t.status !== 'idle' ? 'work' : 'none') : 'none'
   useEffect(() => {
     if (sessionKey === 'none') {
+      if (lastStatus.current !== 'off') invoke(IPC_INVOKE.LIQUIDFOCUS_DETECTOR_STATUS, 'off').catch(() => {})
       lastStatus.current = 'off'
       detectorStore.set({ ...detectorStore.get(), status: 'off', distractions: 0 })
     }
   }, [sessionKey])
   useEffect(() => {
     if (detActive) {
+      invoke(IPC_INVOKE.LIQUIDFOCUS_DETECTOR_STATUS, 'loading').catch(() => {})
       lastStatus.current = 'loading'
       detectorStore.set({ ...detectorStore.get(), status: 'loading' })
     }
   }, [detActive])
   useEffect(() => {
-    if (!enabled) detectorStore.set({ ...detectorStore.get(), status: 'off' })
+    if (!enabled) {
+      detectorStore.set({ ...detectorStore.get(), status: 'off' })
+      invoke(IPC_INVOKE.LIQUIDFOCUS_DETECTOR_STATUS, 'off').catch(() => {})
+    }
   }, [enabled])
 
   if (!enabled) return null

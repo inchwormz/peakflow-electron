@@ -10,12 +10,12 @@ import { is } from '@electron-toolkit/utils'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
-import type { ToolConfig } from '@shared/config-schemas'
+import type { ToolConfig, LiquidFocusConfig } from '@shared/config-schemas'
 import { ToolId, SystemWindowId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
-import { resizePanel, hidePanel, showPanel, setPanelRoute } from './panel'
+import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool } from './panel'
 import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
 import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
@@ -915,9 +915,30 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.LIQUIDFOCUS_RECORD_INTERRUPTION,
     (): void => {
-      getLiquidFocusService().recordInterruption()
+      const lf = getLiquidFocusService()
+      lf.recordInterruption()
+      const cfg = getConfig(ToolId.LiquidFocus) as LiquidFocusConfig
+      if ((cfg.focus_away_action ?? 'reset') === 'reset' && lf.isFocusRunning()) {
+        // Tell the windows why first, so the mini shows the notice instead of closing on idle
+        const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
+        const targets = [mini, getPanel()].filter((w): w is BrowserWindow => !!w && !w.isDestroyed())
+        targets.forEach((w) => w.webContents.send(IPC_SEND.LIQUIDFOCUS_AWAY_RESET))
+        lf.resetFocusAfterAway()
+        // Keep (or put) the mini on screen with the notice, unless the panel shows Liquid Focus
+        if (!(isPanelVisible() && visiblePanelTool() === ToolId.LiquidFocus)) {
+          layoutMini(mini ?? createToolWindow(SystemWindowId.LiquidFocusMini), true)
+        }
+      }
     }
   )
+
+  // v2: forward the panel's detector state to the mini timer (eye icon)
+  const DETECTOR_STATES = new Set(['off', 'loading', 'focused', 'absent', 'away', 'no-camera', 'error'])
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_DETECTOR_STATUS, (_event, status: unknown): void => {
+    if (typeof status !== 'string' || !DETECTOR_STATES.has(status)) return
+    const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
+    if (mini && !mini.isDestroyed()) mini.webContents.send(IPC_SEND.LIQUIDFOCUS_DETECTOR, status)
+  })
 
   // ─── SoundSplit ──────────────────────────────────────────────────────────
   // Windows-only (PowerShell/WASAPI sidecar); other platforms get inert results

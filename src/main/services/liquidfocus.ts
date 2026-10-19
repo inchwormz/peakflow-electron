@@ -118,6 +118,7 @@ class LiquidFocusService {
         focus_away_threshold_secs: 5,
         todoist_project_filter: '',
         distraction_sites: [],
+        focus_away_action: 'reset',
         mini_size: 1.4,
         mini_theme: 'dark',
         mini_position: null
@@ -441,6 +442,27 @@ class LiquidFocusService {
     this.store.set('interruptions', current + 1)
     console.log(`[LiquidFocus] Interruption recorded (total: ${current + 1})`)
     this.broadcastState()
+  }
+
+  /** True when a focus (work) session is counting down. */
+  isFocusRunning(): boolean {
+    return this.mode === 'work' && this.status === 'running'
+  }
+
+  /**
+   * v2: looking away during focus stops the session and puts the focus timer
+   * back to its full length (like Stop), keeping the cycle count so earlier
+   * finished sessions still count toward the long break.
+   */
+  resetFocusAfterAway(): TimerState {
+    if (!this.isFocusRunning()) return this.getTimerState()
+    this.stopTicking()
+    this.status = 'idle'
+    this.total = this.getConfigSafe().work_duration * 60
+    this.remaining = this.total
+    console.log('[LiquidFocus] Looked away during focus: timer reset')
+    this.broadcastState()
+    return this.getTimerState()
   }
 
   // ─── Broadcasting ───────────────────────────────────────────────────────

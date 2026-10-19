@@ -139,7 +139,8 @@ export function cycleDots(t: TimerState): boolean[] {
 
 /* ─── focus detector (runs in the panel's Background) ────────────────────── */
 
-export type DetectorStatus = 'off' | 'loading' | 'focused' | 'away' | 'no-camera' | 'error'
+/** 'absent': no face, still under the away threshold */
+export type DetectorStatus = 'off' | 'loading' | 'focused' | 'absent' | 'away' | 'no-camera' | 'error'
 
 export interface DetectorState {
   status: DetectorStatus
@@ -163,6 +164,8 @@ export function detectorLabel(d: DetectorState): string {
       return 'Starting…'
     case 'focused':
       return `Focused${tail}`
+    case 'absent':
+      return `Looking away…${tail}`
     case 'away':
       return `Looking away${tail}`
     case 'no-camera':
