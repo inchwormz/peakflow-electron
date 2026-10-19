@@ -584,7 +584,7 @@ class FocusDimService {
 <div id="dim-right" style="${dimStyle} right:0; top:0; width:0; height:100%;"></div>
 <div id="dim-bottom" style="${dimStyle} left:0; bottom:0; right:0; height:0;"></div>
 <canvas id="dim-canvas" style="position:fixed; inset:0; pointer-events:none; z-index:1; display:none;" width="1" height="1"></canvas>
-<div id="border-frame" style="position:fixed; border:3px solid rgba(168,85,247,0.9); border-radius:4px; pointer-events:none; z-index:2; transition:all 0.05s linear; display:${showBorder ? 'block' : 'none'}; box-shadow:0 0 12px rgba(168,85,247,0.3);"></div>
+<div id="border-frame" style="position:fixed; border:1.5px solid rgba(255,255,255,0.9); border-radius:10px; pointer-events:none; z-index:2; transition:all 0.05s linear; display:${showBorder ? 'block' : 'none'};"></div>
 </body></html>`
   }
 
