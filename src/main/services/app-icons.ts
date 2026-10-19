@@ -8,7 +8,7 @@
  * Results (including misses) are cached as data URLs for the session.
  */
 
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import { execFile } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
@@ -56,6 +56,16 @@ function findAppByName(name: string): string | null {
 }
 
 async function iconForPath(path: string): Promise<string | null> {
+  // On macOS getFileIcon returns the generic blank icon for .app bundles;
+  // the Quick Look thumbnail of an app is its real icon
+  if (process.platform === 'darwin' && path.endsWith('.app')) {
+    try {
+      const img = await nativeImage.createThumbnailFromPath(path, { width: 64, height: 64 })
+      if (!img.isEmpty()) return img.toDataURL()
+    } catch {
+      /* fall through to getFileIcon */
+    }
+  }
   try {
     const img = await app.getFileIcon(path, { size: 'normal' })
     return img.isEmpty() ? null : img.toDataURL()
