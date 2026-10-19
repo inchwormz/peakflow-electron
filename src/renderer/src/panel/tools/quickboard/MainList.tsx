@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { ToolId } from '@shared/tool-ids'
-import { invoke, useToolConfig, usePanelVisible, formatAccelerator } from '../../hooks'
+import { invoke, useToolConfig, usePanelVisible, formatAccelerator, isMac } from '../../hooks'
 import { AppIcon, Banner, Btn, Empty, IconBtn, LinkBtn, Note } from '../../kit'
 import { Icon, type IconName } from '../../icons'
 import { useNav, type NavApi } from '../../nav'
@@ -29,7 +29,7 @@ const TYPE_ICON: Record<Clip['contentType'], IconName> = { text: 'text', code: '
 
 /** Copy the clip and paste it into the app the user was in. The panel hides first so the paste lands there. */
 export function pasteClip(nav: NavApi, clip: Clip, plain: boolean): void {
-  if (clip.type === 'file') {
+  if (clip.type === 'file' && !isMac()) {
     nav.toast('Files can’t be pasted from QuickBoard yet')
     return
   }

@@ -12,11 +12,34 @@ export function invoke<T = unknown>(channel: string, ...args: unknown[]): Promis
   return window.peakflow.invoke(channel, ...args) as Promise<T>
 }
 
+// One IPC listener per channel, shared by every component that subscribes
+// (a screen can hold a dozen useInvoke hooks, each watching panel visibility)
+const subscribers = new Map<string, { cbs: Set<(...a: unknown[]) => void>; off: () => void }>()
+
+function subscribe(channel: string, cb: (...a: unknown[]) => void): () => void {
+  let entry = subscribers.get(channel)
+  if (!entry) {
+    const cbs = new Set<(...a: unknown[]) => void>()
+    entry = { cbs, off: window.peakflow.on(channel, (...a: unknown[]) => cbs.forEach((f) => f(...a))) }
+    subscribers.set(channel, entry)
+  }
+  entry.cbs.add(cb)
+  return () => {
+    const e = subscribers.get(channel)
+    if (!e) return
+    e.cbs.delete(cb)
+    if (e.cbs.size === 0) {
+      e.off()
+      subscribers.delete(channel)
+    }
+  }
+}
+
 /** Subscribe to a main → renderer push channel for the component's lifetime. */
 export function useIpcEvent(channel: string, cb: (...args: unknown[]) => void): void {
   const ref = useRef(cb)
   ref.current = cb
-  useEffect(() => window.peakflow.on(channel, (...a: unknown[]) => ref.current(...a)), [channel])
+  useEffect(() => subscribe(channel, (...a: unknown[]) => ref.current(...a)), [channel])
 }
 
 /** True while the panel is on screen. Tools use it to refresh when it opens. */

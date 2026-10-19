@@ -14,7 +14,7 @@
  * packaged builds.
  */
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, webContents } from 'electron'
 import { execFile } from 'child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -32,6 +32,8 @@ interface Step {
   mini?: boolean
   card?: boolean
   alert?: boolean
+  /** With alert: wait for a real calendar alert instead of sending a test one */
+  real?: boolean
   wait?: number
   /** Margin (px) of real screen to include around the window in -screen.png */
   margin?: number
@@ -57,6 +59,17 @@ export async function runDevShots(): Promise<void> {
   if (!is.dev || !dir || !planPath) return
   mkdirSync(dir, { recursive: true })
   const plan = JSON.parse(readFileSync(planPath, 'utf8')) as Step[]
+  // Copy every window's console warnings and errors into the main log
+  const watchConsole = (wc: Electron.WebContents): void => {
+    // Electron 33 passes (event, level, message, line, sourceId); level 2 = warning, 3 = error
+    wc.on('console-message', (_e, level: number, message: string, line: number, sourceId: string) => {
+      if (level < 2) return
+      const where = wc.isDestroyed() ? '' : wc.getURL().startsWith('data:') ? 'overlay' : wc.getURL().replace(/^.*\?/, '?')
+      console.log(`[Shots] console ${level === 3 ? 'error' : 'warn'} ${where} ${message} (${sourceId.replace(/^.*\//, '')}:${line})`)
+    })
+  }
+  webContents.getAllWebContents().forEach(watchConsole)
+  app.on('web-contents-created', (_e, wc) => watchConsole(wc))
   await sleep(2500)
   for (const step of plan) {
     try {
@@ -89,20 +102,34 @@ export async function runDevShots(): Promise<void> {
       if (step.alert) {
         hidePanel()
         closeToolWindow(SystemWindowId.LiquidFocusMini)
+        // Alert windows are created by the ScreenSlap service, not the tool-window registry
+        const findAlert = (): BrowserWindow | undefined =>
+          BrowserWindow.getAllWindows().find(
+            (w) => !w.isDestroyed() && w.webContents.getURL().includes(`toolId=${SystemWindowId.ScreenSlapAlert}`)
+          )
+        if (step.real) {
+          // Wait (up to 2 min) for a calendar alert, capture it, and leave it for auto-dismiss
+          for (let i = 0; i < 240 && !findAlert(); i++) await sleep(500)
+          await sleep(2500)
+          const w = findAlert()
+          if (w && step.name) {
+            writeFileSync(join(dir, `${step.name}.png`), (await w.webContents.capturePage()).toPNG())
+            console.log(`[Shots] ${step.name}`)
+          } else console.warn('[Shots] no calendar alert appeared')
+          continue
+        }
         await getPanel()?.webContents.executeJavaScript(`window.peakflow.invoke('screenslap:test-alert')`, true)
         await sleep(3500)
-        // Alert windows are created by the ScreenSlap service, not the tool-window registry
-        const win = BrowserWindow.getAllWindows().find(
-          (w) => !w.isDestroyed() && w.webContents.getURL().includes(`toolId=${SystemWindowId.ScreenSlapAlert}`)
-        )
+        const win = findAlert()
         if (win && step.name) {
           const img = await win.webContents.capturePage()
           writeFileSync(join(dir, `${step.name}.png`), img.toPNG())
           console.log(`[Shots] ${step.name}`)
         } else console.warn('[Shots] no alert window found')
         win?.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
-        await sleep(600)
-        if (win && !win.isDestroyed()) win.close()
+        await sleep(1200)
+        console.log(`[Shots] alert closed by a key press: ${!findAlert()}`)
+        findAlert()?.close()
       }
     } catch (err) {
       console.warn('[Shots] step failed', step, err)

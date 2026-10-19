@@ -19,8 +19,8 @@
 import { clipboard, nativeImage, BrowserWindow, app } from 'electron'
 import { createHash } from 'crypto'
 import Store from 'electron-store'
-import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs'
-import { join } from 'path'
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, statSync } from 'fs'
+import { join, basename, extname } from 'path'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig } from './config-store'
@@ -78,6 +78,8 @@ class ClipboardService {
   private lastTextHash = ''
   private lastImageHash = ''
   private lastFormats = ''
+  /** Paths of the last captured file copy, joined; '' when the clipboard holds no files */
+  private lastFileKey = ''
   private history: ClipboardItem[] = []
   private store: Store
   private skippedCount = 0
@@ -301,6 +303,21 @@ class ClipboardService {
       const formatsChanged = formats !== this.lastFormats
       this.lastFormats = formats
 
+      // Files copied in Finder (macOS): the clipboard also holds their names as
+      // text, so record one file clip and don't record the names as a text clip
+      if (formatsChanged || formats.includes('text/uri-list')) {
+        const files = readClipboardFilePaths(formats)
+        const key = files.join('\n')
+        if (files.length && key !== this.lastFileKey) {
+          this.lastFileKey = key
+          this.lastTextHash = this.hashText(clipboard.readText())
+          this.handleNewFiles(files)
+          return
+        }
+        if (!files.length) this.lastFileKey = ''
+      }
+      if (this.lastFileKey) return
+
       // Check for text first
       const text = clipboard.readText()
       if (text && text.trim().length > 0) {
@@ -486,6 +503,63 @@ class ClipboardService {
     this.maybeRunSuggestions()
   }
 
+  private handleNewFiles(paths: string[]): void {
+    if (this.isCaptureBlocked()) {
+      this.skippedCount++
+      console.log(`[QuickBoard] Skipped excluded app files (total: ${this.skippedCount})`)
+      return
+    }
+    const key = paths.join('\n')
+    const existingIndex = this.history.findIndex(
+      (item) => item.type === 'file' && (item.filePaths ?? []).join('\n') === key
+    )
+    if (existingIndex !== -1) {
+      const existing = this.history[existingIndex]
+      existing.copyCount += 1
+      existing.timestamp = new Date().toISOString()
+      this.history.splice(existingIndex, 1)
+      this.history.unshift(existing)
+      this.saveHistory()
+      this.broadcastChange()
+      return
+    }
+    const fileMeta = paths.map((p) => {
+      let size = 0
+      try { size = statSync(p).size } catch { /* moved or unreadable */ }
+      return { name: basename(p), size, ext: extname(p).replace(/^\./, '').toLowerCase() }
+    })
+    const item: ClipboardItem = {
+      id: this.generateId(),
+      text: null,
+      type: 'file',
+      timestamp: new Date().toISOString(),
+      copyCount: 1,
+      pinned: false,
+      preview: fileMeta.map((f) => f.name).join(', '),
+      filePaths: paths,
+      fileMeta,
+      tags: [],
+      sourceApp: this.currentSourceApp,
+      contentType: 'file',
+      ocrText: null
+    }
+    this.history.unshift(item)
+    this.trimHistory()
+    this.saveHistory()
+    this.broadcastChange()
+  }
+
+  /** Put file clips back on the clipboard (macOS), so ⌘V in Finder copies them. */
+  writeFiles(paths: string[]): boolean {
+    const existing = paths.filter((p) => existsSync(p))
+    if (process.platform !== 'darwin' || !existing.length) return false
+    clipboard.writeBuffer('NSFilenamesPboardType', Buffer.from(filenamesPlist(existing), 'utf8'))
+    this.lastFileKey = readClipboardFilePaths(clipboard.availableFormats().join(',')).join('\n')
+    this.lastFormats = clipboard.availableFormats().join(',')
+    console.log('[QuickBoard] Files written to clipboard')
+    return true
+  }
+
   /** Run OCR in background and update item when done. */
   private runOcrAsync(itemId: string, imagePath: string): void {
     import('./clipboard-ocr').then(({ runOcr }) => {
@@ -659,8 +733,7 @@ class ClipboardService {
       this.writeImage(item.imagePath)
       wrote = true
     } else if (item.type === 'file') {
-      console.warn(`[QuickBoard] simulatePaste: file clips are not supported yet: ${itemId}`)
-      return
+      wrote = this.writeFiles(item.filePaths ?? [])
     }
 
     if (!wrote) {
@@ -840,4 +913,31 @@ export function destroyClipboard(): void {
     instance.destroy()
     instance = null
   }
+}
+
+// ─── macOS file clipboard ───────────────────────────────────────────────────
+
+const xmlDecode = (t: string): string =>
+  t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+const xmlEncode = (t: string): string =>
+  t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/** Absolute paths of files on the clipboard (Finder copies), or [] */
+function readClipboardFilePaths(formats: string): string[] {
+  if (process.platform !== 'darwin' || !formats.includes('text/uri-list')) return []
+  try {
+    const plist = clipboard.readBuffer('NSFilenamesPboardType').toString('utf8')
+    return [...plist.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => xmlDecode(m[1])).filter((p) => p.startsWith('/'))
+  } catch {
+    return []
+  }
+}
+
+function filenamesPlist(paths: string[]): string {
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+    '<plist version="1.0">\n<array>\n' +
+    paths.map((p) => `\t<string>${xmlEncode(p)}</string>\n`).join('') +
+    '</array>\n</plist>\n'
+  )
 }
