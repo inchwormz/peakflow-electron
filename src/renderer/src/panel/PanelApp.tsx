@@ -195,7 +195,7 @@ export function PanelApp(): React.JSX.Element {
           >
             <div ref={contentRef}>
               {gatedTool ? (
-                <ToolGate tool={gatedTool}>
+                <ToolGate key={gatedTool} tool={gatedTool}>
                   <View params={match.params} />
                 </ToolGate>
               ) : (

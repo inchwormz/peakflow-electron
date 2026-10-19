@@ -19,6 +19,8 @@ import { BrowserWindow, screen, powerMonitor, globalShortcut } from 'electron'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
+import { checkAccess } from '../security/access-check'
+import { withToolAccess } from '../security/access-guard'
 import type { FocusDimConfig } from '@shared/config-schemas'
 import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, type WindowRect, type DisplayBounds } from '../native/active-window'
 
@@ -159,6 +161,15 @@ class FocusDimService {
       this.enable()
     }
     return this.getState()
+  }
+
+  /**
+   * Toggle from a user action (panel switch, shortcut). Turning dimming on
+   * needs FocusDim access; turning it off never does.
+   */
+  requestToggle(): Promise<FocusDimState> {
+    if (this._enabled) return Promise.resolve(this.toggle())
+    return withToolAccess(checkAccess, ToolId.FocusDim, () => this.toggle(), () => this.getState())
   }
 
   /** Enable the dim overlay */
@@ -302,13 +313,13 @@ class FocusDimService {
     // Try registering new
     let ok = false
     try {
-      ok = globalShortcut.register(newElectronAccel, () => this.toggle())
+      ok = globalShortcut.register(newElectronAccel, () => void this.requestToggle())
     } catch (err) {
       console.warn(`[FocusDim] Invalid accelerator: ${newElectronAccel}`, err)
     }
     if (!ok) {
       // Re-register old
-      try { globalShortcut.register(oldAccelerator, () => this.toggle()) } catch { /* best effort */ }
+      try { globalShortcut.register(oldAccelerator, () => void this.requestToggle()) } catch { /* best effort */ }
       return false
     }
 

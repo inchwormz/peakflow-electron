@@ -55,6 +55,7 @@ import {
 } from './services/clipboard-forms'
 import { runOcr } from './services/clipboard-ocr'
 import { checkAccess } from './security/access-check'
+import { withToolAccess } from './security/access-guard'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
@@ -276,8 +277,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.FOCUSDIM_TOGGLE,
-    (): FocusDimState => {
-      return getFocusDimService().toggle()
+    (): Promise<FocusDimState> => {
+      return getFocusDimService().requestToggle()
     }
   )
 
@@ -401,8 +402,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE,
-    (_event, itemId: string, plainText?: boolean, textOverride?: string): void => {
-      getClipboardService().simulatePaste(itemId, plainText ?? false, textOverride)
+    (_event, itemId: string, plainText?: boolean, textOverride?: string): Promise<void> => {
+      return withToolAccess(checkAccess, ToolId.QuickBoard, () => getClipboardService().simulatePaste(itemId, plainText ?? false, textOverride), () => {})
     }
   )
 
@@ -527,7 +528,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_PASTE_WITH_TRANSFORM,
-    (_event, itemId: string, steps: TransformStep[]) => {
+    (_event, itemId: string, steps: TransformStep[]) => withToolAccess(checkAccess, ToolId.QuickBoard, () => {
       const clipService = getClipboardService()
       const history = clipService.getHistory()
       const item = history.find((h: ClipboardItem) => h.id === itemId)
@@ -535,7 +536,7 @@ export function registerIpcHandlers(): void {
       const text = item.editedText ?? item.text ?? ''
       const transformed = applyPipeline(steps, text)
       clipService.simulatePaste(itemId, false, transformed)
-    }
+    }, () => {})
   )
 
   // ─── QuickBoard: AI ──────────────────────────────────────────────────────────
@@ -844,8 +845,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.LIQUIDFOCUS_START,
-    (): TimerState => {
-      return getLiquidFocusService().start()
+    (): Promise<TimerState> => {
+      // Start also resumes a paused session
+      const lf = getLiquidFocusService()
+      return withToolAccess(checkAccess, ToolId.LiquidFocus, () => lf.start(), () => lf.getTimerState())
     }
   )
 
@@ -1088,7 +1091,10 @@ export function registerIpcHandlers(): void {
   })
 
   // v2 liquidfocus: restart the current phase (no input)
-  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE, (): TimerState => getLiquidFocusService().restartPhase())
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE, (): Promise<TimerState> => {
+    const lf = getLiquidFocusService()
+    return withToolAccess(checkAccess, ToolId.LiquidFocus, () => lf.restartPhase(), () => lf.getTimerState())
+  })
 
   // ─── One-app panel (v2) ───────────────────────────────────────────────────
 

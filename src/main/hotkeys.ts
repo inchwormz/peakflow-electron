@@ -129,7 +129,7 @@ export function registerToolHotkey(toolId: ToolId): void {
 function registerSingleHotkey(toolId: string, accelerator: string, callback?: () => void): void {
   const handler = callback ?? (() => {
     if (toolId === ToolId.FocusDim) {
-      getFocusDimService().toggle()
+      void getFocusDimService().requestToggle()
     } else if (toolId === ToolId.MeetReady) {
       toggleMicMute()
     } else {

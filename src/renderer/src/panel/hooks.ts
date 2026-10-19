@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { AppIconQuery } from '@shared/ipc-types'
 import type { ToolId } from '@shared/tool-ids'
+import { createLatest } from '@shared/latest-only'
 
 export function invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T> {
   return window.peakflow.invoke(channel, ...args) as Promise<T>
@@ -54,18 +55,26 @@ export function usePanelVisible(): boolean {
  * re-opens). Returns undefined until the first answer arrives.
  */
 export function useInvoke<T>(channel: string, ...args: unknown[]): [T | undefined, () => void, (v: T) => void] {
-  const [data, setData] = useState<T | undefined>(undefined)
   const visible = usePanelVisible()
-  const key = JSON.stringify(args)
+  const key = JSON.stringify([channel, args])
+  // Data is tagged with the request it answers, so new args never show the old answer
+  const [state, setState] = useState<{ key: string; data: T } | null>(null)
+  const latest = useRef(createLatest()).current
   const load = useCallback(() => {
-    invoke<T>(channel, ...(JSON.parse(key) as unknown[]))
-      .then((v) => setData(v))
-      .catch((err) => console.warn(`[Panel] ${channel} failed:`, err))
-  }, [channel, key])
+    const isCurrent = latest.next()
+    const [ch, a] = JSON.parse(key) as [string, unknown[]]
+    invoke<T>(ch, ...a)
+      .then((v) => {
+        if (isCurrent()) setState({ key, data: v })
+      })
+      .catch((err) => console.warn(`[Panel] ${ch} failed:`, err))
+  }, [key, latest])
   useEffect(() => {
     if (visible) load()
   }, [load, visible])
-  return [data, load, setData]
+  useEffect(() => () => latest.cancel(), [latest])
+  const setData = useCallback((v: T) => setState({ key, data: v }), [key])
+  return [state?.key === key ? state.data : undefined, load, setData]
 }
 
 /**
