@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { RouteParams } from '../../types'
 import { createLatest } from '@shared/latest-only'
-import { invoke, useInvoke, usePanelVisible } from '../../hooks'
+import { invoke, isMac, useInvoke, usePanelVisible } from '../../hooks'
+import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { Btn, Empty, Gap, Grp, Hero, Note, Row } from '../../kit'
 import { useNav } from '../../nav'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, type Clip, type Pipeline, type TransformStep } from './store'
@@ -57,13 +58,13 @@ export function EditClip({ params }: { params: RouteParams }): React.JSX.Element
           if (e.key === 'Escape') {
             e.preventDefault()
             nav.go('quickboard')
-          } else if (e.metaKey && e.key.toLowerCase() === 's') {
+          } else if (isPrimaryMod(e, isMac()) && e.key.toLowerCase() === 's') {
             e.preventDefault()
             save()
           }
         }}
       />
-      <Note style={{ margin: '6px 0 12px' }}>⌘S to save · Esc to cancel</Note>
+      <Note style={{ margin: '6px 0 12px' }}>{modLabel('S', isMac())} to save · Esc to cancel</Note>
       <div className="btn-row">
         <Btn onClick={() => nav.go('quickboard')}>Cancel</Btn>
         <Btn primary onClick={save}>Save</Btn>

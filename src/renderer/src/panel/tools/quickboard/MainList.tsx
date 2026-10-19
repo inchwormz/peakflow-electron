@@ -9,6 +9,7 @@ import { IPC_INVOKE } from '@shared/ipc-types'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { ToolId } from '@shared/tool-ids'
 import { invoke, useToolConfig, usePanelVisible, formatAccelerator, isMac } from '../../hooks'
+import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { AppIcon, Banner, Btn, Empty, IconBtn, LinkBtn, Note } from '../../kit'
 import { Icon, type IconName } from '../../icons'
 import { useNav, type NavApi } from '../../nav'
@@ -72,7 +73,7 @@ export function MainList(): React.JSX.Element {
     return () => clearInterval(t)
   }, [visible, s.paste.active])
 
-  // Keyboard: ↑/↓ move, Enter pastes, ⌘1–9 quick paste. Esc leaves select mode.
+  // Keyboard: ↑/↓ move, Enter pastes, ⌘1–9 (Ctrl+1–9 on Windows) quick paste. Esc leaves select mode.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const st = getQB()
@@ -99,7 +100,7 @@ export function MainList(): React.JSX.Element {
         }
         return
       }
-      if (e.metaKey && !e.altKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
+      if (isPrimaryMod(e, isMac()) && /^Digit[1-9]$/.test(e.code)) {
         const c = list[Number(e.code.slice(5)) - 1]
         if (c) {
           e.preventDefault()
@@ -306,7 +307,7 @@ function ClipRow({ clip, index, selected, pick, top, onClick, onContext, onEdit 
           <IconBtn icon={clip.pinned ? 'starF' : 'star'} label={clip.pinned ? 'Unpin' : 'Pin'} onClick={() => togglePin(clip.id)} />
           {canEdit(clip) ? <IconBtn icon="pencil" label="Edit" onClick={onEdit} /> : null}
           <IconBtn icon="x" label="Delete" onClick={() => deleteClip(clip.id)} />
-          {index < 9 ? <kbd>⌘{index + 1}</kbd> : null}
+          {index < 9 ? <kbd>{modLabel(String(index + 1), isMac())}</kbd> : null}
         </span>
       ) : null}
     </div>
