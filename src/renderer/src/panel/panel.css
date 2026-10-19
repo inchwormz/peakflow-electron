@@ -147,11 +147,14 @@
 .pf .p-head .status b { color: var(--text); font-weight: 500; }
 .pf .p-body { padding: 12px 16px 16px; overflow: auto; flex: 1; min-height: 0; position: relative; }
 .pf .p-body.flush { padding: 6px 8px 8px; }
-.pf .dd { height: 30px; display: inline-flex; align-items: center; gap: 8px; padding: 0 8px 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--text); }
-.pf .dd:hover, .pf .dd[aria-expanded="true"] { background: var(--hover); }
-.pf .dd .pixel { font-size: 12px; }
-.pf .dd > svg.chev { width: 12px; height: 12px; color: var(--text-3); }
-.pf .dd .ic svg { width: 16px; height: 16px; color: var(--text-2); display: block; }
+/* The tool switcher title reads as a button (John, 19 Oct: "needs to be more obvious, whiter slightly bigger") */
+.pf .dd { height: 32px; display: inline-flex; align-items: center; gap: 8px; padding: 0 8px 0 7px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; transition: background .12s var(--ease); }
+.pf .dd:hover, .pf .dd[aria-expanded="true"] { background: var(--active); box-shadow: inset 0 0 0 0.5px var(--line-strong); }
+.pf .dd:active { background: var(--hover); }
+.pf .dd .pixel { font-size: 12px; color: var(--text); }
+.pf .dd > svg.chev { width: 20px; height: 20px; margin: 0 -3px 0 -4px; color: var(--text); stroke-width: 2.1; transition: transform .15s var(--ease); }
+.pf .dd[aria-expanded="true"] > svg.chev { transform: rotate(180deg); }
+.pf .dd .ic svg { width: 16px; height: 16px; color: var(--text); display: block; }
 .pf .back { height: 30px; display: inline-flex; align-items: center; gap: 2px; padding: 0 8px 0 2px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font-size: 13px; }
 .pf .back:hover { background: var(--hover); color: var(--text); }
 .pf .back svg { width: 16px; height: 16px; }
