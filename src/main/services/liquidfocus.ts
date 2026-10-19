@@ -434,7 +434,17 @@ class LiquidFocusService {
 
   // ─── Broadcasting ───────────────────────────────────────────────────────
 
+  private stateListeners: Array<(t: TimerState) => void> = []
+
+  /** Main-process listeners (e.g. the menu-bar countdown). */
+  onStateChange(cb: (t: TimerState) => void): void {
+    this.stateListeners.push(cb)
+  }
+
   private broadcastState(): void {
+    for (const cb of this.stateListeners) {
+      try { cb(this.getTimerState()) } catch { /* listener errors never break the timer */ }
+    }
     this.broadcast(IPC_SEND.LIQUIDFOCUS_STATE_CHANGED, {
       timer: this.getTimerState(),
       tasks: this.getTasks(),

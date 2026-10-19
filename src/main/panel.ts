@@ -1,0 +1,184 @@
+/**
+ * The v2 one-app panel: a single small dark window that drops down from the
+ * menu-bar (tray) icon and holds all four tools behind a switcher.
+ *
+ * - Clicking the tray icon toggles it; ⌥⌘1–4 open it on a tool.
+ * - It hides (never closes) when it loses focus, so its renderer stays alive.
+ * - The renderer reports its content height (PANEL_RESIZE) and the window
+ *   follows, capped at PANEL_MAX_HEIGHT.
+ */
+
+import { BrowserWindow, screen, type Rectangle } from 'electron'
+import { join } from 'path'
+import { is } from '@electron-toolkit/utils'
+import { SystemWindowId } from '@shared/tool-ids'
+import { IPC_SEND } from '@shared/ipc-types'
+
+export const PANEL_WIDTH = 340
+const PANEL_MIN_HEIGHT = 120
+const PANEL_MAX_HEIGHT = 640
+const GAP = 6
+
+let panel: BrowserWindow | null = null
+let height = 360
+let anchor: (() => Rectangle | null) | null = null
+let pendingRoute: string | null = null
+let rendererReady = false
+let lastHiddenAt = 0
+/** While > 0 the panel stays open on blur (native dialogs opened from it). */
+let blurHold = 0
+let quitting = false
+
+/** Where the tray icon is, so the panel can sit under it. */
+export function setPanelAnchor(fn: () => Rectangle | null): void {
+  anchor = fn
+}
+
+export function setPanelQuitting(v: boolean): void {
+  quitting = v
+}
+
+/** Keep the panel open while a native dialog (file picker, etc.) is up. */
+export async function holdPanelOpen<T>(fn: () => Promise<T>): Promise<T> {
+  blurHold++
+  try {
+    return await fn()
+  } finally {
+    blurHold--
+  }
+}
+
+function pinnedForScreenshots(): boolean {
+  return process.env['PEAKFLOW_PANEL_PIN'] === '1'
+}
+
+function position(win: BrowserWindow): void {
+  const tray = anchor?.() ?? null
+  const point = tray ? { x: tray.x + tray.width / 2, y: tray.y + tray.height / 2 } : screen.getCursorScreenPoint()
+  const display = screen.getDisplayNearestPoint(point)
+  const wa = display.workArea
+  let x = Math.round(point.x - PANEL_WIDTH / 2)
+  x = Math.max(wa.x + GAP, Math.min(x, wa.x + wa.width - PANEL_WIDTH - GAP))
+  // Menu bar / top taskbar: drop down. Bottom taskbar (Windows): pop up.
+  const trayAtBottom = tray ? tray.y > display.bounds.y + display.bounds.height / 2 : false
+  const y = trayAtBottom ? wa.y + wa.height - height - GAP : wa.y + GAP
+  win.setBounds({ x, y, width: PANEL_WIDTH, height })
+}
+
+function create(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: PANEL_WIDTH,
+    height,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    roundedCorners: true,
+    backgroundColor: '#0b0b0b',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  })
+  win.setAlwaysOnTop(true, 'pop-up-menu')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+  win.on('blur', () => {
+    if (blurHold > 0 || pinnedForScreenshots() || win.webContents.isDevToolsOpened()) return
+    hidePanel()
+  })
+  win.on('close', (e) => {
+    if (quitting) return
+    e.preventDefault()
+    hidePanel()
+  })
+  win.on('closed', () => {
+    panel = null
+    rendererReady = false
+  })
+  win.webContents.on('did-finish-load', () => {
+    rendererReady = true
+    if (pendingRoute) {
+      win.webContents.send(IPC_SEND.PANEL_NAVIGATE, pendingRoute)
+      pendingRoute = null
+    }
+  })
+
+  const query = { toolId: SystemWindowId.Panel }
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${new URLSearchParams(query)}`).catch((err) => {
+      console.error('[PeakFlow] Failed to load panel (dev):', err)
+    })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query }).catch((err) => {
+      console.error('[PeakFlow] Failed to load panel:', err)
+    })
+  }
+  return win
+}
+
+export function getPanel(): BrowserWindow | null {
+  return panel && !panel.isDestroyed() ? panel : null
+}
+
+/** Create the panel window early (hidden) so the first click is instant. */
+export function initPanel(): void {
+  if (!getPanel()) panel = create()
+}
+
+/** Show the panel, optionally on a route such as 'quickboard' or 'liquidfocus/settings'. */
+export function showPanel(route?: string): void {
+  if (!getPanel()) panel = create()
+  const win = panel!
+  if (route) {
+    if (rendererReady) win.webContents.send(IPC_SEND.PANEL_NAVIGATE, route)
+    else pendingRoute = route
+  }
+  position(win)
+  win.show()
+  win.focus()
+  win.setAlwaysOnTop(true, 'pop-up-menu')
+  win.webContents.send(IPC_SEND.PANEL_VISIBILITY, true)
+}
+
+export function hidePanel(): void {
+  const win = getPanel()
+  if (!win || !win.isVisible()) return
+  win.hide()
+  lastHiddenAt = Date.now()
+  win.webContents.send(IPC_SEND.PANEL_VISIBILITY, false)
+}
+
+/** Tray click. A click that itself caused the blur-hide must not re-open it. */
+export function togglePanel(): void {
+  const win = getPanel()
+  if (win?.isVisible()) {
+    hidePanel()
+    return
+  }
+  if (Date.now() - lastHiddenAt < 250) return
+  showPanel()
+}
+
+/** Renderer reports its content height; keep the top edge fixed. */
+export function resizePanel(h: number): void {
+  if (!Number.isFinite(h)) return
+  height = Math.round(Math.max(PANEL_MIN_HEIGHT, Math.min(PANEL_MAX_HEIGHT, h)))
+  const win = getPanel()
+  if (!win) return
+  if (win.isVisible()) position(win)
+  else win.setSize(PANEL_WIDTH, height)
+}
+
+export function isPanelVisible(): boolean {
+  return !!getPanel()?.isVisible()
+}

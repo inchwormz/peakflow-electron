@@ -17,6 +17,7 @@ const LiquidFocus = lazy(() => import('./tools/liquidfocus/LiquidFocus').then((m
 const LiquidFocusMini = lazy(() =>
   import('./tools/liquidfocus/LiquidFocusMini').then((m) => ({ default: m.LiquidFocusMini }))
 )
+const PanelApp = lazy(() => import('./panel/PanelApp').then((m) => ({ default: m.PanelApp })))
 const SoundSplit = lazy(() => import('./tools/soundsplit/SoundSplit').then((m) => ({ default: m.SoundSplit })))
 
 function ToolSuspense({ children }: { children: ReactNode }): React.JSX.Element {
@@ -157,6 +158,15 @@ export default function App(): React.JSX.Element {
 
   // Route to the correct tool component, falling back to placeholder
   const renderTool = (): React.JSX.Element => {
+    // v2 one-app panel (menu-bar dropdown)
+    if (systemId === SystemWindowId.Panel) {
+      return (
+        <Suspense fallback={null}>
+          <PanelApp />
+        </Suspense>
+      )
+    }
+
     // System windows (no app shell chrome)
     if (systemId === SystemWindowId.ScreenSlapAlert) {
       return <AlertOverlay />
@@ -238,7 +248,7 @@ export default function App(): React.JSX.Element {
   }
 
   // System windows render without AppShell (no title bar, no chrome)
-  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini) {
+  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini || systemId === SystemWindowId.Panel) {
     return renderTool()
   }
 

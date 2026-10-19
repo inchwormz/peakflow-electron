@@ -10,7 +10,8 @@
  */
 
 import { globalShortcut } from 'electron'
-import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
+import { ToolId, DEFAULT_HOTKEYS, PANEL_TOOLS, HIDDEN_TOOLS, isPanelTool } from '@shared/tool-ids'
+import { hidePanel, isPanelVisible } from './panel'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
 import { toggleMicMute } from './services/mic-mute'
@@ -25,7 +26,12 @@ const hotkeyRegistry = new Map<string, string>()
  * Toggle a tool window: close it if open, create it if not.
  */
 function toggleTool(toolId: ToolId): void {
-  const existing = getToolWindow(toolId)
+  // v2: panel tools toggle the one-app panel instead of their own window
+  if (isPanelTool(toolId) && isPanelVisible()) {
+    hidePanel()
+    return
+  }
+  const existing = isPanelTool(toolId) ? undefined : getToolWindow(toolId)
   if (existing) {
     closeToolWindow(toolId)
   } else {
@@ -59,6 +65,7 @@ export function registerHotkeys(): void {
   for (const [toolId, accelerator] of Object.entries(DEFAULT_HOTKEYS)) {
     if (!accelerator) continue
     if (!isToolInstalled(toolId)) continue
+    if ((HIDDEN_TOOLS as readonly string[]).includes(toolId)) continue
 
     // For FocusDim, use the config hotkey instead of default
     if (toolId === ToolId.FocusDim) {
@@ -77,6 +84,21 @@ export function registerHotkeys(): void {
 
   // QuickBoard sequential paste queue hotkeys
   registerQueueHotkeys()
+
+  // v2 switcher: ⌥⌘1–4 open the panel on FocusDim, Liquid Focus, ScreenSlap, QuickBoard
+  registerSwitcherHotkeys()
+}
+
+function registerSwitcherHotkeys(): void {
+  PANEL_TOOLS.forEach((toolId, i) => {
+    const accel = `Alt+CommandOrControl+${i + 1}`
+    if (globalShortcut.isRegistered(accel)) return
+    registerSingleHotkey(`switch:${toolId}`, accel, () => {
+      openToolWithAccessCheck(toolId).catch((err) => {
+        console.error(`[PeakFlow] Switcher hotkey failed for ${toolId}:`, err)
+      })
+    })
+  })
 }
 
 /**
@@ -84,6 +106,7 @@ export function registerHotkeys(): void {
  * so the hotkey works immediately without restarting the app.
  */
 export function registerToolHotkey(toolId: ToolId): void {
+  if ((HIDDEN_TOOLS as readonly string[]).includes(toolId)) return
   let accelerator: string | undefined
   if (toolId === ToolId.FocusDim) {
     const conf = getConfig(ToolId.FocusDim) as FocusDimConfig

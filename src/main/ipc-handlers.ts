@@ -8,13 +8,17 @@
 import { ipcMain, BrowserWindow, shell, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { IPC_INVOKE } from '@shared/ipc-types'
-import type { AccessStatus, LicenseActivationResult, WindowInfo } from '@shared/ipc-types'
+import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig } from '@shared/config-schemas'
 import { ToolId, SystemWindowId } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
+import { resizePanel, hidePanel, showPanel } from './panel'
+import { getAppIcon } from './services/app-icons'
+import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
+import { checkForUpdates } from './services/auto-updater'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
 import { startQueue, pasteNext, cancelQueue, getQueueStatus } from './services/clipboard-sequential'
@@ -1022,6 +1026,55 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_SET_MINI,
+    (_event, payload: { open: boolean; card?: boolean }): void => {
+      if (!payload?.open) {
+        closeToolWindow(SystemWindowId.LiquidFocusMini)
+        return
+      }
+      const win = getToolWindow(SystemWindowId.LiquidFocusMini) ?? createToolWindow(SystemWindowId.LiquidFocusMini)
+      setMiniCardSize(win, !!payload.card)
+    }
+  )
+
+  // ─── One-app panel (v2) ───────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_INVOKE.PANEL_RESIZE, (_event, h: number): void => {
+    if (typeof h === 'number') resizePanel(h)
+  })
+  ipcMain.handle(IPC_INVOKE.PANEL_HIDE, (): void => hidePanel())
+  ipcMain.handle(IPC_INVOKE.PANEL_SHOW, (_event, route?: string): void => {
+    showPanel(typeof route === 'string' && /^[a-z0-9/_-]{1,80}$/.test(route) ? route : undefined)
+  })
+  ipcMain.handle(IPC_INVOKE.APP_QUIT, (): void => app.quit())
+  ipcMain.handle(
+    IPC_INVOKE.APP_GET_INFO,
+    (): { version: string; platform: string; arch: string; isDev: boolean } => ({
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      isDev: is.dev
+    })
+  )
+  ipcMain.handle(IPC_INVOKE.APP_CHECK_UPDATES, async (): Promise<void> => {
+    await checkForUpdates(false)
+  })
+  ipcMain.handle(IPC_INVOKE.APP_CHECK_ACCESSIBILITY, (): boolean => checkAccessibility())
+  ipcMain.handle(IPC_INVOKE.APP_OPEN_ACCESSIBILITY, (): void => {
+    hidePanel()
+    requestAccessibility()
+  })
+  ipcMain.handle(IPC_INVOKE.APP_GET_ICON, async (_event, q: AppIconQuery): Promise<string | null> => {
+    if (!q || typeof q !== 'object') return null
+    const clean: AppIconQuery = {}
+    if (typeof q.bundleId === 'string' && q.bundleId.length < 200) clean.bundleId = q.bundleId
+    if (typeof q.name === 'string' && q.name.length < 120) clean.name = q.name
+    if (typeof q.url === 'string' && q.url.length < 2000) clean.url = q.url
+    if (typeof q.path === 'string' && q.path.endsWith('.app') && !q.path.includes('..')) clean.path = q.path
+    return getAppIcon(clean)
+  })
+
   // ─── Window Management (open tool from Dashboard) ─────────────────────────
 
   ipcMain.handle(
@@ -1086,4 +1139,20 @@ export function registerIpcHandlers(): void {
   )
 
   console.log('[PeakFlow] IPC handlers registered')
+}
+
+/** The mini timer is a 220×64 pill; the break prompt grows it into a card in the same corner. */
+function setMiniCardSize(win: BrowserWindow, card: boolean): void {
+  const apply = (): void => {
+    if (win.isDestroyed()) return
+    const { screen } = require('electron') as typeof import('electron')
+    const [w, h] = card ? [272, 148] : [220, 64]
+    const wa = screen.getDisplayMatching(win.getBounds()).workArea
+    win.setResizable(true)
+    win.setBounds({ x: wa.x + wa.width - w - 16, y: wa.y + wa.height - h - 16, width: w, height: h })
+    win.setResizable(false)
+    if (!win.isVisible()) win.showInactive()
+  }
+  if (win.webContents.isLoading()) win.once('ready-to-show', apply)
+  else apply()
 }

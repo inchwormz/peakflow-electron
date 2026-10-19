@@ -9,11 +9,12 @@
 import { app, BrowserWindow, dialog, nativeImage, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { ToolId, SystemWindowId, isPanelTool, HIDDEN_TOOLS } from '@shared/tool-ids'
 import { checkAccess } from './security/access-check'
 import { getConfig } from './services/config-store'
 import { isToolSupportedOn } from '@shared/platform-tools'
 import { ensureMediaAccess } from './services/permissions-darwin'
+import { getPanel, showPanel } from './panel'
 
 /** Cached app icon shared across all windows */
 let _appIcon: Electron.NativeImage | undefined
@@ -350,10 +351,23 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
     return createToolWindow(toolId)
   }
 
-  // Tools the OS can't run (SoundSplit on macOS) are hidden, never opened
-  if (!isToolSupportedOn(toolId, process.platform)) {
+  // Tools the OS can't run (SoundSplit on macOS) are hidden, never opened.
+  // v2: MeetReady and SoundSplit are hidden everywhere for now (code kept).
+  if (!isToolSupportedOn(toolId, process.platform) || (HIDDEN_TOOLS as readonly string[]).includes(toolId)) {
     console.log(`[PeakFlow] ${toolId} is not available on ${process.platform}`)
     return null
+  }
+
+  // v2: the four tools live in the one-app panel. The panel checks access
+  // itself and shows the turn-on or trial-ended screen when needed.
+  if (isPanelTool(toolId)) {
+    showPanel(toolId)
+    if (process.platform === 'darwin' && toolId === ToolId.LiquidFocus) {
+      ensureMediaAccess('LiquidFocus', ['camera']).catch((err) => {
+        console.warn('[PeakFlow] Media access check failed for LiquidFocus:', err)
+      })
+    }
+    return getPanel()
   }
 
   // Check trial/license status (pass toolId for per-tool gating)

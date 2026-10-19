@@ -19,7 +19,7 @@ import { initClipboard, destroyClipboard } from './services/clipboard'
 import { initCalendar, destroyCalendar } from './services/google-calendar'
 import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
 import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
-import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
+import { destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
@@ -27,10 +27,13 @@ import { initLogger, flushLogger, crashWrite } from './services/logger'
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
 import { migrateExistingInstalls, isToolInstalled, installTool } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
-import { setAppQuitting, createToolWindow } from './windows'
+import { setAppQuitting } from './windows'
+import { initPanel, showPanel, setPanelQuitting } from './panel'
+import { setTrayTitle } from './tray'
+import { getLiquidFocusService } from './services/liquidfocus'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
 import { destroyActiveWindowHelper } from './native/active-window'
-import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { ToolId } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
@@ -212,18 +215,30 @@ if (!gotLock) {
     // Only start services for tools the user has installed via the Dashboard
     if (isToolInstalled(ToolId.FocusDim))    initFocusDim()
     if (isToolInstalled(ToolId.QuickBoard))  initClipboard()
-    if (isToolInstalled(ToolId.ScreenSlap) || isToolInstalled(ToolId.MeetReady)) initCalendar()
+    if (isToolInstalled(ToolId.ScreenSlap))  initCalendar()
     if (isToolInstalled(ToolId.ScreenSlap))  initScreenSlap()
-    if (isToolInstalled(ToolId.LiquidFocus)) initLiquidFocus()
-    if (isToolInstalled(ToolId.SoundSplit))  initSoundSplit()
+    if (isToolInstalled(ToolId.LiquidFocus)) {
+      initLiquidFocus()
+      // Menu-bar countdown while a focus session runs (macOS)
+      getLiquidFocusService().onStateChange((t) => {
+        if (t.status === 'idle') return setTrayTitle('')
+        const mm = String(Math.floor(t.remaining / 60)).padStart(2, '0')
+        const ss = String(t.remaining % 60).padStart(2, '0')
+        setTrayTitle(` ${mm}:${ss}`)
+      })
+    }
+    // v2: MeetReady and SoundSplit are hidden for now (John, 19 Oct 2026), so their
+    // services (calendar auto-popup, audio sidecar) don't start. Code is kept.
 
     // Lightweight / system-level — always safe to init
     initTodoist()
     initExtensionServer()
     initAutoUpdater()
 
-    // Open Dashboard on startup so new users aren't left hunting the tray icon
-    createToolWindow(SystemWindowId.Dashboard)
+    // v2: open the one-app panel on startup so new users aren't left hunting
+    // the menu-bar icon (replaces the old Dashboard hub window)
+    initPanel()
+    setTimeout(() => showPanel(), 600)
 
     // macOS: one-time plain-English explainer for the Accessibility permission
     if (process.platform === 'darwin') {
@@ -244,6 +259,7 @@ if (!gotLock) {
   app.on('before-quit', () => {
     destroyWatchdog() // FIRST — stop watchdog before teardown to prevent false positives
     setAppQuitting(true)
+    setPanelQuitting(true)
     console.log('[PeakFlow] Shutting down...')
     destroyExtensionServer()
     destroyTodoist()

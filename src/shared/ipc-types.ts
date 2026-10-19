@@ -174,6 +174,7 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats',
   LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
   LIQUIDFOCUS_TOGGLE_MINI: 'liquidfocus:toggle-mini',
+  LIQUIDFOCUS_SET_MINI: 'liquidfocus:set-mini',
 
   // Shell
   SHELL_OPEN_EXTERNAL: 'shell:open-external',
@@ -193,6 +194,17 @@ export const IPC_INVOKE = {
 
   // Hotkeys
   HOTKEY_GET_REGISTERED: 'hotkey:get-registered',
+
+  // One-app panel (v2)
+  PANEL_RESIZE: 'panel:resize',
+  PANEL_HIDE: 'panel:hide',
+  PANEL_SHOW: 'panel:show',
+  APP_QUIT: 'app:quit',
+  APP_GET_INFO: 'app:get-info',
+  APP_CHECK_UPDATES: 'app:check-updates',
+  APP_GET_ICON: 'app:get-icon',
+  APP_CHECK_ACCESSIBILITY: 'app:check-accessibility',
+  APP_OPEN_ACCESSIBILITY: 'app:open-accessibility',
 
   // Bug Report
   BUGREPORT_SEND_EMAIL: 'bugreport:send-email',
@@ -222,5 +234,17 @@ export const IPC_SEND = {
   TODOIST_STATUS_CHANGED: 'todoist:status-changed',
 
   // Mic Mute
-  MIC_MUTE_CHANGED: 'mic:mute-changed'
+  MIC_MUTE_CHANGED: 'mic:mute-changed',
+
+  // One-app panel (v2): main asks the panel to show a route (e.g. 'quickboard')
+  PANEL_NAVIGATE: 'panel:navigate',
+  PANEL_VISIBILITY: 'panel:visibility'
 } as const
+
+/** What the renderer asks APP_GET_ICON for: an app bundle id, an app name, a file path or a link. */
+export interface AppIconQuery {
+  bundleId?: string
+  name?: string
+  path?: string
+  url?: string
+}
