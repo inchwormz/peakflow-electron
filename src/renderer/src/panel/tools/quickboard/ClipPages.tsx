@@ -6,11 +6,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { RouteParams } from '../../types'
-import { createLatest } from '@shared/latest-only'
 import { invoke, isMac, useInvoke, usePanelVisible } from '../../hooks'
 import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { Btn, Empty, Gap, Grp, Hero, Note, Row } from '../../kit'
 import { useNav } from '../../nav'
+import { createAiRun, type AiResult } from './ai-run'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, type Clip, type Pipeline, type TransformStep } from './store'
 
 function useClip(id: string): Clip | null | undefined {
@@ -188,44 +188,29 @@ export function AiRun({ params }: { params: RouteParams }): React.JSX.Element {
   const clip = useClip(params.id)
   const [state, setState] = useState<{ phase: 'run' | 'error'; error: string }>({ phase: 'run', error: '' })
   const [attempt, setAttempt] = useState(0)
-  const ran = useRef<string>('')
-  // Only the AI run still on screen may paste: leaving the page or closing the panel cancels it
-  const latest = useRef(createLatest()).current
   const visible = usePanelVisible()
-  useEffect(() => () => latest.cancel(), [latest])
-  useEffect(() => {
-    if (!visible && latest) {
-      latest.cancel()
-      if (ran.current) {
-        ran.current = ''
-        nav.go('quickboard')
-      }
-    }
-  }, [visible, latest, nav])
   const lang = params.lang === '-' ? undefined : params.lang
   const action = AI_ACTIONS.find((a) => a.type === params.type)
   const doing = params.type === 'translate' ? `Translating to ${lang}…` : action?.doing ?? 'Working…'
 
+  // Start/paste rules live in ai-run.ts: only while the panel is open on this page
+  const navRef = useRef(nav)
+  navRef.current = nav
+  const [run] = useState(() =>
+    createAiRun({
+      transform: (type, text, l) => invoke<AiResult>(IPC_INVOKE.CLIPBOARD_AI_TRANSFORM, type, text, l),
+      paste: (id, text) => {
+        invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, id, false, text).catch(() => {})
+      },
+      hide: () => navRef.current.hide(),
+      leave: () => navRef.current.go('quickboard'),
+      setState
+    })
+  )
+  useEffect(() => () => run.dispose(), [run])
   useEffect(() => {
-    if (!clip || clip.type !== 'text') return
-    const key = `${clip.id}|${params.type}|${lang}|${attempt}`
-    if (ran.current === key) return
-    ran.current = key
-    setState({ phase: 'run', error: '' })
-    const isCurrent = latest.next()
-    invoke<{ ok: boolean; result?: string; error?: string }>(IPC_INVOKE.CLIPBOARD_AI_TRANSFORM, params.type, clipText(clip), lang)
-      .then((res) => {
-        if (!isCurrent()) return
-        if (res?.ok && res.result) {
-          nav.hide()
-          invoke(IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE, clip.id, false, res.result).catch(() => {})
-          nav.go('quickboard')
-        } else setState({ phase: 'error', error: res?.error ?? 'failed' })
-      })
-      .catch(() => {
-        if (isCurrent()) setState({ phase: 'error', error: 'network_error' })
-      })
-  }, [clip, params.type, lang, attempt, nav, latest])
+    run.update({ clip, text: clip && clip.type === 'text' ? clipText(clip) : '', type: params.type, lang, attempt, visible })
+  }, [run, clip, params.type, lang, attempt, visible])
 
   if (clip === undefined) return <div style={{ height: 160 }} />
   if (clip === null || clip.type !== 'text') return <Missing />
