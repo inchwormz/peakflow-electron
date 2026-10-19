@@ -96,6 +96,13 @@ func checkAccessibility() -> Bool {
 // MARK: - Active window (focused)
 
 func getActiveWindow() -> WindowInfo? {
+    // This helper blocks on stdin and never runs an event loop, so NSWorkspace
+    // never receives its "active app changed" notifications and
+    // frontmostApplication stays stuck on whichever app was in front when the
+    // helper started (usually PeakFlow itself). FocusDim then found no window
+    // to cut out and dimmed the whole screen. Let the run loop deliver those
+    // pending notifications before every read.
+    RunLoop.current.run(mode: .default, before: Date())
     guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
     let pid = frontApp.processIdentifier
     let bundleId = frontApp.bundleIdentifier ?? ""

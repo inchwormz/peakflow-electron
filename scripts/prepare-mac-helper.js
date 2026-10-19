@@ -53,6 +53,9 @@ function findBuiltHelper() {
 
 function copyHelper(sourcePath) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  // Replace, don't overwrite: writing over a signed Mach-O in place keeps the
+  // kernel's cached signature, and macOS then kills the new binary (exit 137).
+  fs.rmSync(outputPath, { force: true })
   fs.copyFileSync(sourcePath, outputPath)
   fs.chmodSync(outputPath, 0o755)
   console.log(`[prepare-mac-helper] Copied helper to ${outputPath}`)
