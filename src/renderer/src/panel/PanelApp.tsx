@@ -87,6 +87,12 @@ export function PanelApp(): React.JSX.Element {
   )
 
   // Main asks for a route (tray menu, ⌥⌘1–4, the mini timer)
+  // Tell main which page is showing, so a tool's shortcut can hide the panel
+  // when that tool is already on screen and switch to it otherwise
+  useEffect(() => {
+    invoke(IPC_INVOKE.PANEL_ROUTE, route).catch(() => {})
+  }, [route])
+
   useIpcEvent(IPC_SEND.PANEL_NAVIGATE, (r) => {
     if (typeof r === 'string' && matchRoute(ALL_ROUTES, r)) go(r)
   })

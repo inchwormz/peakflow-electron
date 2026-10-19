@@ -179,6 +179,8 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_SET_MINI: 'liquidfocus:set-mini',
   /** v2 mini timer: move it while you drag ({x, y, done}) */
   LIQUIDFOCUS_MINI_MOVE: 'liquidfocus:mini-move',
+  /** v2 panel: the renderer reports its current route (so hotkeys know which tool is showing) */
+  PANEL_ROUTE: 'panel:route',
   // v2 liquidfocus: restart the current phase (panel "Reset")
   LIQUIDFOCUS_RESTART_PHASE: 'liquidfocus:restart-phase',
 

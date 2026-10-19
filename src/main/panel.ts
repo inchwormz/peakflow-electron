@@ -11,7 +11,7 @@
 import { BrowserWindow, screen, type Rectangle } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { SystemWindowId } from '@shared/tool-ids'
+import { SystemWindowId, isPanelTool } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 
 export const PANEL_WIDTH = 340
@@ -28,6 +28,8 @@ let lastHiddenAt = 0
 /** While > 0 the panel stays open on blur (native dialogs opened from it). */
 let blurHold = 0
 let quitting = false
+/** The tool the panel is showing ('focusdim', …) or null on an app-wide page */
+let currentTool: string | null = null
 
 /** Where the tray icon is, so the panel can sit under it. */
 export function setPanelAnchor(fn: () => Rectangle | null): void {
@@ -148,6 +150,7 @@ export function showPanel(route?: string): void {
   if (!getPanel()) panel = create()
   const win = panel!
   if (route) {
+    setPanelRoute(route)
     if (rendererReady) send(win, IPC_SEND.PANEL_NAVIGATE, route)
     else pendingRoute = route
   }
@@ -185,6 +188,17 @@ export function resizePanel(h: number): void {
   if (!win) return
   if (win.isVisible()) position(win)
   else win.setSize(PANEL_WIDTH, height)
+}
+
+/** Record the panel's route (from showPanel or the renderer's own navigation). */
+export function setPanelRoute(route: string): void {
+  const tool = route.split('/')[0]
+  currentTool = isPanelTool(tool) ? tool : null
+}
+
+/** The tool on screen in the panel, or null when it's hidden or on an app-wide page. */
+export function visiblePanelTool(): string | null {
+  return isPanelVisible() ? currentTool : null
 }
 
 export function isPanelVisible(): boolean {

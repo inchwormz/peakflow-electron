@@ -11,7 +11,7 @@
 
 import { globalShortcut } from 'electron'
 import { ToolId, DEFAULT_HOTKEYS, PANEL_TOOLS, HIDDEN_TOOLS, isPanelTool } from '@shared/tool-ids'
-import { hidePanel, isPanelVisible } from './panel'
+import { hidePanel, visiblePanelTool } from './panel'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
 import { toggleMicMute } from './services/mic-mute'
@@ -26,8 +26,9 @@ const hotkeyRegistry = new Map<string, string>()
  * Toggle a tool window: close it if open, create it if not.
  */
 function toggleTool(toolId: ToolId): void {
-  // v2: panel tools toggle the one-app panel instead of their own window
-  if (isPanelTool(toolId) && isPanelVisible()) {
+  // v2: panel tools use the one-app panel. Its shortcut hides the panel only
+  // when the panel is already showing that tool; otherwise it switches to it.
+  if (isPanelTool(toolId) && visiblePanelTool() === toolId) {
     hidePanel()
     return
   }
@@ -93,11 +94,8 @@ function registerSwitcherHotkeys(): void {
   PANEL_TOOLS.forEach((toolId, i) => {
     const accel = `Alt+CommandOrControl+${i + 1}`
     if (globalShortcut.isRegistered(accel)) return
-    registerSingleHotkey(`switch:${toolId}`, accel, () => {
-      openToolWithAccessCheck(toolId).catch((err) => {
-        console.error(`[PeakFlow] Switcher hotkey failed for ${toolId}:`, err)
-      })
-    })
+    // Same rule as the tool shortcuts: hide if this tool is already showing, else switch to it
+    registerSingleHotkey(`switch:${toolId}`, accel, () => toggleTool(toolId))
   })
 }
 
