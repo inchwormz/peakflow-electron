@@ -927,11 +927,12 @@ export function registerIpcHandlers(): void {
       lf.recordInterruption()
       const cfg = getConfig(ToolId.LiquidFocus) as LiquidFocusConfig
       if ((cfg.focus_away_action ?? 'reset') === 'reset' && lf.isFocusRunning()) {
-        // Tell the windows why first, so the mini shows the notice instead of closing on idle
+        // The reset itself carries the notice (TimerState.awayReset), so a mini that
+        // is created or still loading reads it with its first state. The panel gets a toast.
         const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
-        const targets = [mini, getPanel()].filter((w): w is BrowserWindow => !!w && !w.isDestroyed())
-        targets.forEach((w) => w.webContents.send(IPC_SEND.LIQUIDFOCUS_AWAY_RESET))
         lf.resetFocusAfterAway()
+        const panelWin = getPanel()
+        if (panelWin && !panelWin.webContents.isLoading()) panelWin.webContents.send(IPC_SEND.LIQUIDFOCUS_AWAY_RESET)
         // Keep (or put) the mini on screen with the notice, unless the panel shows Liquid Focus
         if (!(isPanelVisible() && visiblePanelTool() === ToolId.LiquidFocus)) {
           layoutMini(mini ?? createToolWindow(SystemWindowId.LiquidFocusMini), true)
@@ -1094,6 +1095,8 @@ export function registerIpcHandlers(): void {
     if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || Math.abs(p.x) > 1e5 || Math.abs(p.y) > 1e5) return
     moveMini(win, Math.round(p.x), Math.round(p.y), !!p.done)
   })
+
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_DISMISS_AWAY, (): TimerState => getLiquidFocusService().dismissAwayNotice())
 
   // v2 liquidfocus: restart the current phase (no input)
   ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE, (): Promise<TimerState> => {

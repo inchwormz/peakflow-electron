@@ -95,6 +95,8 @@ export const lfStop = (): Promise<void> => call<TimerState>(IPC_INVOKE.LIQUIDFOC
 /** Ends the current phase now (a skipped focus session still counts, as before). */
 export const lfSkip = (): Promise<void> => call<TimerState>(IPC_INVOKE.LIQUIDFOCUS_SKIP).then(patchTimer).catch(() => {})
 /** "Reset": restart the current phase from its full length. */
+/** Close on the mini's "Looked away" card. */
+export const lfDismissAway = (): Promise<void> => call<TimerState>(IPC_INVOKE.LIQUIDFOCUS_DISMISS_AWAY).then(patchTimer).catch(() => {})
 export const lfRestart = (): Promise<void> => call<TimerState>(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE).then(patchTimer).catch(() => {})
 
 export const setMini = (open: boolean, card = false): void => {

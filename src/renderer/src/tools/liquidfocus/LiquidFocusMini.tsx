@@ -28,9 +28,9 @@ import '../../panel/panel.css'
 import { Ring } from '../../panel/kit'
 import { Icon } from '../../panel/icons'
 import { fmtClock } from '../../panel/hooks'
-import { activeTask, lfPause, lfSkip, lfStart, lfStop, phaseFrac, setMini, useLF, type TimerState } from '../../panel/tools/liquidfocus/store'
+import { miniStep, type Card } from './mini-card'
+import { activeTask, lfDismissAway, lfPause, lfSkip, lfStart, lfStop, phaseFrac, setMini, useLF, type TimerState } from '../../panel/tools/liquidfocus/store'
 
-type Card = null | 'done' | 'cycle' | 'breakover' | 'away'
 
 type Theme = 'dark' | 'light'
 /** The layout's own size; the window is this times liquidfocus.mini_size and the content is scaled to fit */
@@ -45,18 +45,6 @@ function fmtMinutes(mins: number): string {
   return m ? `${h} h ${m} min` : `${h} h`
 }
 
-/**
- * Which card a state change calls for: a card, null (a phase is running: show
- * the pill) or undefined (no change).
- */
-function cardFor(prev: TimerState, next: TimerState): Card | undefined {
-  if (next.status !== 'idle') return null
-  if (prev.mode === 'work' && next.mode !== 'work' && next.pomodorosCompleted > prev.pomodorosCompleted) {
-    return next.mode === 'long_break' ? 'cycle' : 'done'
-  }
-  if (prev.mode !== 'work' && next.mode === 'work' && prev.status !== 'idle') return 'breakover'
-  return undefined
-}
 
 /** The .mini look at its base size, without its floating position and shadow; scaled to the window. */
 function boxStyle(card: boolean, scale: number): CSSProperties {
@@ -180,44 +168,22 @@ export function LiquidFocusMini(): React.JSX.Element {
   const scale = useScale(!!card)
   const [theme, toggleTheme] = useTheme()
   const det = useDetectorState()
-  // The away notice must survive the idle state that follows it (the effect below reads this)
   const cardRef = useRef<Card>(null)
   cardRef.current = card
-  useEffect(
-    () =>
-      window.peakflow.on(IPC_SEND.LIQUIDFOCUS_AWAY_RESET, () => {
-        cardRef.current = 'away'
-        setCard('away')
-        setMini(true, true)
-      }),
-    []
-  )
 
-  // Watch transitions: grow into the break prompt, shrink back when a phase starts, close after Stop
+  // Watch timer states: grow into a prompt, shrink back when a phase starts,
+  // close after Stop. Rules (incl. the look-away notice from main) in mini-card.ts.
   useEffect(() => {
     if (!t) return
     const p = prev.current
     prev.current = t
-    if (!p) {
-      if (t.status === 'idle') setMini(false)
-      return
+    const step = miniStep(p, t, cardRef.current)
+    if (step.card !== undefined) {
+      cardRef.current = step.card
+      setCard(step.card)
     }
-    const c = cardFor(p, t)
-    if (c === null) {
-      if (cardRef.current) {
-        setCard(null)
-        setMini(true, false)
-      }
-      return
-    }
-    if (c) {
-      setCard(c)
-      setMini(true, true)
-      return
-    }
-    // Idle with no prompt showing (stopped or reset elsewhere): the mini isn't needed
-    if (t.status === 'idle' && !cardRef.current) setMini(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (step.window === 'close') setMini(false)
+    else if (step.window) setMini(true, step.window === 'card')
   }, [t])
 
   // The timer's colour right to the window edges
@@ -276,10 +242,8 @@ export function LiquidFocusMini(): React.JSX.Element {
       primary = 'Start again'
       secondary = 'Close'
       onPrimary = () => void lfStart()
-      onSecondary = () => {
-        setCard(null)
-        setMini(false)
-      }
+      // Clears main's notice; the idle state that follows closes the mini
+      onSecondary = () => void lfDismissAway()
     } else if (card === 'done') {
       title = 'Focus session done'
       line = `That’s ${inCycle} of ${n} today.`

@@ -34,6 +34,8 @@ export interface TimerState {
   sessionsBeforeLong: number
   /** Active task index (-1 = none) */
   activeTaskIndex: number
+  /** Focus detection reset the session; the mini shows "Looked away" until Start again / Close */
+  awayReset?: boolean
 }
 
 export interface LiquidFocusTask {
@@ -81,6 +83,8 @@ class LiquidFocusService {
   private total = 25 * 60
   private pomodorosCompleted = 0
   private activeTaskIndex = -1
+  /** Kept here (not only pushed) so a mini that opens or loads late still shows the notice */
+  private awayReset = false
 
   constructor() {
     this.store = new Store({ name: 'liquidfocus-data', clearInvalidConfig: true })
@@ -147,13 +151,15 @@ class LiquidFocusService {
       total: this.total,
       pomodorosCompleted: this.pomodorosCompleted,
       sessionsBeforeLong: cfg.sessions_before_long,
-      activeTaskIndex: this.activeTaskIndex
+      activeTaskIndex: this.activeTaskIndex,
+      awayReset: this.awayReset
     }
   }
 
   start(): TimerState {
     if (this.status === 'running') return this.getTimerState()
 
+    this.awayReset = false
     this.status = 'running'
     this.tickInterval = setInterval(() => this.tick(), 1000)
     this.broadcastState()
@@ -173,6 +179,7 @@ class LiquidFocusService {
   }
 
   reset(): TimerState {
+    this.awayReset = false
     this.stopTicking()
     this.status = 'idle'
     this.mode = 'work'
@@ -186,6 +193,7 @@ class LiquidFocusService {
   }
 
   skip(): TimerState {
+    this.awayReset = false
     this.stopTicking()
     this.finishPhase()
     return this.getTimerState()
@@ -460,8 +468,18 @@ class LiquidFocusService {
     this.status = 'idle'
     this.total = this.getConfigSafe().work_duration * 60
     this.remaining = this.total
+    this.awayReset = true
     console.log('[LiquidFocus] Looked away during focus: timer reset')
     this.broadcastState()
+    return this.getTimerState()
+  }
+
+  /** The mini's Close on the "Looked away" card. */
+  dismissAwayNotice(): TimerState {
+    if (this.awayReset) {
+      this.awayReset = false
+      this.broadcastState()
+    }
     return this.getTimerState()
   }
 

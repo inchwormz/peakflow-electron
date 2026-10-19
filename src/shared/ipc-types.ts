@@ -187,6 +187,8 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_DETECTOR_STATUS: 'liquidfocus:detector-status',
   // v2 liquidfocus: restart the current phase (panel "Reset")
   LIQUIDFOCUS_RESTART_PHASE: 'liquidfocus:restart-phase',
+  /** v2: Close on the mini's "Looked away" card clears main's notice */
+  LIQUIDFOCUS_DISMISS_AWAY: 'liquidfocus:dismiss-away',
 
   // Shell
   SHELL_OPEN_EXTERNAL: 'shell:open-external',
