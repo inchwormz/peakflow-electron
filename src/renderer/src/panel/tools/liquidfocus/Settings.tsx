@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
-import { ToolId } from '@shared/tool-ids'
+import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
 import { invoke, useInvoke, useToolConfig } from '../../hooks'
 import { Banner, Btn, Gap, Grp, Hero, LinkBtn, Note, NumIn, Picker, Primary, Row, Toggle } from '../../kit'
@@ -28,9 +28,14 @@ interface TodoistProject {
 
 /* ─── settings home ──────────────────────────────────────────────────────── */
 
+// Todoist is out of scope for v2 (TODOIST_ENABLED); its status isn't asked for while off
+const useTodoistStatus = TODOIST_ENABLED
+  ? (): TodoistStatus | undefined => useInvoke<TodoistStatus>(IPC_INVOKE.TODOIST_GET_STATUS)[0]
+  : (): TodoistStatus | undefined => undefined
+
 export function Settings(): React.JSX.Element {
   const [cfg] = useCfg()
-  const [todo] = useInvoke<TodoistStatus>(IPC_INVOKE.TODOIST_GET_STATUS)
+  const todo = useTodoistStatus()
   if (!cfg) return <div style={{ height: 180 }} />
   const n = cfg.distraction_sites?.length ?? 0
   return (
@@ -39,7 +44,9 @@ export function Settings(): React.JSX.Element {
       <Row label="Sounds and auto-start" go="liquidfocus/settings/behaviour" />
       <Row label="Focus detection" value={cfg.focus_detection_enabled ? 'On' : 'Off'} go="liquidfocus/settings/behaviour" />
       <Row label="Blocked sites" value={`${n} ${n === 1 ? 'site' : 'sites'}`} go="liquidfocus/settings/sites" />
-      <Row label="Todoist" value={todo ? (todo.connected ? 'Connected' : 'Not connected') : ''} go="liquidfocus/settings/todoist" />
+      {TODOIST_ENABLED ? (
+        <Row label="Todoist" value={todo ? (todo.connected ? 'Connected' : 'Not connected') : ''} go="liquidfocus/settings/todoist" />
+      ) : null}
     </Grp>
   )
 }

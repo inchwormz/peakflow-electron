@@ -11,7 +11,7 @@ import { IPC_INVOKE } from '@shared/ipc-types'
 import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig } from '@shared/config-schemas'
-import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { ToolId, SystemWindowId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
@@ -956,49 +956,51 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // ─── Todoist ──────────────────────────────────────────────────────────────
+  // ─── Todoist (off in v2: TODOIST_ENABLED) ────────────────────────────────
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_AUTHENTICATE,
-    async (): Promise<TodoistStatus> => {
-      return getTodoistService().authenticate()
-    }
-  )
+  if (TODOIST_ENABLED) {
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_AUTHENTICATE,
+      async (): Promise<TodoistStatus> => {
+        return getTodoistService().authenticate()
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_DISCONNECT,
-    (): TodoistStatus => {
-      return getTodoistService().disconnect()
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_DISCONNECT,
+      (): TodoistStatus => {
+        return getTodoistService().disconnect()
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_GET_STATUS,
-    (): TodoistStatus => {
-      return getTodoistService().getStatus()
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_GET_STATUS,
+      (): TodoistStatus => {
+        return getTodoistService().getStatus()
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_GET_TASKS,
-    async (_event, projectId?: string): Promise<TodoistTask[]> => {
-      return getTodoistService().getTasks(projectId)
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_GET_TASKS,
+      async (_event, projectId?: string): Promise<TodoistTask[]> => {
+        return getTodoistService().getTasks(projectId)
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_COMPLETE_TASK,
-    async (_event, taskId: string): Promise<boolean> => {
-      return getTodoistService().completeTask(taskId)
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_COMPLETE_TASK,
+      async (_event, taskId: string): Promise<boolean> => {
+        return getTodoistService().completeTask(taskId)
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_GET_PROJECTS,
-    async (): Promise<TodoistProject[]> => {
-      return getTodoistService().getProjects()
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_GET_PROJECTS,
+      async (): Promise<TodoistProject[]> => {
+        return getTodoistService().getProjects()
+      }
+    )
+  }
 
   // ─── Mic Mute ─────────────────────────────────────────────────────────────
 

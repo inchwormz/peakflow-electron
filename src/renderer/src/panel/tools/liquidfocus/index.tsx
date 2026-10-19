@@ -7,7 +7,7 @@
  * liquidfocus/settings(/durations, /behaviour, /sites, /todoist).
  */
 
-import { ToolId } from '@shared/tool-ids'
+import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { LiquidFocusConfig } from '@shared/config-schemas'
 import type { PanelToolModule } from '../../types'
 import { fmtClock, useToolConfig } from '../../hooks'
@@ -122,6 +122,8 @@ export const liquidfocusTool: PanelToolModule = {
     'liquidfocus/settings/durations': { kind: 'sub', back: 'liquidfocus/settings', title: 'Durations', view: Durations },
     'liquidfocus/settings/behaviour': { kind: 'sub', back: 'liquidfocus/settings', title: 'Sounds and detection', view: Behaviour },
     'liquidfocus/settings/sites': { kind: 'sub', back: 'liquidfocus/settings', title: 'Blocked sites', view: Sites },
-    'liquidfocus/settings/todoist': { kind: 'sub', back: 'liquidfocus/settings', title: 'Todoist', view: Todoist }
+    ...(TODOIST_ENABLED
+      ? { 'liquidfocus/settings/todoist': { kind: 'sub' as const, back: 'liquidfocus/settings', title: 'Todoist', view: Todoist } }
+      : {})
   }
 }

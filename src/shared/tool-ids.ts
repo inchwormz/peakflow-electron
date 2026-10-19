@@ -60,6 +60,14 @@ export const PANEL_TOOLS: readonly ToolId[] = [
 /** Tools hidden from every surface in v2 (code kept). */
 export const HIDDEN_TOOLS: readonly ToolId[] = [ToolId.MeetReady, ToolId.SoundSplit]
 
+/**
+ * Todoist sync for Liquid Focus. Out of scope for v2 (John, 19 Oct 2026: "we
+ * dont need a todoist integration, just leave it out for now"). Off hides the
+ * settings page, task import and its IPC, and the service doesn't start.
+ * The code is kept; set true to bring it back.
+ */
+export const TODOIST_ENABLED = false
+
 export function isPanelTool(id: string): boolean {
   return (PANEL_TOOLS as readonly string[]).includes(id)
 }

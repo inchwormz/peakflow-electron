@@ -35,7 +35,7 @@ import { setTrayTitle } from './tray'
 import { getLiquidFocusService } from './services/liquidfocus'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
 import { destroyActiveWindowHelper } from './native/active-window'
-import { ToolId } from '@shared/tool-ids'
+import { ToolId, TODOIST_ENABLED } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ if (!gotLock) {
     // services (calendar auto-popup, audio sidecar) don't start. Code is kept.
 
     // Lightweight / system-level — always safe to init
-    initTodoist()
+    if (TODOIST_ENABLED) initTodoist()
     initExtensionServer()
     initAutoUpdater()
 
@@ -267,7 +267,7 @@ if (!gotLock) {
     setPanelQuitting(true)
     console.log('[PeakFlow] Shutting down...')
     destroyExtensionServer()
-    destroyTodoist()
+    if (TODOIST_ENABLED) destroyTodoist()
     destroySoundSplit()
     destroyLiquidFocus()
     destroyScreenSlap()

@@ -1,22 +1,24 @@
 /**
  * Liquid Focus tasks: add (with #tag category, pomodoro estimate and due),
- * grouped by category, tick to complete (also ticks it off in Todoist),
+ * grouped by category, tick to complete (also ticks it off in Todoist when TODOIST_ENABLED),
  * click to focus on it, right-click to delete, collapsible Completed list.
  * Behaviour follows the old TaskList.tsx / LiquidFocus.tsx.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
+import { TODOIST_ENABLED } from '@shared/tool-ids'
 import { invoke, useInvoke } from '../../hooks'
 import { Btn, Empty, Grp, LinkBtn, Note, Row, V } from '../../kit'
 import { Icon } from '../../icons'
 import { useNav } from '../../nav'
 import { importFromTodoist, pickTaskAndStart, setTasks, useImporting, useLF, type LiquidFocusTask } from './store'
 
-function useTodoistConnected(): boolean {
-  const [s] = useInvoke<{ connected: boolean }>(IPC_INVOKE.TODOIST_GET_STATUS)
-  return !!s?.connected
-}
+// Todoist is out of scope for v2 (TODOIST_ENABLED): while off it never counts as
+// connected, so the import link and the first-visit import stay hidden
+const useTodoistConnected = TODOIST_ENABLED
+  ? (): boolean => !!useInvoke<{ connected: boolean }>(IPC_INVOKE.TODOIST_GET_STATUS)[0]?.connected
+  : (): boolean => false
 
 async function runImport(toast: (m: string) => void): Promise<void> {
   const n = await importFromTodoist()
@@ -159,7 +161,7 @@ export function Tasks(): React.JSX.Element {
     }
     if (value) {
       nav.toast('Done — nice')
-      if (t.todoistId) invoke(IPC_INVOKE.TODOIST_COMPLETE_TASK, t.todoistId).catch((err) => console.warn('[LiquidFocus] Todoist sync failed:', err))
+      if (TODOIST_ENABLED && t.todoistId) invoke(IPC_INVOKE.TODOIST_COMPLETE_TASK, t.todoistId).catch((err) => console.warn('[LiquidFocus] Todoist sync failed:', err))
     }
   }
 
@@ -213,7 +215,7 @@ export function Tasks(): React.JSX.Element {
                   label={
                     <span style={on ? { fontWeight: 600 } : undefined}>
                       {t.name}
-                      {t.todoistId && t.category !== 'Todoist' ? (
+                      {TODOIST_ENABLED && t.todoistId && t.category !== 'Todoist' ? (
                         <>
                           {' '}
                           <span className="pro" style={{ fontWeight: 600 }}>
