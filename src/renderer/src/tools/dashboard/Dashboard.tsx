@@ -501,7 +501,8 @@ function ToolCard({
           onMouseEnter={(e) => { e.currentTarget.style.background = tool.accent + '35' }}
           onMouseLeave={(e) => { e.currentTarget.style.background = tool.accent + '20' }}
         >
-          {toolLicensed ? 'Open' : 'Try Free — 14 days'}
+          {/* v2: no trial to start (one 30-day trial runs from first launch) */}
+          {toolLicensed ? 'Open' : 'Turn on'}
         </button>
       )}
     </div>

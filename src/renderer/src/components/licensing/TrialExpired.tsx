@@ -15,7 +15,8 @@ interface TrialExpiredProps {
 }
 
 /**
- * Full-screen overlay shown when the user's 14-day trial has expired
+ * Legacy (v1 tool windows; v2 tools use the panel's trial-ended screen).
+ * Full-screen overlay shown when the user's 30-day trial has expired
  * or when their license doesn't cover the requested tool.
  */
 export function TrialExpired({ toolName, deniedTool, reason, onActivated }: TrialExpiredProps): React.JSX.Element {
@@ -168,7 +169,7 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
         >
           {isToolGated
             ? `Your license doesn't cover ${deniedToolName ?? 'this tool'}. Subscribe to get all tools, or buy it separately.`
-            : `Your 14-day free trial of ${toolName ? `PeakFlow ${toolName}` : 'PeakFlow'} has ended. Subscribe to keep using all tools, or buy individual tools.`
+            : `Your 30-day free trial of ${toolName ? `PeakFlow ${toolName}` : 'PeakFlow'} has ended. Subscribe to keep using all tools, or buy individual tools.`
           }
         </p>
 
@@ -190,7 +191,7 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
             e.currentTarget.style.background = 'var(--accent)'
           }}
         >
-          All tools &mdash; $5/month
+          All tools &mdash; $2.99/month
         </button>
 
         {/* One-time purchase hint */}
