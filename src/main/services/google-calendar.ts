@@ -359,26 +359,24 @@ class CalendarService {
   }
 
   /**
-   * Start periodic polling for calendar events.
+   * Start periodic polling for calendar events. `allowed` (ScreenSlap's access
+   * check) runs before every fetch; a false answer skips that fetch.
    */
-  startPolling(intervalMinutes: number = 10): void {
+  startPolling(intervalMinutes: number = 10, allowed?: () => Promise<boolean>): void {
     this.stopPolling()
 
-    // Initial fetch if connected
-    if (this.status.connected) {
-      this.fetchEvents().catch((err) => {
-        console.error('[Calendar] Initial fetch error:', err)
+    const poll = async (label: string): Promise<void> => {
+      if (!this.status.connected) return
+      if (allowed && !(await allowed())) return
+      await this.fetchEvents().catch((err) => {
+        console.error(`[Calendar] ${label} error:`, err)
       })
     }
 
+    // Initial fetch, then every interval
+    void poll('Initial fetch')
     const intervalMs = intervalMinutes * 60_000
-    this.fetchInterval = setInterval(() => {
-      if (this.status.connected) {
-        this.fetchEvents().catch((err) => {
-          console.error('[Calendar] Polling fetch error:', err)
-        })
-      }
-    }, intervalMs)
+    this.fetchInterval = setInterval(() => void poll('Polling fetch'), intervalMs)
 
     console.log(`[Calendar] Polling started (every ${intervalMinutes} min)`)
   }

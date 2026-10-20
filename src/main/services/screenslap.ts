@@ -55,28 +55,45 @@ export interface AlertInfo {
 // ─── Service ────────────────────────────────────────────────────────────────
 
 class ScreenSlapService {
+  /** Meetings whose alert was shown */
   private alertedEvents = new Set<string>()
+  /** Meetings whose access check is in flight (not shown yet) */
+  private pendingEvents = new Set<string>()
   private snoozedEvents = new Map<string, number>() // eventId -> snooze-until timestamp
   private checkInterval: ReturnType<typeof setInterval> | null = null
   private alertWindows: BrowserWindow[] = []
   private monitoring = false
   private activeAlert: AlertInfo | null = null
   private lastFetch: string | null = null
-  private starting = false
+  /** Bumped by stop/destroy, so a start still waiting for its access check is dropped */
+  private startToken = 0
 
   /**
    * Start monitoring for upcoming calendar events, if ScreenSlap is allowed
    * (an expired, unlicensed trial gets no polling and no alerts).
    */
   start(): Promise<void> {
-    if (this.monitoring || this.starting) return Promise.resolve()
-    this.starting = true
+    if (this.monitoring) return Promise.resolve()
+    const token = ++this.startToken
     return withAccess(
-      () => this.startMonitoring(),
+      () => {
+        if (token === this.startToken) this.startMonitoring()
+      },
       () => console.log('[ScreenSlap] No access (trial ended) — not monitoring')
-    ).finally(() => {
-      this.starting = false
-    })
+    )
+  }
+
+  /**
+   * Access re-check before every calendar poll: once the trial ends without a
+   * licence, monitoring stops (a licence activation starts it again).
+   */
+  private pollAllowed = async (): Promise<boolean> => {
+    const ok = await withAccess(() => true, () => false)
+    if (!ok && this.monitoring) {
+      console.log('[ScreenSlap] No access (trial ended) — stopping monitoring')
+      this.stop()
+    }
+    return ok
   }
 
   /** Begins the calendar polling and alert checking loops. */
@@ -93,7 +110,7 @@ class ScreenSlapService {
     }
 
     // Start calendar polling (includes initial fetch + periodic refresh)
-    calendar.startPolling(config.fetch_interval_minutes)
+    calendar.startPolling(config.fetch_interval_minutes, this.pollAllowed)
 
     // Start the alert check loop (checks cached events frequently)
     this.checkInterval = setInterval(() => {
@@ -110,6 +127,7 @@ class ScreenSlapService {
    * Stop monitoring.
    */
   stop(): void {
+    this.startToken++ // a start waiting for access must not begin after this
     if (this.checkInterval) {
       clearInterval(this.checkInterval)
       this.checkInterval = null
@@ -180,7 +198,7 @@ class ScreenSlapService {
     const calendar = getCalendarService()
 
     // Restart polling with new interval
-    calendar.startPolling(config.fetch_interval_minutes)
+    calendar.startPolling(config.fetch_interval_minutes, this.pollAllowed)
 
     // Restart alert check loop with new check interval
     if (this.checkInterval) {
@@ -226,6 +244,7 @@ class ScreenSlapService {
   destroy(): void {
     this.stop()
     this.alertedEvents.clear()
+    this.pendingEvents.clear()
     this.snoozedEvents.clear()
     this.activeAlert = null
     console.log('[ScreenSlap] Service destroyed')
@@ -256,6 +275,7 @@ class ScreenSlapService {
     for (const event of events) {
       if (event.allDay) continue
       if (this.alertedEvents.has(event.id)) continue
+      if (this.pendingEvents.has(event.id)) continue
       if (this.snoozedEvents.has(event.id)) continue
 
       const eventStart = new Date(event.startTime).getTime()
@@ -266,12 +286,21 @@ class ScreenSlapService {
       // (covers snoozed events that pass their start time)
       if (minutesUntil <= config.alert_minutes_before && now < eventEnd) {
         // Time to alert, if ScreenSlap is still allowed (the trial may have
-        // ended since monitoring started). Marked first so the check runs once.
-        this.alertedEvents.add(event.id)
+        // ended since monitoring started). Pending while the check runs; only
+        // marked alerted once shown, so a meeting denied now can still alert
+        // after a licence is activated.
+        this.pendingEvents.add(event.id)
+        const token = this.startToken
         void withAccess(
-          () => this.triggerAlert(event, Math.max(0, minutesUntil)),
-          () => console.log('[ScreenSlap] Alert skipped: no access (trial ended)')
-        )
+          () => {
+            // Stopped while the check ran: don't show it
+            if (token === this.startToken) this.triggerAlert(event, Math.max(0, minutesUntil))
+          },
+          () => {
+            console.log('[ScreenSlap] Alert skipped: no access (trial ended) — stopping monitoring')
+            this.stop()
+          }
+        ).finally(() => this.pendingEvents.delete(event.id))
         break // Only one alert at a time
       }
     }

@@ -1,17 +1,20 @@
 /**
  * Check: ScreenSlap only monitors the calendar and shows meeting alerts while
- * it has access (trial or licence). An expired, unlicensed user with a
- * connected calendar gets no polling and no alerts (Sol trial review T3).
- * Loads the real src/main/services/screenslap.ts and access-guard.ts;
- * electron, the calendar, config and the access answer are fakes.
+ * it has access (trial or licence), including when access changes while the
+ * app runs (Sol trial review T3, re-review T6, T7). Loads the real
+ * src/main/services/screenslap.ts and access-guard.ts; electron, the calendar,
+ * config and the access answer are fakes.
  * Run: node scripts/checks/screenslap-access.check.mts
  */
 import assert from 'node:assert/strict'
 import { installTsHooks, fake, srcUrl } from './fixtures/ts-hooks.mjs'
 
-type S = { allowed: boolean; windows: number; polling: number; events: unknown[] }
+type S = {
+  allowed: boolean; windows: number; polling: number; stops: number; events: unknown[]
+  pollAllowed: null | (() => Promise<boolean>); gate: null | Promise<void>
+}
 const g = globalThis as unknown as { __ss: S }
-g.__ss = { allowed: false, windows: 0, polling: 0, events: [] }
+g.__ss = { allowed: false, windows: 0, polling: 0, stops: 0, events: [], pollAllowed: null, gate: null }
 installTsHooks({
   electron: fake(`
     const noop = () => {}
@@ -25,11 +28,15 @@ installTsHooks({
   '@electron-toolkit/utils': fake('export const is = { dev: false }'),
   './config-store': fake(`export const getConfig = () => ({ alert_minutes_before: 2, alert_check_seconds: 3600,
     fetch_interval_minutes: 60, alert_duration_seconds: 3600, monitor_index: -1, sound_enabled: false })`),
-  './google-calendar': fake(`export const getCalendarService = () => ({
-    getStatus: () => ({ connected: true }),
-    startPolling: () => { globalThis.__ss.polling++ }, stopPolling: () => {},
-    getEvents: () => globalThis.__ss.events })`),
-  '../security/access-check': fake(`export const checkAccess = async (tool) => ({ allowed: tool === 'screenslap' && globalThis.__ss.allowed, message: 'x' })`)
+  './google-calendar': fake(`const s = globalThis.__ss
+    export const getCalendarService = () => ({
+      getStatus: () => ({ connected: true }),
+      startPolling: (_m, allowed) => { s.polling++; s.pollAllowed = allowed },
+      stopPolling: () => { s.stops++ },
+      getEvents: () => s.events })`),
+  '../security/access-check': fake(`export const checkAccess = async (tool) => {
+    if (globalThis.__ss.gate) await globalThis.__ss.gate
+    return { allowed: tool === 'screenslap' && globalThis.__ss.allowed, message: 'x' } }`)
 })
 console.log = () => {}
 console.warn = () => {}
@@ -37,37 +44,79 @@ const { getScreenSlapService, destroyScreenSlap } = await import(srcUrl('src/mai
 const tick = () => new Promise((r) => setTimeout(r, 5))
 const meeting = (id: string) => ({ id, summary: 'Standup', startTime: new Date(Date.now() + 60_000).toISOString(),
   durationMinutes: 30, allDay: false, meetingLink: null, meetingService: null })
-type Svc = { start: () => Promise<void>; testAlert: () => Promise<void>; checkForAlerts: () => void; getState: () => { monitoring?: boolean } }
+type Svc = { start: () => Promise<void>; stop: () => void; testAlert: () => Promise<void>; checkForAlerts: () => void; getState: () => { monitoring: boolean } }
+const svc = (): Svc => getScreenSlapService() as Svc
 
-// Expired, unlicensed, calendar connected: launch starts nothing
-let svc = getScreenSlapService() as Svc
-await svc.start()
+// 1. Expired, unlicensed, calendar connected: launch starts nothing
+await svc().start()
 assert.equal(g.__ss.polling, 0, 'no calendar polling without access')
-// a meeting is due (e.g. monitoring began while the trial was running): no alert
 g.__ss.events = [meeting('m1')]
-svc.checkForAlerts()
+svc().checkForAlerts()
 await tick()
 assert.equal(g.__ss.windows, 0, 'no alert window without access')
-// the settings page test alert can't fire either
-await svc.testAlert()
-assert.equal(g.__ss.windows, 0)
+await svc().testAlert()
+assert.equal(g.__ss.windows, 0, 'no test alert without access')
 destroyScreenSlap()
 
-// In trial or licensed: monitoring starts and the alert shows
+// 2. With access: monitoring starts, the alert shows, once per meeting
 g.__ss.allowed = true
-svc = getScreenSlapService() as Svc
-await svc.start()
+await svc().start()
 assert.equal(g.__ss.polling, 1, 'polls with access')
 g.__ss.events = [meeting('m2')]
-svc.checkForAlerts()
+svc().checkForAlerts()
 await tick()
 assert.ok(g.__ss.windows > 0, 'alert shows with access')
-// the same meeting doesn't alert twice
 const shown = g.__ss.windows
-svc.checkForAlerts()
+svc().checkForAlerts()
 await tick()
-assert.equal(g.__ss.windows, shown)
+assert.equal(g.__ss.windows, shown, 'no second alert for the same meeting')
 destroyScreenSlap()
+
+// 3. T3: polling started during the trial; the trial ends; the next poll is refused and monitoring stops
+g.__ss.allowed = true
+await svc().start()
+assert.equal(svc().getState().monitoring, true)
+g.__ss.allowed = false
+assert.equal(await g.__ss.pollAllowed!(), false, 'poll refused after expiry')
+assert.equal(svc().getState().monitoring, false, 'monitoring stopped after expiry')
+
+// 4. T6 (same instance): expired → a meeting comes due and is denied → a licence is activated → it alerts
+g.__ss.windows = 0
+await svc().start() // still expired: nothing
+g.__ss.allowed = true
+await svc().start() // monitoring during trial
+g.__ss.allowed = false // trial ends
+g.__ss.events = [meeting('m3')]
+svc().checkForAlerts()
+await tick()
+assert.equal(g.__ss.windows, 0, 'denied while expired')
+g.__ss.allowed = true // licence activated (ipc-handlers calls start())
+await svc().start()
+assert.equal(svc().getState().monitoring, true)
+svc().checkForAlerts()
+await tick()
+assert.ok(g.__ss.windows > 0, 'the same meeting alerts after activation')
+destroyScreenSlap()
+
+// 5. T7: access check is slow; Stop happens while it waits; polling must not start afterwards
+g.__ss.allowed = true
+g.__ss.polling = 0
+let release!: () => void
+g.__ss.gate = new Promise<void>((r) => { release = r })
+const starting = svc().start()
+svc().stop()
+release()
+await starting
+assert.equal(g.__ss.polling, 0, 'a stopped start never begins polling')
+assert.equal(svc().getState().monitoring, false)
+// …and destroy during the wait behaves the same
+g.__ss.gate = new Promise<void>((r) => { release = r })
+const starting2 = svc().start()
+destroyScreenSlap()
+release()
+await starting2
+assert.equal(g.__ss.polling, 0, 'a destroyed start never begins polling')
+g.__ss.gate = null
 
 console.info('screenslap-access: ok')
 // the shown alert's auto-dismiss timer (an hour here) would keep the process alive
