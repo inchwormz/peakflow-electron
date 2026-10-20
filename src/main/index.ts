@@ -26,7 +26,7 @@ import { initExtensionServer, destroyExtensionServer } from './services/extensio
 import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
-import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools } from './security/trial'
+import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools, ensureTrialExpiry } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting } from './windows'
 import { initPanel, showPanel, setPanelQuitting } from './panel'
@@ -209,6 +209,8 @@ if (!gotLock) {
     }
     // v2: the 30-day trial starts by itself and covers every tool, so every
     // tool is on from first launch (no "Turn on" / "Start trial" step)
+    // (the trial end is fixed first, from the tools' existing records)
+    ensureTrialExpiry()
     autoInstallTools(PANEL_TOOLS)
 
     // Initialize core systems

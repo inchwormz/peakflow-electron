@@ -2,8 +2,9 @@
  * Check: the v2 30-day trial in every state, through the REAL trial.ts,
  * access-check.ts and license.ts. Only storage is faked (electron-store,
  * safeStorage, the credential store) so stored dates and keys can be set up.
- * States: fresh install, mid-trial, migrated 14-day user (still in, and
- * expired-but-under-30-days), expired, licensed (Pro and one tool), v1 keys.
+ * States: fresh install, mid-trial, migrated 14-day users (mixed old and new
+ * records, expired-but-under-30-days, hidden-tool-only, corrupt fields), the
+ * saved end being reused, expired, licensed (Pro and one tool), v1 keys.
  * Run: node scripts/checks/trial.check.mts
  */
 import assert from 'node:assert/strict'
@@ -42,6 +43,7 @@ const TOOLS = ['focusdim', 'liquidfocus', 'screenslap', 'quickboard']
 function launch(): void {
   trial.migrateExistingInstalls()
   if (!trial.isToolInstalled('PeakFlow')) trial.installTool('PeakFlow')
+  trial.ensureTrialExpiry()
   trial.autoInstallTools(PANEL_TOOLS)
 }
 function reset(): void {
@@ -52,6 +54,10 @@ async function access(): Promise<Record<string, { allowed: boolean; daysRemainin
   const out: Record<string, { allowed: boolean; daysRemaining: number; message: string }> = {}
   for (const t of [...TOOLS, 'PeakFlow']) out[t] = await checkAccess(t)
   return out
+}
+async function allTools(days: number, label: string): Promise<void> {
+  const a = await access()
+  for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].daysRemaining], [days > 0, days], `${label}: ${t}`)
 }
 function license(productId: number | null): void {
   g.__pf.creds.set('license:key', 'TEST-KEY')
@@ -66,60 +72,98 @@ assert.equal(trial.TRIAL_DAYS, 30)
 reset()
 launch()
 for (const t of TOOLS) assert.equal(trial.isToolInstalled(t), true, `${t} on without a Turn on step`)
-let a = await access()
-for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].daysRemaining], [true, 30], `fresh: ${t}`)
-assert.equal(a.PeakFlow.daysRemaining, 30)
+await allTools(30, 'fresh')
+assert.equal((await checkAccess('PeakFlow')).daysRemaining, 30)
 
-// 2. Mid-trial (first opened 12 days ago): 18 days left on every tool
+// 2. Mid-trial: first launched 12 days ago (end saved then), 18 days left
 reset()
-store().set('install_date', 'enc:' + daysAgo(12))
-store().set('storefront_migrated', true)
+trial.ensureTrialExpiry(new Date(Date.now() - 12 * 86400000))
 launch()
-a = await access()
-for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].daysRemaining], [true, 18], `mid-trial: ${t}`)
+await allTools(18, 'mid-trial')
 
-// 3a. Migrated v1 user, 14-day per-tool trial still running: 30 days from their FIRST start.
-//     They started FocusDim 10 days ago and QuickBoard 3 days ago; never opened the others.
+// 3a. Migrated v1 user, mixed old and new per-tool starts: FocusDim 50 days ago,
+//     QuickBoard 5 days ago. The LATEST start wins: 25 days left on every tool.
 reset()
 store().set('storefront_migrated', true)
-store().set('tool_install_PeakFlow', 'enc:' + daysAgo(10))
-store().set('tool_install_focusdim', 'enc:' + daysAgo(10))
-store().set('tool_install_quickboard', daysAgo(3)) // old plaintext date also counts
+store().set('install_date', 'enc:' + daysAgo(50))
+store().set('tool_install_focusdim', 'enc:' + daysAgo(50))
+store().set('tool_install_quickboard', daysAgo(5)) // old plaintext date also counts
 launch()
-a = await access()
-for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].daysRemaining], [true, 20], `migrated in-trial: ${t}`)
+await allTools(25, 'mixed')
 
 // 3b. Migrated v1 user whose 14 days ran out (started 20 days ago): open again, 10 days left
 reset()
 store().set('install_date', 'enc:' + daysAgo(20))
 store().set('tool_install_liquidfocus', 'enc:' + daysAgo(20))
 launch()
-a = await access()
-for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].daysRemaining], [true, 10], `re-opened: ${t}`)
+await allTools(10, 're-opened')
 
-// 4. Expired (first opened 31 days ago, no licence): every tool locked
+// 3c. Only a hidden-tool record (MeetReady, 5 days ago) and an old install date:
+//     hidden tools and the install date don't count, so 30 days from this launch
 reset()
-store().set('install_date', 'enc:' + daysAgo(31))
+store().set('storefront_migrated', true)
+store().set('install_date', 'enc:' + daysAgo(100))
+store().set('tool_install_meetready', 'enc:' + daysAgo(5))
+store().set('tool_install_soundsplit', 'enc:' + daysAgo(80))
 launch()
-a = await access()
+await allTools(30, 'hidden-only')
+
+// 3d. Corrupt / missing fields: skipped, never thrown
+reset()
+store().set('storefront_migrated', true)
+store().set('tool_install_focusdim', 'garbage')
+store().set('tool_install_quickboard', 12345)
+store().set('tool_install_screenslap', 'enc:not-a-date')
+store().set('tool_install_liquidfocus', 'enc:' + daysAgo(10))
+launch()
+await allTools(20, 'corrupt records skipped')
+reset()
+store().set('trial_expires_at', 'enc:###')
+store().set('tool_install_focusdim', { bad: true })
+assert.doesNotThrow(() => launch())
+await allTools(30, 'corrupt saved end recomputed')
+// …and a licensed user with everything corrupt is still let in
+reset()
+store().set('trial_expires_at', ['x'])
+store().set('install_date', 'garbage')
+store().set('tool_install_quickboard', null)
+launch()
+license(822965)
+for (const t of TOOLS) assert.equal((await checkAccess(t)).allowed, true, `licensed + corrupt: ${t}`)
+
+// 3e. The end is saved once and reused: a newer record later doesn't move it
+reset()
+store().set('tool_install_focusdim', 'enc:' + daysAgo(20))
+launch() // 10 days left, saved
+const saved = store().get('trial_expires_at')
+store().set('tool_install_screenslap', 'enc:' + new Date().toISOString())
+launch()
+assert.equal(store().get('trial_expires_at'), saved, 'saved end reused on the next launch')
+await allTools(10, 'reused')
+
+// 4. Expired (all four started 40-60 days ago, no licence): every tool locked
+reset()
+for (const [t, d] of [['focusdim', 60], ['liquidfocus', 45], ['screenslap', 40], ['quickboard', 41]] as const) store().set(`tool_install_${t}`, 'enc:' + daysAgo(d))
+launch()
+let a = await access()
 for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].message], [false, 'trial_expired'], `expired: ${t}`)
-// re-stamping on launch never restarts the clock (earliest date wins)
+// relaunching never restarts the clock
 launch()
 assert.equal((await checkAccess('quickboard')).allowed, false)
 
-// 4b. Day 30 is the last day: 29 days and 23 hours in → still allowed; 30 days → locked
+// 4b. Last hour of the trial counts as a day; once the end passes it is locked
 reset()
-store().set('install_date', new Date(Date.now() - 29 * 86400000 - 23 * 3600000).toISOString())
+store().set('trial_expires_at', new Date(Date.now() + 3600000).toISOString())
 launch()
 assert.equal((await checkAccess('focusdim')).daysRemaining, 1)
 reset()
-store().set('install_date', new Date(Date.now() - 30 * 86400000).toISOString())
+store().set('trial_expires_at', new Date(Date.now() - 1000).toISOString())
 launch()
 assert.equal((await checkAccess('focusdim')).allowed, false)
 
 // 5. Licensed (Pro / all tools), trial long over: never locked
 reset()
-store().set('install_date', 'enc:' + daysAgo(400))
+store().set('trial_expires_at', 'enc:' + daysAgo(400))
 launch()
 license(822965) // PeakFlow Pro monthly
 a = await access()
@@ -127,7 +171,7 @@ for (const t of TOOLS) assert.deepEqual([a[t].allowed, a[t].message], [true, 'Li
 
 // 5b. Own-it for one tool after the trial: that tool open, the others locked
 reset()
-store().set('install_date', 'enc:' + daysAgo(60))
+store().set('trial_expires_at', 'enc:' + daysAgo(30))
 launch()
 license(861329) // FocusDim, own it
 a = await access()
@@ -143,7 +187,7 @@ for (const t of TOOLS) assert.equal(a[t].allowed, true, `own-it in trial: ${t}`)
 // 6. v1 keys keep working in v2 (v1 buyers get v2 free)
 for (const [label, product] of [['v1 suite perpetual', 863806], ['v1 subscription', 841306], ['v1 annual', 875766], ['v1 legacy key (no product id)', null]] as const) {
   reset()
-  store().set('install_date', 'enc:' + daysAgo(500))
+  store().set('trial_expires_at', 'enc:' + daysAgo(470))
   launch()
   license(product)
   a = await access()
@@ -151,7 +195,7 @@ for (const [label, product] of [['v1 suite perpetual', 863806], ['v1 subscriptio
 }
 // a v1 key offline with an expired cache still counts (last good activation)
 reset()
-store().set('install_date', 'enc:' + daysAgo(500))
+store().set('trial_expires_at', 'enc:' + daysAgo(470))
 launch()
 license(863806)
 store().set('validation_timestamp', daysAgo(90))

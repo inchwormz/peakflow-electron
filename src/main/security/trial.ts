@@ -6,15 +6,17 @@
  * starting the first time PeakFlow opens. No "start trial" step: every tool is
  * switched on automatically (autoInstallTools) and shares the same clock.
  *
- * The trial start is the EARLIEST date PeakFlow has stored (the app install
- * date, or any tool's old per-tool trial start), so v1 users who were on a
- * 14-day per-tool trial get 30 days from when they first started, and one
- * whose 14 days ran out less than 30 days ago is open again. Dates are
- * encrypted at rest via safeStorage. Licences are handled in license.ts.
+ * The trial END is worked out once and saved (trial_expires_at), so it never
+ * drifts: the LATEST of (start + 30 days) over the four v2 tools' existing
+ * per-tool starts (hidden MeetReady/SoundSplit don't count), or first launch
+ * + 30 days when there are none. So a v1 user on a 14-day per-tool trial gets
+ * 30 days from the newest tool they started, and one whose 14 days ran out
+ * less than 30 days ago is open again. Generous by design (few v1 users).
+ * Dates are encrypted at rest via safeStorage. Licences are in license.ts.
  */
 
 import Store from 'electron-store'
-import { ToolId } from '@shared/tool-ids'
+import { ToolId, PANEL_TOOLS } from '@shared/tool-ids'
 import { encryptString, decryptString, isAvailable } from './safe-storage'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -86,50 +88,66 @@ export function getInstallDate(): Date {
 
 /** Read a stored date (encrypted or plain ISO) without changing anything. */
 function readStoredDate(key: string): Date | null {
-  const stored = licenseStore.get(key) as string | undefined
-  if (!stored || typeof stored !== 'string') return null
-  if (isAvailable()) {
-    const decrypted = decryptString(stored)
-    if (decrypted !== null) {
-      const parsed = new Date(decrypted)
-      if (!isNaN(parsed.getTime())) return parsed
-    }
-  }
-  const raw = new Date(stored)
-  return isNaN(raw.getTime()) ? null : raw
-}
-
-/**
- * When the app-wide trial started: the earliest date PeakFlow has stored (the
- * install date or any tool's old per-tool start). A fresh install has none, so
- * this stamps the install date now; that is the automatic start.
- */
-export function getTrialStart(): Date {
   try {
-    const keys = ['install_date', ...[...(Object.values(ToolId) as string[]), 'PeakFlow'].map((id) => `tool_install_${id}`)]
-    let earliest: Date | null = null
-    for (const key of keys) {
-      const d = readStoredDate(key)
-      if (d && (!earliest || d.getTime() < earliest.getTime())) earliest = d
+    const stored = licenseStore.get(key) as unknown
+    if (!stored || typeof stored !== 'string') return null
+    if (isAvailable()) {
+      const decrypted = decryptString(stored)
+      if (decrypted !== null) {
+        const parsed = new Date(decrypted)
+        if (!isNaN(parsed.getTime())) return parsed
+      }
     }
-    return earliest ?? getInstallDate()
-  } catch (error) {
-    console.warn('[PeakFlow:Trial] getTrialStart failed, using install date:', error)
-    return getInstallDate()
+    const raw = new Date(stored)
+    return isNaN(raw.getTime()) ? null : raw
+  } catch {
+    return null // corrupt record: skipped, never fatal
   }
 }
 
+const EXPIRY_KEY = 'trial_expires_at'
+
+function storeDate(key: string, d: Date): void {
+  const iso = d.toISOString()
+  const encrypted = isAvailable() ? encryptString(iso) : null
+  licenseStore.set(key, encrypted ?? iso)
+}
+
 /**
- * Calculate how many full days of the app-wide trial remain.
+ * Work out and save when the app-wide trial ends, if that isn't saved yet.
+ * Call on launch BEFORE autoInstallTools, so tools switched on now don't count
+ * as old trial starts. Unreadable records are skipped; nothing here throws.
+ */
+export function ensureTrialExpiry(now: Date = new Date()): Date {
+  const saved = readStoredDate(EXPIRY_KEY)
+  if (saved) return saved
+  let latestEnd: number | null = null
+  for (const id of PANEL_TOOLS) {
+    const start = readStoredDate(`tool_install_${id}`)
+    if (!start) continue
+    const end = start.getTime() + TRIAL_DAYS * DAY_MS
+    if (latestEnd === null || end > latestEnd) latestEnd = end
+  }
+  const expiry = new Date(latestEnd ?? now.getTime() + TRIAL_DAYS * DAY_MS)
+  try {
+    storeDate(EXPIRY_KEY, expiry)
+    console.log(`[PeakFlow:Trial] Trial ends ${expiry.toISOString()}`)
+  } catch (error) {
+    console.warn('[PeakFlow:Trial] Could not save the trial end:', error)
+  }
+  return expiry
+}
+
+/**
+ * How many days of the app-wide trial remain (a part day counts as a day).
  *
- * @returns A non-negative integer (0 means the trial has expired).
+ * @returns 0..TRIAL_DAYS (0 means the trial has expired).
  */
 export function getTrialDaysRemaining(now: Date = new Date()): number {
   try {
-    const elapsedMs = now.getTime() - getTrialStart().getTime()
-    // Clamp to 0 so a backwards system clock can't grant extra trial days
-    const elapsedDays = Math.max(0, Math.floor(elapsedMs / DAY_MS))
-    return Math.max(TRIAL_DAYS - elapsedDays, 0)
+    const leftMs = ensureTrialExpiry(now).getTime() - now.getTime()
+    // Capped at TRIAL_DAYS so a backwards system clock can't show extra days
+    return Math.min(TRIAL_DAYS, Math.max(0, Math.ceil(leftMs / DAY_MS)))
   } catch (error) {
     console.warn('[PeakFlow:Trial] getTrialDaysRemaining failed:', error)
     return 0
