@@ -26,7 +26,7 @@ import { initExtensionServer, destroyExtensionServer } from './services/extensio
 import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
-import { migrateExistingInstalls, isToolInstalled, installTool } from './security/trial'
+import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting } from './windows'
 import { initPanel, showPanel, setPanelQuitting } from './panel'
@@ -35,7 +35,7 @@ import { setTrayTitle } from './tray'
 import { getLiquidFocusService } from './services/liquidfocus'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
 import { destroyActiveWindowHelper } from './native/active-window'
-import { ToolId, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
+import { ToolId, PANEL_TOOLS, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
@@ -207,6 +207,9 @@ if (!gotLock) {
     if (!isToolInstalled('PeakFlow')) {
       installTool('PeakFlow')
     }
+    // v2: the 30-day trial starts by itself and covers every tool, so every
+    // tool is on from first launch (no "Turn on" / "Start trial" step)
+    autoInstallTools(PANEL_TOOLS)
 
     // Initialize core systems
     createTray()

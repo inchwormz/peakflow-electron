@@ -1,11 +1,16 @@
 /**
  * Trial period management.
  *
- * Tracks the install date (encrypted at rest via safeStorage) and computes
- * how many trial days remain. The install date is stamped on first run and
- * never changes.
+ * v2 (John, 19 Oct 2026: "Let's do a thirty-day trial. For all six tools...
+ * make the trial happen automatically"): ONE 30-day trial for the whole app,
+ * starting the first time PeakFlow opens. No "start trial" step: every tool is
+ * switched on automatically (autoInstallTools) and shares the same clock.
  *
- * Port of the Python trial module with TRIAL_DAYS updated to 14.
+ * The trial start is the EARLIEST date PeakFlow has stored (the app install
+ * date, or any tool's old per-tool trial start), so v1 users who were on a
+ * 14-day per-tool trial get 30 days from when they first started, and one
+ * whose 14 days ran out less than 30 days ago is open again. Dates are
+ * encrypted at rest via safeStorage. Licences are handled in license.ts.
  */
 
 import Store from 'electron-store'
@@ -14,8 +19,10 @@ import { encryptString, decryptString, isAvailable } from './safe-storage'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-/** Length of the free trial in days. */
-export const TRIAL_DAYS = 14
+/** Length of the free trial in days (v2: 30, app-wide; v1 was 14 per tool). */
+export const TRIAL_DAYS = 30
+
+const DAY_MS = 1000 * 60 * 60 * 24
 
 // ─── Store ──────────────────────────────────────────────────────────────────
 
@@ -77,18 +84,51 @@ export function getInstallDate(): Date {
 
 // ─── Trial Status ───────────────────────────────────────────────────────────
 
+/** Read a stored date (encrypted or plain ISO) without changing anything. */
+function readStoredDate(key: string): Date | null {
+  const stored = licenseStore.get(key) as string | undefined
+  if (!stored || typeof stored !== 'string') return null
+  if (isAvailable()) {
+    const decrypted = decryptString(stored)
+    if (decrypted !== null) {
+      const parsed = new Date(decrypted)
+      if (!isNaN(parsed.getTime())) return parsed
+    }
+  }
+  const raw = new Date(stored)
+  return isNaN(raw.getTime()) ? null : raw
+}
+
 /**
- * Calculate how many full trial days remain.
+ * When the app-wide trial started: the earliest date PeakFlow has stored (the
+ * install date or any tool's old per-tool start). A fresh install has none, so
+ * this stamps the install date now; that is the automatic start.
+ */
+export function getTrialStart(): Date {
+  try {
+    const keys = ['install_date', ...[...(Object.values(ToolId) as string[]), 'PeakFlow'].map((id) => `tool_install_${id}`)]
+    let earliest: Date | null = null
+    for (const key of keys) {
+      const d = readStoredDate(key)
+      if (d && (!earliest || d.getTime() < earliest.getTime())) earliest = d
+    }
+    return earliest ?? getInstallDate()
+  } catch (error) {
+    console.warn('[PeakFlow:Trial] getTrialStart failed, using install date:', error)
+    return getInstallDate()
+  }
+}
+
+/**
+ * Calculate how many full days of the app-wide trial remain.
  *
  * @returns A non-negative integer (0 means the trial has expired).
  */
-export function getTrialDaysRemaining(): number {
+export function getTrialDaysRemaining(now: Date = new Date()): number {
   try {
-    const installDate = getInstallDate()
-    const now = new Date()
-    const elapsedMs = now.getTime() - installDate.getTime()
+    const elapsedMs = now.getTime() - getTrialStart().getTime()
     // Clamp to 0 so a backwards system clock can't grant extra trial days
-    const elapsedDays = Math.max(0, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)))
+    const elapsedDays = Math.max(0, Math.floor(elapsedMs / DAY_MS))
     return Math.max(TRIAL_DAYS - elapsedDays, 0)
   } catch (error) {
     console.warn('[PeakFlow:Trial] getTrialDaysRemaining failed:', error)
@@ -137,7 +177,16 @@ export function migrateExistingInstalls(): void {
 }
 
 /**
- * Check whether a tool has been "installed" (enabled by the user).
+ * v2: switch every listed tool on automatically (no "Turn on" / "Start trial"
+ * step). Runs on every launch, so a new tool is on as soon as it ships. Being
+ * "on" doesn't start a separate clock: all tools share the app-wide trial.
+ */
+export function autoInstallTools(toolIds: readonly string[]): void {
+  for (const id of toolIds) installTool(id)
+}
+
+/**
+ * Check whether a tool has been "installed" (switched on).
  */
 export function isToolInstalled(toolId: ToolId | string): boolean {
   return licenseStore.has(`tool_install_${toolId}`)
@@ -211,15 +260,10 @@ export function getToolTrialStart(toolId: ToolId | string): Date | null {
 }
 
 /**
- * Calculate how many per-tool trial days remain for a specific tool.
- * Returns 0 if the tool isn't installed or the trial has expired.
+ * Trial days left for a tool. v2 has one app-wide trial, so this is the same
+ * for every tool that is switched on; 0 if the tool isn't on.
  */
 export function getToolTrialDaysRemaining(toolId: ToolId | string): number {
-  const installDate = getToolTrialStart(toolId)
-  if (!installDate) return 0
-
-  const now = new Date()
-  const elapsedMs = now.getTime() - installDate.getTime()
-  const elapsedDays = Math.max(0, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)))
-  return Math.max(TRIAL_DAYS - elapsedDays, 0)
+  if (!isToolInstalled(toolId)) return 0
+  return getTrialDaysRemaining()
 }
