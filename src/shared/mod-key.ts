@@ -19,3 +19,9 @@ export function isPrimaryMod(e: ModKeys, mac: boolean): boolean {
 export function modLabel(key: string, mac: boolean): string {
   return mac ? `⌘${key}` : `Ctrl+${key}`
 }
+
+/** The tool-switch combo: ⌥⌘ on a Mac, Alt+Ctrl elsewhere (matches 'Alt+CommandOrControl+N'). */
+export function isSwitchMod(e: ModKeys, mac: boolean): boolean {
+  if (!e.altKey) return false
+  return mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+}

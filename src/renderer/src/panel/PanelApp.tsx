@@ -14,7 +14,9 @@ import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { AccessStatus } from '@shared/ipc-types'
 import { Icon } from './icons'
 import { NavContext, matchRoute, type NavApi } from './nav'
-import { invoke, useIpcEvent, useInvoke, formatAccelerator } from './hooks'
+import { invoke, isMac, useIpcEvent, useInvoke, formatAccelerator } from './hooks'
+import { isPrimaryMod, isSwitchMod, modLabel } from '@shared/mod-key'
+import { panelHeight } from './panel-height'
 import { Btn, Hero, LinkBtn, Primary, Grp, Row, Gap, openExternal } from './kit'
 import { TOOL_MODULES, TOOL_BY_ID } from './tools'
 import { APP_ROUTES, PlanOptions } from './app/AppSettings'
@@ -111,20 +113,22 @@ export function PanelApp(): React.JSX.Element {
   })
 
   // Keyboard: ⌥⌘1–4 switch, ⌘, settings, Esc closes the menu / goes back / hides, ⌘Q quits
+  // (Alt+Ctrl+1–4, Ctrl+, and Ctrl+Q on Windows)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const typing = (e.target as HTMLElement)?.closest?.('input, textarea, select, .rec.on')
-      if (e.altKey && e.metaKey && /^Digit[1-4]$/.test(e.code)) {
+      const mac = isMac()
+      if (isSwitchMod(e, mac) && /^Digit[1-4]$/.test(e.code)) {
         e.preventDefault()
         go(TOOL_MODULES[Number(e.code.slice(5)) - 1].id)
         return
       }
-      if (e.metaKey && e.key === ',') {
+      if (isPrimaryMod(e, mac) && e.key === ',') {
         e.preventDefault()
         go(`${currentTool}/settings`)
         return
       }
-      if (e.metaKey && e.key.toLowerCase() === 'q') {
+      if (isPrimaryMod(e, mac) && e.key.toLowerCase() === 'q') {
         e.preventDefault()
         invoke(IPC_INVOKE.APP_QUIT).catch(() => {})
         return
@@ -149,16 +153,15 @@ export function PanelApp(): React.JSX.Element {
   useLayoutEffect(() => {
     const measure = (): void => {
       const body = contentRef.current?.scrollHeight ?? 0
-      const dd = ddOpen ? (ddRef.current?.offsetHeight ?? 0) + 52 : 0
-      const dlg = dialog ? 280 : 0
-      setNeeded(Math.max(44 + 28 + body, 44 + dd, dlg))
+      const menu = ddOpen ? (ddRef.current?.offsetHeight ?? 0) : null
+      setNeeded(panelHeight(body, menu, !!dialog, !!def.flush))
     }
     measure()
     const ro = new ResizeObserver(measure)
     if (contentRef.current) ro.observe(contentRef.current)
     if (ddRef.current) ro.observe(ddRef.current)
     return () => ro.disconnect()
-  }, [route, ddOpen, dialog])
+  }, [route, ddOpen, dialog, def.flush])
   useEffect(() => {
     if (needed > 0) invoke(IPC_INVOKE.PANEL_RESIZE, needed).catch(() => {})
   }, [needed])
@@ -297,7 +300,7 @@ function Switcher({ innerRef, current, statuses, onGo, onClose }: {
       <div className="mi small" role="menuitem" onClick={() => onGo(`${current}/settings`)}>
         <span className="ck" />
         {TOOL_BY_ID[current].name} settings…
-        <kbd style={{ marginLeft: 'auto', display: 'inline-block' }}>⌘,</kbd>
+        <kbd style={{ marginLeft: 'auto', display: 'inline-block' }}>{modLabel(',', isMac())}</kbd>
       </div>
       <div className="mi small" role="menuitem" onClick={() => onGo('app')}>
         <span className="ck" />
@@ -308,7 +311,7 @@ function Switcher({ innerRef, current, statuses, onGo, onClose }: {
       <div className="mi small" role="menuitem" onClick={() => invoke(IPC_INVOKE.APP_QUIT).catch(() => {})}>
         <span className="ck" />
         Quit PeakFlow
-        <kbd style={{ marginLeft: 'auto', display: 'inline-block' }}>⌘Q</kbd>
+        <kbd style={{ marginLeft: 'auto', display: 'inline-block' }}>{modLabel('Q', isMac())}</kbd>
       </div>
     </div>
   )
