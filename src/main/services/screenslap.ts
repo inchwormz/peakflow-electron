@@ -21,6 +21,12 @@ import { getConfig } from './config-store'
 import { getCalendarService } from './google-calendar'
 import type { CalendarEvent } from './google-calendar'
 import type { ScreenSlapConfig } from '@shared/config-schemas'
+import { checkAccess } from '../security/access-check'
+import { withToolAccess } from '../security/access-guard'
+
+/** Alerts and calendar monitoring need ScreenSlap access (trial or licence). */
+const withAccess = <T>(action: () => T, denied: () => T): Promise<T> =>
+  withToolAccess(checkAccess, ToolId.ScreenSlap, action, denied)
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,12 +62,25 @@ class ScreenSlapService {
   private monitoring = false
   private activeAlert: AlertInfo | null = null
   private lastFetch: string | null = null
+  private starting = false
 
   /**
-   * Start monitoring for upcoming calendar events.
-   * Begins the calendar polling and alert checking loops.
+   * Start monitoring for upcoming calendar events, if ScreenSlap is allowed
+   * (an expired, unlicensed trial gets no polling and no alerts).
    */
-  start(): void {
+  start(): Promise<void> {
+    if (this.monitoring || this.starting) return Promise.resolve()
+    this.starting = true
+    return withAccess(
+      () => this.startMonitoring(),
+      () => console.log('[ScreenSlap] No access (trial ended) — not monitoring')
+    ).finally(() => {
+      this.starting = false
+    })
+  }
+
+  /** Begins the calendar polling and alert checking loops. */
+  private startMonitoring(): void {
     if (this.monitoring) return
 
     const config = this.getScreenSlapConfig()
@@ -179,7 +198,11 @@ class ScreenSlapService {
   /**
    * Fire a fake alert for testing always-on-top behaviour.
    */
-  testAlert(): void {
+  testAlert(): Promise<void> {
+    return withAccess(() => this.fireTestAlert(), () => {})
+  }
+
+  private fireTestAlert(): void {
     const now = new Date()
     const fakeEvent: CalendarEvent = {
       id: `test-${Date.now()}`,
@@ -242,8 +265,13 @@ class ScreenSlapService {
       // Alert if: within the alert window OR meeting has started but not ended
       // (covers snoozed events that pass their start time)
       if (minutesUntil <= config.alert_minutes_before && now < eventEnd) {
-        // Time to alert!
-        this.triggerAlert(event, Math.max(0, minutesUntil))
+        // Time to alert, if ScreenSlap is still allowed (the trial may have
+        // ended since monitoring started). Marked first so the check runs once.
+        this.alertedEvents.add(event.id)
+        void withAccess(
+          () => this.triggerAlert(event, Math.max(0, minutesUntil)),
+          () => console.log('[ScreenSlap] Alert skipped: no access (trial ended)')
+        )
         break // Only one alert at a time
       }
     }

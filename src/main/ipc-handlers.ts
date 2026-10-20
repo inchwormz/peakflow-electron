@@ -144,7 +144,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SECURITY_ACTIVATE_LICENSE,
     async (_event, key: string): Promise<LicenseActivationResult> => {
-      return activateLicense(key)
+      const result = await activateLicense(key)
+      // ScreenSlap doesn't monitor without access; a new licence switches it on now
+      if (result.success && isToolInstalled(ToolId.ScreenSlap)) void getScreenSlapService().start()
+      return result
     }
   )
 
@@ -820,8 +823,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.SCREENSLAP_START,
-    (): void => {
-      getScreenSlapService().start()
+    (): Promise<void> => {
+      return getScreenSlapService().start()
     }
   )
 
@@ -834,8 +837,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.SCREENSLAP_TEST_ALERT,
-    (): void => {
-      getScreenSlapService().testAlert()
+    (): Promise<void> => {
+      return getScreenSlapService().testAlert()
     }
   )
 
