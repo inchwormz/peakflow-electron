@@ -141,6 +141,20 @@ launch()
 assert.equal(store().get('trial_expires_at'), saved, 'saved end reused on the next launch')
 await allTools(10, 'reused')
 
+// 3f. Forged plaintext end (T5): a future date typed into the store as plain
+//     text is ignored; the genuine (expired) records decide, and the end is
+//     saved encrypted again
+reset()
+for (const t of TOOLS) store().set(`tool_install_${t}`, 'enc:' + daysAgo(45))
+store().set('trial_expires_at', new Date(Date.now() + 365 * 86400000).toISOString())
+launch()
+for (const t of TOOLS) assert.equal((await checkAccess(t)).allowed, false, `forged plaintext end ignored: ${t}`)
+assert.match(String(store().get('trial_expires_at')), /^enc:/, 'end re-saved encrypted')
+// also once a genuine encrypted end exists, replacing it with plain text doesn't help
+store().set('trial_expires_at', new Date(Date.now() + 365 * 86400000).toISOString())
+launch()
+assert.equal((await checkAccess('focusdim')).allowed, false)
+
 // 4. Expired (all four started 40-60 days ago, no licence): every tool locked
 reset()
 for (const [t, d] of [['focusdim', 60], ['liquidfocus', 45], ['screenslap', 40], ['quickboard', 41]] as const) store().set(`tool_install_${t}`, 'enc:' + daysAgo(d))
@@ -153,11 +167,11 @@ assert.equal((await checkAccess('quickboard')).allowed, false)
 
 // 4b. Last hour of the trial counts as a day; once the end passes it is locked
 reset()
-store().set('trial_expires_at', new Date(Date.now() + 3600000).toISOString())
+store().set('trial_expires_at', 'enc:' + new Date(Date.now() + 3600000).toISOString())
 launch()
 assert.equal((await checkAccess('focusdim')).daysRemaining, 1)
 reset()
-store().set('trial_expires_at', new Date(Date.now() - 1000).toISOString())
+store().set('trial_expires_at', 'enc:' + new Date(Date.now() - 1000).toISOString())
 launch()
 assert.equal((await checkAccess('focusdim')).allowed, false)
 

@@ -6,7 +6,7 @@
  * starting the first time PeakFlow opens. No "start trial" step: every tool is
  * switched on automatically (autoInstallTools) and shares the same clock.
  *
- * The trial END is worked out once and saved (trial_expires_at), so it never
+ * The trial END is worked out once and saved encrypted (trial_expires_at), so it never
  * drifts: the LATEST of (start + 30 days) over the four v2 tools' existing
  * per-tool starts (hidden MeetReady/SoundSplit don't count), or first launch
  * + 30 days when there are none. So a v1 user on a 14-day per-tool trial gets
@@ -107,10 +107,33 @@ function readStoredDate(key: string): Date | null {
 
 const EXPIRY_KEY = 'trial_expires_at'
 
-function storeDate(key: string, d: Date): void {
-  const iso = d.toISOString()
-  const encrypted = isAvailable() ? encryptString(iso) : null
-  licenseStore.set(key, encrypted ?? iso)
+/**
+ * The saved trial end, ONLY if it decrypts (safeStorage). A plaintext value is
+ * never trusted as the saved end, so typing a future date into the store file
+ * doesn't override the real history; the end is then worked out again from
+ * the tool records (plaintext ones are accepted there as legacy v1 input).
+ */
+function readSavedExpiry(): Date | null {
+  try {
+    const stored = licenseStore.get(EXPIRY_KEY) as unknown
+    if (!stored || typeof stored !== 'string' || !isAvailable()) return null
+    const decrypted = decryptString(stored)
+    if (decrypted === null) return null
+    const parsed = new Date(decrypted)
+    return isNaN(parsed.getTime()) ? null : parsed
+  } catch {
+    return null
+  }
+}
+
+/** Save the trial end encrypted; without encryption it isn't saved (worked out each launch). */
+function saveExpiry(d: Date): void {
+  const encrypted = isAvailable() ? encryptString(d.toISOString()) : null
+  if (encrypted === null) {
+    console.warn('[PeakFlow:Trial] Encryption unavailable: trial end not saved')
+    return
+  }
+  licenseStore.set(EXPIRY_KEY, encrypted)
 }
 
 /**
@@ -119,7 +142,7 @@ function storeDate(key: string, d: Date): void {
  * as old trial starts. Unreadable records are skipped; nothing here throws.
  */
 export function ensureTrialExpiry(now: Date = new Date()): Date {
-  const saved = readStoredDate(EXPIRY_KEY)
+  const saved = readSavedExpiry()
   if (saved) return saved
   let latestEnd: number | null = null
   for (const id of PANEL_TOOLS) {
@@ -130,7 +153,7 @@ export function ensureTrialExpiry(now: Date = new Date()): Date {
   }
   const expiry = new Date(latestEnd ?? now.getTime() + TRIAL_DAYS * DAY_MS)
   try {
-    storeDate(EXPIRY_KEY, expiry)
+    saveExpiry(expiry)
     console.log(`[PeakFlow:Trial] Trial ends ${expiry.toISOString()}`)
   } catch (error) {
     console.warn('[PeakFlow:Trial] Could not save the trial end:', error)
