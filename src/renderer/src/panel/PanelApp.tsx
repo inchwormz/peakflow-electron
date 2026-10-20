@@ -17,7 +17,7 @@ import { NavContext, matchRoute, type NavApi } from './nav'
 import { invoke, isMac, useIpcEvent, useInvoke, formatAccelerator } from './hooks'
 import { isPrimaryMod, isSwitchMod, modLabel } from '@shared/mod-key'
 import { panelHeight } from './panel-height'
-import { Btn, Hero, LinkBtn, Primary, Grp, Row, Gap, openExternal } from './kit'
+import { Btn, Hero, LinkBtn, Grp, Row, Gap, openExternal } from './kit'
 import { TOOL_MODULES, TOOL_BY_ID } from './tools'
 import { APP_ROUTES, PlanOptions } from './app/AppSettings'
 import type { DialogSpec, PanelToolId, RouteDef, RouteTable } from './types'
@@ -317,7 +317,7 @@ function Switcher({ innerRef, current, statuses, onGo, onClose }: {
   )
 }
 
-/* ─── Turn-on and trial-ended screens (existing install + licence logic) ── */
+/* ─── Access gate and the trial-ended screen ─────────────────────────────── */
 
 function ToolGate({ tool, children }: { tool: PanelToolId; children: ReactNode }): React.JSX.Element {
   const [install, reloadInstall] = useInvoke<{ installed: boolean; daysRemaining: number }>(IPC_INVOKE.TOOL_GET_INSTALL_STATE, tool)
@@ -326,28 +326,19 @@ function ToolGate({ tool, children }: { tool: PanelToolId; children: ReactNode }
     reloadInstall()
     reloadAccess()
   })
-  const m = TOOL_BY_ID[tool]
-  if (!install || !access) return <div style={{ height: 120 }} />
-  if (!install.installed) {
-    return (
-      <>
-        <Hero icon={m.icon} title={`Turn on ${m.name}`}>{m.desc}.</Hero>
-        <Gap />
-        <Primary
-          onClick={() => {
-            invoke(IPC_INVOKE.TOOL_INSTALL, tool)
-              .then(() => {
-                reloadInstall()
-                reloadAccess()
-              })
-              .catch(() => {})
-          }}
-        >
-          Turn on {m.name}
-        </Primary>
-      </>
-    )
-  }
+  // v2: every tool is on from first launch and shares one 30-day trial, so there
+  // is no "Turn on" step. A tool that somehow isn't on yet is switched on here.
+  const off = install !== undefined && !install.installed
+  useEffect(() => {
+    if (!off) return
+    invoke(IPC_INVOKE.TOOL_INSTALL, tool)
+      .then(() => {
+        reloadInstall()
+        reloadAccess()
+      })
+      .catch(() => {})
+  }, [off, tool, reloadInstall, reloadAccess])
+  if (!install || !access || off) return <div style={{ height: 120 }} />
   if (!access.allowed && access.message !== 'tool_not_installed') return <Locked tool={tool} />
   return <>{children}</>
 }
@@ -356,7 +347,7 @@ function Locked({ tool }: { tool: PanelToolId }): React.JSX.Element {
   const m = TOOL_BY_ID[tool]
   return (
     <>
-      <Hero icon="clock" title={`Your ${m.name} trial has ended`}>Your settings are saved. Pick a plan to keep using it.</Hero>
+      <Hero icon="clock" title="Your free trial has ended">Your {m.name} settings are saved. Pick a plan to keep using it.</Hero>
       <Gap h={16} />
       <PlanOptions toolName={m.name} />
       <Grp style={{ marginTop: 14 }}>

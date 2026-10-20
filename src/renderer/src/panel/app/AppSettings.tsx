@@ -3,9 +3,9 @@
  * plan and trial, licence key, tools, keyboard shortcuts, launch at login,
  * updates, the Chrome extension, Share & Earn, help and Quit.
  *
- * Licensing and trial logic is unchanged (John, 19 Oct 2026: the trial
- * engineering waits until after the UI pass); these pages only show the
- * existing state and call the existing activate / install handlers.
+ * v2 trial (John, 19 Oct 2026): one 30-day trial for every tool, starting
+ * by itself on first launch (security/trial.ts). These pages show it and
+ * call the existing licence activation; there is no "start trial" step.
  * Prototype routes: app, app/licence, app/licence-key, app/tools,
  * app/hotkeys, app/updates, app/extension, app/share, app/help.
  */
@@ -15,7 +15,7 @@ import { IPC_INVOKE } from '@shared/ipc-types'
 import { EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { AccessStatus, LicenseActivationResult } from '@shared/ipc-types'
 import type { PanelToolId, RouteTable } from '../types'
-import { invoke, useInvoke, formatAccelerator } from '../hooks'
+import { invoke, isMac, useInvoke, formatAccelerator } from '../hooks'
 import { Btn, Grp, Hero, Gap, Note, Primary, Rec, Row, Toggle, V, openExternal } from '../kit'
 import { Icon } from '../icons'
 import { useNav } from '../nav'
@@ -49,9 +49,13 @@ function planText(a: AccessStatus | undefined): string {
 const Ext = (): React.JSX.Element => <Icon name="ext" className="go" />
 
 /**
- * Plan choices from the prototype. Display only: prices are John's decided
- * pricing, but the licensing logic is unchanged, so every option opens the
- * existing checkout page on getpeakflow.pro.
+ * Plan choices: John's v2 prices (19 Oct 2026): Pro $2.99 a month, own one
+ * tool $9.99, all four $29.99. No annual price yet (still open), so none shown.
+ *
+ * TODO(pricing): the Lemon Squeezy products for these v2 prices don't exist
+ * yet. Until they do, every option opens the existing pricing page
+ * (CHECKOUT_URL); point each button at its own checkout and add the new
+ * product IDs to product-map.json once the products are created.
  */
 export function PlanOptions({ toolName }: { toolName?: string }): React.JSX.Element {
   const open = (): void => openExternal(CHECKOUT_URL)
@@ -61,7 +65,7 @@ export function PlanOptions({ toolName }: { toolName?: string }): React.JSX.Elem
         <button className="plan-opt" onClick={open}>
           <span className="pt">Pro</span>
           <span className="pp">$2.99<small> / month</small></span>
-          <span className="pd">Every tool, on two Macs</span>
+          <span className="pd">{isMac() ? 'Every tool, on two Macs' : 'Every tool, on two PCs'}</span>
         </button>
         <button className="plan-opt" onClick={open}>
           <span className="pt">Own it</span>
@@ -220,32 +224,16 @@ function LicenceKey(): React.JSX.Element {
 /* ─── tools ──────────────────────────────────────────────────────────────── */
 
 function ToolRow({ id }: { id: PanelToolId }): React.JSX.Element {
-  const nav = useNav()
   const m = TOOL_MODULES.find((t) => t.id === id)!
-  const [state, reload] = useInvoke<{ installed: boolean; daysRemaining: number }>(IPC_INVOKE.TOOL_GET_INSTALL_STATE, id)
+  const [state] = useInvoke<{ installed: boolean; daysRemaining: number }>(IPC_INVOKE.TOOL_GET_INSTALL_STATE, id)
   return (
     <Row
       label={m.name}
       sub={m.desc}
       icon={m.icon}
       right={
-        state === undefined ? null : state.installed ? (
-          <V>On</V>
-        ) : (
-          <Btn
-            sm
-            onClick={() =>
-              invoke(IPC_INVOKE.TOOL_INSTALL, id)
-                .then(() => {
-                  reload()
-                  nav.toast(`${m.name} turned on`)
-                })
-                .catch(() => {})
-            }
-          >
-            Turn on
-          </Btn>
-        )
+        // Every tool is on from first launch (one shared 30-day trial): no Turn on button
+        state === undefined ? null : <V>{state.installed ? 'On' : 'Starting…'}</V>
       }
     />
   )
