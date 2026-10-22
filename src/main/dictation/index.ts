@@ -41,14 +41,13 @@ const WIN_KEYS: DictationHoldKey[] = ['rctrl', 'ralt']
 interface DictationData {
   enabled: boolean
   holdKey: DictationHoldKey
-  model: DictationModel
   cleanup: boolean
 }
 
 const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
-  defaults: { enabled: false, holdKey: isMac ? 'rcmd' : 'rctrl', model: 'gpt-4o-mini-transcribe', cleanup: false }
+  defaults: { enabled: false, holdKey: isMac ? 'rcmd' : 'rctrl', cleanup: false }
 })
 
 let pill: BrowserWindow | null = null
@@ -59,6 +58,8 @@ let recording = false
 let maxTimer: ReturnType<typeof setTimeout> | null = null
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 let busy = false
+/** gpt-transcribe unless this key turned out not to have it (remembered until restart) */
+let model: DictationModel = 'gpt-transcribe'
 
 const hasKey = (): boolean => !!getCredential(CRED_TOOL, CRED_TYPE)
 
@@ -68,7 +69,7 @@ function settings(): DictationSettings {
     enabled: store.get('enabled') && key,
     hasKey: key,
     holdKey: store.get('holdKey'),
-    model: store.get('model'),
+    model,
     cleanup: store.get('cleanup'),
     active: store.get('enabled') && key && isExpansionActive()
   }
@@ -165,6 +166,7 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
   network: 'No internet connection',
   no_speech: 'Didn’t hear anything',
   failed: 'Couldn’t turn that into text',
+  model_unavailable: 'Couldn’t turn that into text',
   mic_denied: 'PeakFlow can’t use the microphone',
   mic_none: 'No microphone found'
 }
@@ -212,7 +214,13 @@ function cancel(): void {
 }
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
-  const r = await transcribe(new Uint8Array(buf), { key: getCredential(CRED_TOOL, CRED_TYPE), model: store.get('model'), mime })
+  const key = getCredential(CRED_TOOL, CRED_TYPE)
+  let r = await transcribe(new Uint8Array(buf), { key, model, mime })
+  if (r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
+    console.warn(`[Dictation] ${model} not available on this key (${r.detail}); using gpt-4o-mini-transcribe`)
+    model = 'gpt-4o-mini-transcribe'
+    r = await transcribe(new Uint8Array(buf), { key, model, mime })
+  }
   const sttMs = Date.now() - releasedAt
   if (!r.ok || !r.text) {
     if (r.detail) console.warn(`[Dictation] ${r.error}: ${r.detail}`)
@@ -295,8 +303,6 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
       }
     } else if (key === 'holdKey' && typeof value === 'string' && (isMac ? MAC_KEYS : WIN_KEYS).includes(value as DictationHoldKey)) {
       store.set('holdKey', value as DictationHoldKey)
-    } else if (key === 'model' && (value === 'gpt-4o-mini-transcribe' || value === 'gpt-4o-transcribe')) {
-      store.set('model', value)
     } else if (key === 'cleanup' && typeof value === 'boolean') {
       store.set('cleanup', value)
     }
@@ -356,10 +362,10 @@ export async function runDictationDevTest(): Promise<void> {
   state({ phase: 'transcribing' })
   await shot('31-dictation-typing')
   const audio = new Uint8Array(readFileSync(audioPath))
-  for (const model of ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'] as const) {
+  for (const m of ['gpt-transcribe', 'gpt-4o-mini-transcribe'] as const) {
     const t0 = Date.now()
-    const r = await transcribe(audio, { key: getCredential(CRED_TOOL, CRED_TYPE), model, mime: 'audio/wav' })
-    console.log(`[DictationTest] ${model}: ${Date.now() - t0} ms → ${r.ok ? JSON.stringify(r.text) : r.error}`)
+    const r = await transcribe(audio, { key: getCredential(CRED_TOOL, CRED_TYPE), model: m, mime: 'audio/wav' })
+    console.log(`[DictationTest] ${m}: ${Date.now() - t0} ms → ${r.ok ? JSON.stringify(r.text) : r.error}`)
   }
   state({ phase: 'error', message: ERROR_TEXT.no_speech })
   await shot('32-dictation-error')

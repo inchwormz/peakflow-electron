@@ -4,9 +4,10 @@
  * sample file. The key is only ever sent to api.openai.com; never logged.
  */
 
-export type DictationModel = 'gpt-4o-mini-transcribe' | 'gpt-4o-transcribe'
+/** gpt-transcribe: OpenAI's current speech-to-text model; gpt-4o-mini-transcribe: fallback for keys without it */
+export type DictationModel = 'gpt-transcribe' | 'gpt-4o-mini-transcribe'
 
-export type TranscribeError = 'no_key' | 'bad_key' | 'network' | 'no_speech' | 'failed'
+export type TranscribeError = 'no_key' | 'bad_key' | 'network' | 'no_speech' | 'failed' | 'model_unavailable'
 
 export interface TranscribeResult {
   ok: boolean
@@ -28,7 +29,7 @@ export async function transcribe(
   const ext = mime.includes('wav') ? 'wav' : mime.includes('aiff') ? 'aiff' : mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : 'webm'
   const form = new FormData()
   form.append('file', new Blob([audio], { type: mime }), `dictation.${ext}`)
-  form.append('model', opts.model ?? 'gpt-4o-mini-transcribe')
+  form.append('model', opts.model ?? 'gpt-transcribe')
   form.append('response_format', 'json')
   if (opts.language) form.append('language', opts.language)
   if (opts.prompt) form.append('prompt', opts.prompt)
@@ -46,7 +47,9 @@ export async function transcribe(
   if (res.status === 401 || res.status === 403) return { ok: false, error: 'bad_key', detail: `HTTP ${res.status}` }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    return { ok: false, error: 'failed', detail: `HTTP ${res.status} ${body.slice(0, 200)}` }
+    // The key's project can't use this model (older account, or a model that was retired)
+    const unavailable = res.status === 404 || (res.status === 400 && /model/i.test(body))
+    return { ok: false, error: unavailable ? 'model_unavailable' : 'failed', detail: `HTTP ${res.status} ${body.slice(0, 200)}` }
   }
   const body = (await res.json().catch(() => ({}))) as { text?: string }
   const text = (body.text ?? '').trim()
