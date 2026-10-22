@@ -803,11 +803,6 @@ const HOLD_KEYS: Array<[DictationHoldKey, string]> = isMac()
   ? [['rcmd', 'Right ⌘'], ['ropt', 'Right ⌥'], ['fn', 'fn'], ['rctrl', 'Right ⌃']]
   : [['rctrl', 'Right Ctrl'], ['ralt', 'Right Alt']]
 
-const KEY_INPUT: React.CSSProperties = {
-  width: 150, borderRadius: 'var(--r-ctl)', border: '0.5px solid var(--line-strong)', background: 'var(--surface)',
-  color: 'var(--text)', fontSize: 'var(--t-body)', padding: '6px 10px', outline: 'none'
-}
-
 const KEY_ERRORS: Record<string, string> = {
   bad_key: 'OpenAI didn’t accept that key',
   network: 'Couldn’t reach OpenAI: check the internet connection',
@@ -843,7 +838,7 @@ function DictationRows(): React.JSX.Element | null {
           <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 2 minutes of talking).'}</div>
         </div>
         <span className="row">
-          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" style={KEY_INPUT} aria-label="OpenAI API key" />
+          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" className="lc-field" style={{ width: 150 }} aria-label="OpenAI API key" />
           <button className="btn" disabled={!key || saving} onClick={() => void save()}>{saving ? 'Checking…' : 'Save'}</button>
         </span>
       </div>
