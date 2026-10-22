@@ -191,6 +191,12 @@ export function clearPidExeCache(): void {
   pidBundleCache.clear()
 }
 
+/** Bring every open window of the app with this PID to the front (fire and forget). */
+export function raiseAppWindows(pid: number, _hwnd?: unknown): void {
+  if (!isValidPid(pid)) return
+  sendCommand(`raise-app ${pid}`).catch(() => {})
+}
+
 export function getVisibleAppList(_skipSet?: Set<string>): Array<{ exe: string; name: string }> {
   // Async with cache
   if (!cachedAppList.inFlight) {

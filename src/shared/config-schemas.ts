@@ -17,6 +17,7 @@ export interface FocusDimConfig {
   disabled_displays: number[]
   highlight_mode: 'active' | 'app' | 'all'
   drag_escape: boolean
+  raise_app_windows: boolean
   excluded_apps: Array<{ exe: string; name: string }>
 }
 
@@ -102,6 +103,7 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     disabled_displays: [],
     highlight_mode: 'active' as const,
     drag_escape: true,
+    raise_app_windows: false,
     excluded_apps: []
   },
   [ToolId.QuickBoard]: {

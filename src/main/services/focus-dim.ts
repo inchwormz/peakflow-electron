@@ -22,7 +22,7 @@ import { getConfig, setConfig } from './config-store'
 import { checkAccess } from '../security/access-check'
 import { withToolAccess } from '../security/access-guard'
 import type { FocusDimConfig } from '@shared/config-schemas'
-import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, type WindowRect, type DisplayBounds } from '../native/active-window'
+import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, raiseAppWindows, type WindowRect, type DisplayBounds } from '../native/active-window'
 
 // ─── Legacy color key → hex migration map ────────────────────────────────────
 
@@ -49,6 +49,7 @@ export interface FocusDimState {
   autoRevealDesktop: boolean
   highlightMode: 'active' | 'app' | 'all'
   dragEscape: boolean
+  raiseAppWindows: boolean
   excludedApps: Array<{ exe: string; name: string }>
 }
 
@@ -84,6 +85,8 @@ class FocusDimService {
   private _dragStableTicks = 0
   private _dragging = false
   private _lastTrackWindowId = ''
+  /** PID whose windows were last brought forward (raise_app_windows). */
+  private _lastRaisedPid = 0
   private _lastTrackX = 0
   private _lastTrackY = 0
   private peekTimer: ReturnType<typeof setTimeout> | null = null
@@ -149,6 +152,7 @@ class FocusDimService {
       autoRevealDesktop: conf.auto_reveal_desktop,
       highlightMode: conf.highlight_mode,
       dragEscape: conf.drag_escape,
+      raiseAppWindows: conf.raise_app_windows ?? false,
       excludedApps: conf.excluded_apps ?? []
     }
   }
@@ -194,6 +198,7 @@ class FocusDimService {
   disable(): void {
     this.cancelPeek()
     this._enabled = false
+    this._lastRaisedPid = 0
     this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
     this._lastRectsHash = ''
     this.setConf('enabled', false)
@@ -992,6 +997,13 @@ class FocusDimService {
         this._lastTrackY = activeWin.y
 
         if (this._dragging) return
+      }
+
+      // Bring the app's other windows forward once each time a different app
+      // comes to the front, in App windows and All windows modes.
+      if (conf.raise_app_windows && conf.highlight_mode !== 'active' && activeWin.pid !== this._lastRaisedPid) {
+        this._lastRaisedPid = activeWin.pid
+        if (activeWin.pid !== process.pid) raiseAppWindows(activeWin.pid, activeWin.hwnd)
       }
 
       const wasDesktopRevealed = this._desktopRevealed

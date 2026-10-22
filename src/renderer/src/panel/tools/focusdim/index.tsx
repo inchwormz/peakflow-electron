@@ -25,6 +25,7 @@ interface FocusDimState {
   autoRevealDesktop: boolean
   highlightMode: 'active' | 'app' | 'all'
   dragEscape: boolean
+  raiseAppWindows: boolean
   excludedApps: Array<{ exe: string; name: string }>
 }
 
@@ -142,6 +143,24 @@ function Main(): React.JSX.Element {
           }}
         />
       </div>
+      {s.highlightMode !== 'active' ? (
+        <Grp style={{ marginTop: 8 }}>
+          <Row
+            label="Bring the app's windows forward"
+            sub="When you switch apps, all its open windows come to the front"
+            right={
+              <Toggle
+                label="Bring the app's windows forward"
+                checked={s.raiseAppWindows}
+                onChange={(v) => {
+                  patch({ raiseAppWindows: v })
+                  invoke(IPC_INVOKE.CONFIG_SET, { tool: 'focusdim', key: 'raise_app_windows', value: v }).catch(() => {})
+                }}
+              />
+            }
+          />
+        </Grp>
+      ) : null}
       <Grp style={{ marginTop: 8 }}>
         <SliderRow label="Intensity" value={pct} min={10} max={90} format={(v) => `${v}%`} onCommit={setPct} />
       </Grp>

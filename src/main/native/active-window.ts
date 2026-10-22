@@ -35,6 +35,10 @@ export function getProcessExeName(pid: number) {
   return getImpl().getProcessExeName(pid)
 }
 
+export function raiseAppWindows(pid: number, activeHwnd?: unknown) {
+  return getImpl().raiseAppWindows(pid, activeHwnd)
+}
+
 export function clearPidExeCache() {
   return getImpl().clearPidExeCache()
 }
