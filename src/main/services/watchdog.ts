@@ -244,6 +244,22 @@ export function initWatchdog(): void {
 }
 
 /**
+ * Run a synchronous call that can block on a system prompt, without the
+ * watchdog counting the wait as a freeze. On macOS the first Keychain read
+ * (safeStorage) can show a password prompt that holds the main thread until
+ * the user answers; the watchdog used to kill PeakFlow after 30 s of it.
+ */
+export function withWatchdogPaused<T>(fn: () => T): T {
+  if (!worker || process.platform !== 'darwin') return fn()
+  worker.postMessage({ type: 'modal-open' })
+  try {
+    return fn()
+  } finally {
+    worker?.postMessage({ type: 'modal-close' })
+  }
+}
+
+/**
  * Gracefully stop the watchdog. Call as the FIRST thing in before-quit
  * so the worker doesn't false-positive during the shutdown sequence.
  */
