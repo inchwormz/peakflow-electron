@@ -58,6 +58,8 @@ class SnapGridService {
   private osDrag = false
   private overlay: BrowserWindow | null = null
   private overlayReady: Promise<void> | null = null
+  /** Bumped on every preview change, so a slow window lookup can't show a stale preview */
+  private previewSeq = 0
   private drag: { pid: number; windowId: number; zone: FracRect | null; display: Display | null } | null = null
 
   private conf(): SnapGridConfig {
@@ -217,13 +219,16 @@ class SnapGridService {
   /** Hover preview in the panel: show where the window(s) would go. */
   async preview(kind: 'layout' | 'arrange' | null, key?: string): Promise<void> {
     if (!kind) return this.hidePreview()
+    const seq = ++this.previewSeq
     const target = await this.currentTarget()
+    if (seq !== this.previewSeq) return
     if (kind === 'layout' && target && key && key in SNAP_LAYOUT_BY_KEY) {
       const r = this.rectFor(key as SnapLayoutKey, target)
       if (r) this.showPreview([r], displayOf(r))
       else this.hidePreview()
     } else if (kind === 'arrange' && key && key in ARRANGE_BY_KEY) {
       const wins = (await this.windowsOnTargetScreen(target)).slice(0, ARRANGE_BY_KEY[key as ArrangeKey].max)
+      if (seq !== this.previewSeq) return
       if (!wins.length) return this.hidePreview()
       const d = displayOf(wins[0].frame)
       this.showPreview(ARRANGE_BY_KEY[key as ArrangeKey].rects(wins.length).map((f) => place(f, d)), d)
@@ -386,9 +391,10 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden}
   private showPreview(rects: SnapRect[], d: Display): void {
     const pad = 6
     const local = rects.map((r) => ({ x: r.x - d.bounds.x + pad, y: r.y - d.bounds.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 }))
+    const seq = ++this.previewSeq
     void this.ensureOverlay().then(() => {
       const win = this.overlay
-      if (!win || win.isDestroyed()) return
+      if (!win || win.isDestroyed() || seq !== this.previewSeq) return
       const b = win.getBounds()
       if (b.x !== d.bounds.x || b.y !== d.bounds.y || b.width !== d.bounds.width || b.height !== d.bounds.height) win.setBounds(d.bounds)
       // No script in the page (the app's CSP blocks inline scripts): draw from here
@@ -400,6 +406,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden}
   }
 
   private hidePreview(): void {
+    this.previewSeq++
     const win = this.overlay
     if (win && !win.isDestroyed() && win.isVisible()) {
       // Transparent first: macOS fades out the last frame on hide, and the
