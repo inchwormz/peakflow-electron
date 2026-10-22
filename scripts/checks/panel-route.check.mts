@@ -26,8 +26,10 @@ installTsHooks({
       on(e, f) { (this.h[e] ??= []).push(f) }
       setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} setBounds() {} setSize() {} focus() {}
       loadURL() { return Promise.resolve() } loadFile() { return Promise.resolve() }
-      isDestroyed() { return false } show() { this.visible = true } hide() { this.visible = false } isVisible() { return this.visible }
+      isDestroyed() { return false } isFocused() { return false } show() { this.visible = true } hide() { this.visible = false } isVisible() { return this.visible }
     }
+    // panel.ts reaches the Mac helper through native/active-window
+    export const app = { isPackaged: false, getAppPath: () => '', getPath: () => '', on() {} }
     const area = { x: 0, y: 0, width: 1400, height: 900 }
     export const screen = { getCursorScreenPoint: () => ({ x: 10, y: 10 }), getDisplayNearestPoint: () => ({ workArea: area, bounds: area }) }`),
   '@electron-toolkit/utils': fake('export const is = { dev: false }')
@@ -77,3 +79,6 @@ win().emit('did-finish-load')
 assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once only')
 
 console.log('panel-route: ok')
+
+// The Mac helper client imported through panel.ts keeps a timer alive
+process.exit(0)
