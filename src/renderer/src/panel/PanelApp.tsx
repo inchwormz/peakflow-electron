@@ -2,7 +2,7 @@
  * PeakFlow v2: the one-app panel.
  *
  * One small dark panel drops down from the menu-bar icon. The header holds a
- * switcher for the four tools (⌥⌘1–4); Settings and Quit sit at the bottom of
+ * switcher for the tools (⌥⌘1–5); Settings and Quit sit at the bottom of
  * the switcher. Settings and other secondary pages drill in inside the same
  * panel with a back arrow. Design source: the approved prototype in
  * ~/Work/peakflow/artifacts/2026-10-19-app-redesign/full (direction C, monochrome).
@@ -24,7 +24,7 @@ import type { DialogSpec, PanelToolId, RouteDef, RouteTable } from './types'
 
 const ALL_ROUTES: RouteTable = Object.assign({}, ...TOOL_MODULES.map((m) => m.routes), APP_ROUTES)
 const LAST_KEY = 'pf.panel.last-tool'
-const SWITCH_KEYS = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4']
+const SWITCH_KEYS = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4', 'Alt+CommandOrControl+5']
 export const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
 
 function readLast(): PanelToolId {
@@ -112,13 +112,13 @@ export function PanelApp(): React.JSX.Element {
     if (!v) setDdOpen(false)
   })
 
-  // Keyboard: ⌥⌘1–4 switch, ⌘, settings, Esc closes the menu / goes back / hides, ⌘Q quits
-  // (Alt+Ctrl+1–4, Ctrl+, and Ctrl+Q on Windows)
+  // Keyboard: ⌥⌘1–5 switch, ⌘, settings, Esc closes the menu / goes back / hides, ⌘Q quits
+  // (Alt+Ctrl+1–5, Ctrl+, and Ctrl+Q on Windows)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const typing = (e.target as HTMLElement)?.closest?.('input, textarea, select, .rec.on')
       const mac = isMac()
-      if (isSwitchMod(e, mac) && /^Digit[1-4]$/.test(e.code)) {
+      if (isSwitchMod(e, mac) && /^Digit[1-5]$/.test(e.code)) {
         e.preventDefault()
         go(TOOL_MODULES[Number(e.code.slice(5)) - 1].id)
         return

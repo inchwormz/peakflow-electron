@@ -60,6 +60,9 @@ import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToo
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService, initFocusDim } from './services/focus-dim'
 import type { FocusDimState, DisplayInfo } from './services/focus-dim'
+import { getSnapGridService, initSnapGrid } from './services/snapgrid'
+import { isSnapLayoutKey, isArrangeKey } from '@shared/snapgrid-layouts'
+import type { SnapGridState } from '@shared/snapgrid-layouts'
 import { getClipboardService, initClipboard } from './services/clipboard'
 import type { ClipboardItem } from './services/clipboard'
 import { getCalendarService, initCalendar } from './services/google-calendar'
@@ -100,6 +103,9 @@ function startToolService(toolId: string): void {
       break
     case ToolId.SoundSplit:
       initSoundSplit()
+      break
+    case ToolId.SnapGrid:
+      initSnapGrid()
       break
   }
 }
@@ -390,6 +396,33 @@ export function registerIpcHandlers(): void {
       getFocusDimService().removeExcludedApp(exe)
     }
   )
+
+  // ─── SnapGrid ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_GET_STATE, (): Promise<SnapGridState> => getSnapGridService().getState())
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_APPLY, (_event, key: unknown): Promise<string> | string => {
+    if (!isSnapLayoutKey(key)) return 'Unknown layout'
+    return getSnapGridService().applyLayout(key, { fromPanel: true })
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_ARRANGE, (_event, key: unknown): Promise<string> | string => {
+    if (!isArrangeKey(key)) return 'Unknown layout'
+    return getSnapGridService().arrange(key)
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_PREVIEW, (_event, kind: unknown, key: unknown): Promise<void> => {
+    const k = kind === 'layout' || kind === 'arrange' ? kind : null
+    return getSnapGridService().preview(k, typeof key === 'string' ? key : undefined)
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_UNDO, (): Promise<string> => getSnapGridService().undo({ fromPanel: true }))
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_SET_DRAG, (_event, on: unknown): void => {
+    if (typeof on === 'boolean') getSnapGridService().setDragSnap(on)
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_OPEN_OS_SETTINGS, (): void => getSnapGridService().openOsWindowSettings())
 
   // ─── QuickBoard / Clipboard ────────────────────────────────────────────────
 

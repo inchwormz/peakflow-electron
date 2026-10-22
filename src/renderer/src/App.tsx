@@ -48,7 +48,8 @@ function ToolPlaceholder({ toolId }: { toolId: ToolId }): React.JSX.Element {
     [ToolId.ScreenSlap]: '#ffe17c',
     [ToolId.MeetReady]: '#ffe17c',
     [ToolId.LiquidFocus]: '#ffe17c',
-    [ToolId.SoundSplit]: '#ffe17c'
+    [ToolId.SoundSplit]: '#ffe17c',
+    [ToolId.SnapGrid]: '#ffe17c'
   }
 
   const accent = accentColors[toolId]

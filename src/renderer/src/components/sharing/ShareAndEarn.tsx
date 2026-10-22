@@ -49,7 +49,8 @@ const TOOL_ACCENTS: Record<ToolId, string> = {
   [ToolId.QuickBoard]: '#ffe17c',
   [ToolId.ScreenSlap]: '#ffe17c',
   [ToolId.MeetReady]: '#ffe17c',
-  [ToolId.SoundSplit]: '#ffe17c'
+  [ToolId.SoundSplit]: '#ffe17c',
+  [ToolId.SnapGrid]: '#ffe17c'
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────

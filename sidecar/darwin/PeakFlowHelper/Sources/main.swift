@@ -26,6 +26,8 @@
  * One-shot mode: `peakflow-helper <command> [arg]` runs one command, prints
  * its JSON result and exits (used for paste and OCR so a slow OCR never
  * blocks the 60fps window polling on the persistent process).
+ *   sg-front / sg-windows / sg-set / sg-raise / sg-tiling → SnapGrid (SnapGrid.swift)
+ *   drag-watch            → (one-shot mode only) long-running window-drag watcher
  *   ping                  → "pong"
  *   exit                  → terminates
  */
@@ -81,6 +83,7 @@ let cliArgs = CommandLine.arguments
 // Launcher snippet expansion: long-running keyword watcher (Launcher.swift)
 if cliArgs.count > 1 && cliArgs[1] == "keywatch" { runKeyWatch() }
 if cliArgs.count > 1 {
+    if cliArgs[1] == "drag-watch" { runDragWatch() }
     let arg = cliArgs.count > 2 ? cliArgs[2...].joined(separator: " ") : nil
     if let result = runOneShot(cliArgs[1], arg) {
         respond(result)
@@ -165,6 +168,21 @@ while let line = readLine(strippingNewline: true) {
 
     case "ocr":
         respond(runOneShot("ocr", arg) ?? "{}")
+
+    case "sg-front":
+        respond(sgFront())
+
+    case "sg-windows":
+        respond(sgWindows())
+
+    case "sg-set":
+        respond(sgSet(arg))
+
+    case "sg-raise":
+        respond(sgRaise(arg))
+
+    case "sg-tiling":
+        respond(sgTiling())
 
     case "ping":
         respond("\"pong\"")

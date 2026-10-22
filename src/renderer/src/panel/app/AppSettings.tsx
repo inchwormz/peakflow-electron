@@ -75,7 +75,7 @@ export function PlanOptions({ toolName }: { toolName?: string }): React.JSX.Elem
         </button>
       </div>
       <button className="plan-more" onClick={open}>
-        <span>Own all four tools</span>
+        <span>Own every tool</span>
         <span className="pp">$29.99 once</span>
       </button>
     </>
@@ -255,7 +255,7 @@ function Tools(): React.JSX.Element {
 
 /* ─── keyboard shortcuts ─────────────────────────────────────────────────── */
 
-const SWITCH = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4']
+const SWITCH = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4', 'Alt+CommandOrControl+5']
 
 function Hotkeys(): React.JSX.Element {
   const [registered] = useInvoke<Array<{ accelerator: string; label: string }>>(IPC_INVOKE.HOTKEY_GET_REGISTERED)
@@ -285,6 +285,7 @@ function Hotkeys(): React.JSX.Element {
         <Row label="FocusDim peek" right={<Rec value="Control+Alt+`" />} />
         <Row label="Open QuickBoard" right={<Rec value="CommandOrControl+Shift+V" />} />
         <Row label="Paste next / cancel" value={`${formatAccelerator('CommandOrControl+Shift+N')} ${formatAccelerator('CommandOrControl+Shift+Q')}`} />
+        <Row label="SnapGrid layouts" go="snapgrid/shortcuts" />
       </Grp>
       <Note style={{ marginTop: 10 }}>FocusDim’s on/off shortcut can be changed in its settings. The others are fixed for now.</Note>
     </>

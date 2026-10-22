@@ -81,6 +81,11 @@ export interface SoundSplitConfig {
   remember_volumes: boolean
 }
 
+export interface SnapGridConfig {
+  /** macOS: snap a window dragged to a screen edge (off when macOS tiles on drag itself) */
+  drag_snap: boolean
+}
+
 export type ToolConfig =
   | FocusDimConfig
   | QuickBoardConfig
@@ -88,6 +93,7 @@ export type ToolConfig =
   | MeetReadyConfig
   | LiquidFocusConfig
   | SoundSplitConfig
+  | SnapGridConfig
 
 /** Default values matching Python app config.json defaults */
 export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
@@ -164,5 +170,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     auto_show_new_apps: true,
     hide_on_startup: true,
     remember_volumes: true
+  },
+  [ToolId.SnapGrid]: {
+    drag_snap: true
   }
 }
