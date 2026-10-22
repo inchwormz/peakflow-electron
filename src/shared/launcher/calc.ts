@@ -141,16 +141,8 @@ class Parser {
     return !!t && t.t === 'id' && t.v === v
   }
 
-  // of: "15% of 80"
   expr(): Val {
-    let left = this.sum()
-    while (this.isId('of')) {
-      this.i++
-      this.usedOperator = true
-      const right = this.sum()
-      left = { n: left.n * right.n }
-    }
-    return left
+    return this.sum()
   }
 
   private sum(): Val {
@@ -175,6 +167,12 @@ class Parser {
         this.usedOperator = true
         const right = this.power()
         left = { n: op === '*' ? left.n * right.n : left.n / right.n }
+      } else if (this.isId('of')) {
+        // "15% of 80" multiplies, binding like × so "15% of 80 + 8" = 20
+        this.i++
+        this.usedOperator = true
+        const right = this.power()
+        left = { n: left.n * right.n }
       } else if (this.peek() && (this.isOp('(') || (this.peek()!.t === 'id' && !this.isId('of')))) {
         // implicit multiplication: 2pi, 3(4+5), 2 sqrt(9)
         this.usedOperator = true
