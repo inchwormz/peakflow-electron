@@ -16,6 +16,11 @@ import { SystemWindowId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import type { LauncherOpenInfo } from '@shared/launcher/types'
 
+// Windows: Chromium's occlusion tracking can leave a hidden-then-shown window marked as covered,
+// so it never paints again (the bar came back blank and ignored typing from the second open on).
+// Must be set before the app is ready; this module loads at startup.
+if (process.platform === 'win32') app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+
 export const LAUNCHER_WIDTH = 680
 const MIN_H = 64
 const MAX_H = 540
@@ -135,6 +140,21 @@ export function showLauncher(info: Partial<LauncherOpenInfo> & { inactive?: bool
   if (process.platform === 'darwin') app.focus({ steal: true })
   w.focus()
   w.setAlwaysOnTop(true, 'pop-up-menu')
+  if (process.platform === 'win32') kickWindows(w)
+}
+
+/** Windows: make sure a re-shown bar repaints and its page has the keyboard. */
+function kickWindows(w: BrowserWindow): void {
+  w.webContents.focus()
+  w.webContents.invalidate()
+  // A 1px resize forces a fresh frame even if the compositor thinks nothing changed
+  setTimeout(() => {
+    if (w.isDestroyed() || !w.isVisible()) return
+    const b = w.getBounds()
+    w.setBounds({ ...b, height: b.height + 1 })
+    w.setBounds(b)
+    w.webContents.invalidate()
+  }, 30)
 }
 
 /**
@@ -169,6 +189,7 @@ export function refocusLauncher(): void {
   if (!w.isVisible()) w.show()
   w.focus()
   w.setAlwaysOnTop(true, 'pop-up-menu')
+  if (process.platform === 'win32') kickWindows(w)
 }
 
 /** Step aside (hide without telling the page) so the app underneath gets the keyboard. */

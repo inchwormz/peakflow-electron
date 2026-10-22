@@ -10,6 +10,10 @@
  *   force-quit-app <pid>   → {"ok": bool}       NSRunningApplication.forceTerminate()
  *   running-apps           → [{pid, name, bundleId, path}]  regular (Dock) apps
  *   lock                   → {"ok": bool}
+ *   context                → {"app", "bundleId", "before", "after", "secure", "trusted"}
+ *                            dictation context: the front app and up to 500 characters each side
+ *                            of the cursor in its focused text field. Never reads password fields
+ *                            (secure: true and no text). Accessibility only; no clipboard or focus change.
  *
  * Long-running mode: `peakflow-helper keywatch` watches typing for snippet
  * keywords. It reads one JSON line per update from stdin,
@@ -134,6 +138,48 @@ func selectedText(axOnly: Bool = false) -> String {
     }
     if pb.changeCount != before { restorePasteboard(saved) }
     return jsonLine(["text": text, "via": text.isEmpty ? "none" : "copy", "trusted": true])
+}
+
+// MARK: - dictation context
+
+func dictationContext(limit: Int = 500) -> String {
+    guard AXIsProcessTrusted() else { return jsonLine(["trusted": false]) }
+    guard let app = NSWorkspace.shared.frontmostApplication else { return jsonLine(["trusted": true]) }
+    var out: [String: Any] = ["app": app.localizedName ?? "", "bundleId": app.bundleIdentifier ?? "", "trusted": true]
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetMessagingTimeout(axApp, 0.25) // a slow app must not hold up dictation
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+          let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() else { return jsonLine(out) }
+    let el = f as! AXUIElement // swiftlint:disable:this force_cast
+    var role: CFTypeRef?
+    var subrole: CFTypeRef?
+    AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+    AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+    if (subrole as? String) == (kAXSecureTextFieldSubrole as String) || (role as? String) == "AXSecureTextField" {
+        out["secure"] = true
+        return jsonLine(out)
+    }
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &value) == .success,
+          let text = value as? String, !text.isEmpty else { return jsonLine(out) }
+    let ns = text as NSString
+    var cursor = ns.length
+    var selLen = 0
+    var rangeRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+       let r = rangeRef, CFGetTypeID(r) == AXValueGetTypeID() {
+        var range = CFRange(location: 0, length: 0)
+        if AXValueGetValue(r as! AXValue, .cfRange, &range) { // swiftlint:disable:this force_cast
+            cursor = max(0, min(ns.length, range.location))
+            selLen = max(0, min(ns.length - cursor, range.length))
+        }
+    }
+    let start = max(0, cursor - limit)
+    let afterStart = cursor + selLen
+    out["before"] = ns.substring(with: NSRange(location: start, length: cursor - start))
+    out["after"] = ns.substring(with: NSRange(location: afterStart, length: min(limit, ns.length - afterStart)))
+    return jsonLine(out)
 }
 
 // MARK: - apps

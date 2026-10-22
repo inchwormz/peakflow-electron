@@ -35,7 +35,7 @@ function exec(cmd: string, args: string[], timeout = 15000): Promise<{ ok: boole
 }
 
 function ps(script: string): Promise<{ ok: boolean; out: string }> {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  const encoded = Buffer.from("$ProgressPreference = 'SilentlyContinue'\n" + script, 'utf16le').toString('base64')
   return exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', encoded])
 }
 

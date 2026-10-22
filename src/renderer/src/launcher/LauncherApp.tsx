@@ -22,7 +22,7 @@ import { Glyph } from './glyphs'
 import '../panel/panel.css'
 import './launcher.css'
 
-type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup'
+type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup' | 'words'
 
 interface AiRun {
   reqId: number
@@ -165,6 +165,11 @@ export function LauncherApp(): React.JSX.Element {
     loadItems()
     void loadAiStatus()
     void invoke<CurrencyRates | null>(IPC_INVOKE.LAUNCHER_RATES).then(setRates)
+    // Windows can drop the focus given while the bar was hidden: put it back when the window gets focus
+    const onWinFocus = (): void => {
+      if (!document.activeElement || document.activeElement === document.body) inputRef.current?.focus()
+    }
+    window.addEventListener('focus', onWinFocus)
     const offShown = window.peakflow.on(IPC_SEND.LAUNCHER_SHOWN, (raw) => {
       const info = raw as LauncherOpenInfo
       openAt.current = info.at
@@ -196,6 +201,7 @@ export function LauncherApp(): React.JSX.Element {
     void invoke(IPC_INVOKE.LAUNCHER_READY)
     return () => {
       offShown()
+      window.removeEventListener('focus', onWinFocus)
       offChanged()
       offChunk()
     }
@@ -448,7 +454,7 @@ export function LauncherApp(): React.JSX.Element {
   const inputShown = view === 'search' || view === 'kill'
   const crumb: Partial<Record<View, string>> = {
     kill: 'Kill Process', ai: ai?.title, 'snippet-form': editing ? 'Edit Snippet' : 'Add Snippet', 'link-form': editing ? 'Edit Quick Link' : 'Add Quick Link',
-    settings: 'Launcher Settings', 'ai-setup': 'Connect AI'
+    settings: 'Launcher Settings', 'ai-setup': 'Connect AI', words: 'My words'
   }
 
   return (
@@ -537,7 +543,8 @@ export function LauncherApp(): React.JSX.Element {
 
         {view === 'snippet-form' && <SnippetForm editing={editing} onDone={(m) => { flash(m); back() }} />}
         {view === 'link-form' && <LinkForm editing={editing} onDone={(m) => { flash(m); back() }} />}
-        {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} />}
+        {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} onWords={() => setView('words')} />}
+        {view === 'words' && <WordsForm onDone={(m) => { flash(m); setView('settings') }} />}
         {view === 'ai-setup' && <AiSetup status={aiStatus} reload={loadAiStatus} onPick={(s) => setAiStatus(s)} />}
       </div>
 
@@ -663,6 +670,40 @@ function SnippetForm({ editing, onDone }: { editing: LauncherItem | null; onDone
   )
 }
 
+/** "My words": names and terms to spell the person's way, one per line; "X -> Y" always replaces. */
+function WordsForm({ onDone }: { onDone: (m: string) => void }): React.JSX.Element {
+  const [text, setText] = useState<string | null>(null)
+  useEffect(() => {
+    void invoke<string>(IPC_INVOKE.DICTATION_WORDS).then((t) => setText(t ?? ''))
+  }, [])
+  const lines = (text ?? '').split(/[\n,]/).map((l) => l.trim()).filter(Boolean)
+  const hints = lines.filter((l) => !/(->|→)/.test(l)).length
+  const reps = lines.length - hints
+  const submit = (): void => {
+    void invoke(IPC_INVOKE.DICTATION_SET_WORDS, text ?? '').then(() => onDone(hints ? `Saved ${hints} words` : 'Saved'))
+  }
+  const onKey = useSubmitOnModEnter(submit)
+  if (text === null) return <div className="lc-form" />
+  return (
+    <div className="lc-form" onKeyDown={onKey}>
+      <label>
+        One per line
+        <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={'Siobhan\nPeakFlow\nManukora'} style={{ minHeight: 150 }} />
+        <span className="hint">
+          Names, products and jargon that come out wrong. Dictation uses them as hints, so ordinary words still come through as spoken.
+          To always swap a word, write it as <b>teh -&gt; the</b>.
+        </span>
+      </label>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className={hints > 50 ? 'err' : 'hint'}>
+          {hints > 50 ? `${hints} words: lists over 50 make mistakes more likely. Keep the ones that actually come out wrong.` : `${hints} word${hints === 1 ? '' : 's'}${reps ? `, ${reps} always replaced` : ''}`}
+        </span>
+        <button className="btn primary" onClick={submit}>Save <kbd>{MOD}↵</kbd></button>
+      </div>
+    </div>
+  )
+}
+
 function LinkForm({ editing, onDone }: { editing: LauncherItem | null; onDone: (m: string) => void }): React.JSX.Element {
   const [name, setName] = useState(editing?.title ?? '')
   const [target, setTarget] = useState(editing?.target ?? '')
@@ -711,7 +752,7 @@ function acceleratorFrom(e: React.KeyboardEvent): string | null {
   return [...mods, k].join('+')
 }
 
-function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void }): React.JSX.Element {
+function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void; onWords: () => void }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
   const set = (key: string, value: unknown): void => void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SET_SETTING, key, value).then(onChange)
   const usable = (aiStatus?.providers ?? []).filter((p) => p.installed && p.signedIn !== false)
@@ -788,7 +829,7 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { setti
           </span>
         </div>
       )}
-      <DictationRows />
+      <DictationRows onWords={onWords} />
       <div className="lc-set">
         <div>
           <div className="lbl">Snippets and quick links</div>
@@ -810,7 +851,7 @@ const KEY_ERRORS: Record<string, string> = {
 }
 
 /** Dictation: hold a key, talk, let go. Needs the person's own OpenAI key. */
-function DictationRows(): React.JSX.Element | null {
+function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element | null {
   const [d, setD] = useState<DictationSettings | null>(null)
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
@@ -850,7 +891,7 @@ function DictationRows(): React.JSX.Element | null {
         <div>
           <div className="lbl">Dictation</div>
           <div className="sub">
-            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go` : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
+            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
           </div>
         </div>
         <span className="row">
@@ -870,10 +911,17 @@ function DictationRows(): React.JSX.Element | null {
           </div>
           <div className="lc-set">
             <div>
-              <div className="lbl">Tidy up with AI</div>
-              <div className="sub">Removes “um” and fixes punctuation with your ChatGPT or Claude. Adds a few seconds.</div>
+              <div className="lbl">My words</div>
+              <div className="sub">{d.wordCount ? `${d.wordCount} names and terms spelt your way` : 'Names and terms dictation should spell your way'}</div>
             </div>
-            <button className="switch" role="switch" aria-checked={d.cleanup} aria-label="Tidy up with AI" onClick={() => set('cleanup', !d.cleanup)} />
+            <button className="btn" onClick={onWords}>{d.wordCount ? 'Edit' : 'Add'}</button>
+          </div>
+          <div className="lc-set">
+            <div>
+              <div className="lbl">Clean up as you go</div>
+              <div className="sub">Takes out “um”, adds punctuation, and keeps only the fix when you say “no wait”. Never changes names, numbers or “not”.</div>
+            </div>
+            <button className="switch" role="switch" aria-checked={d.cleanup} aria-label="Clean up as you go" onClick={() => set('cleanup', !d.cleanup)} />
           </div>
         </>
       )}

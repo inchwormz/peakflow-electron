@@ -2,10 +2,13 @@
  * Installed apps and system settings pages for the launcher.
  *   macOS: .app bundles in /Applications (and its subfolders), ~/Applications
  *          and the system app folders; settings via x-apple.systempreferences links.
- *   Windows: Start menu shortcuts (all users + this user); settings via ms-settings: links.
+ *   Windows: Start menu shortcuts (all users + this user) plus the Start menu's app list
+ *          (Get-StartApps), which is the only place Store apps such as Notepad and
+ *          Calculator appear; settings via ms-settings: links.
  * The list is rebuilt in the background when it's more than a minute old.
  */
 
+import { execFile } from 'child_process'
 import { readdir, realpath } from 'fs/promises'
 import { homedir } from 'os'
 import { basename, extname, join } from 'path'
@@ -96,11 +99,61 @@ async function winApps(): Promise<LauncherItem[]> {
       })
     )
   }
-  await Promise.all(roots.map((r) => scan(r, 3)))
-  return [...found.values()].map((path) => {
+  const [, start] = await Promise.all([Promise.all(roots.map((r) => scan(r, 3))), startApps()])
+  const list: LauncherItem[] = [...found.values()].map((path) => {
     const name = basename(path, extname(path))
     return { id: `app:${path}`, kind: 'app' as const, title: name, keywords: APP_KEYWORDS[name], iconPath: path }
   })
+  // Store apps (and anything else only the Start menu knows), skipping names a shortcut already gave us
+  uwpIds = new Set()
+  for (const a of start) {
+    if (found.has(a.name.toLowerCase()) || SKIP_SHORTCUT.test(a.name)) continue
+    found.set(a.name.toLowerCase(), a.id)
+    uwpIds.add(a.id)
+    list.push({ id: `uwp:${a.id}`, kind: 'app', title: a.name, keywords: APP_KEYWORDS[a.name], glyph: 'app' })
+  }
+  return list
+}
+
+/** Start menu apps by name and AppUserModelID (Windows 10/11 Get-StartApps). */
+let uwpIds = new Set<string>()
+
+const START_APPS_PS = "$ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress"
+
+function startApps(): Promise<Array<{ name: string; id: string }>> {
+  const encoded = Buffer.from(START_APPS_PS, 'utf16le').toString('base64')
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', encoded],
+      { windowsHide: true, timeout: 15_000, maxBuffer: 8 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err) {
+          console.warn('[Launcher] Get-StartApps failed:', err.message)
+          return resolve([])
+        }
+        try {
+          const raw = JSON.parse(stdout.trim() || '[]') as unknown
+          const rows = (Array.isArray(raw) ? raw : [raw]) as Array<{ Name?: unknown; AppID?: unknown }>
+          resolve(
+            rows
+              .filter((r) => typeof r.Name === 'string' && typeof r.AppID === 'string' && r.Name && r.AppID)
+              .map((r) => ({ name: (r.Name as string).trim(), id: r.AppID as string }))
+              // Plain URLs (web links pinned to Start) open through the browser elsewhere
+              .filter((r) => !/^https?:/i.test(r.id))
+          )
+        } catch (e) {
+          console.warn('[Launcher] Get-StartApps output unreadable:', (e as Error).message)
+          resolve([])
+        }
+      }
+    )
+  })
+}
+
+/** An AppUserModelID we listed (only those can be launched, so the bar can't run arbitrary shell: paths). */
+export function isIndexedStartApp(id: string): boolean {
+  return uwpIds.has(id)
 }
 
 function rebuild(): Promise<void> {

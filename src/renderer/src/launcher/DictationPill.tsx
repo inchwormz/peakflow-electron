@@ -15,8 +15,10 @@ const BARS = 5
 export function DictationPill(): React.JSX.Element {
   const [st, setSt] = useState<DictationState>({ phase: 'idle' })
   const [level, setLevel] = useState(0)
-  const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; ctx: AudioContext; raf: number; chunks: Blob[] } | null>(null)
+  const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; raf: number; chunks: Blob[] } | null>(null)
   const startId = useRef(0)
+  // One audio graph for the level meter, kept between dictations (suspended when idle)
+  const ctxRef = useRef<AudioContext | null>(null)
 
   useEffect(() => {
     document.documentElement.style.background = 'transparent'
@@ -27,17 +29,21 @@ export function DictationPill(): React.JSX.Element {
       const r = rec.current
       if (!r) return
       cancelAnimationFrame(r.raf)
-      r.stream.getTracks().forEach((t) => t.stop())
-      void r.ctx.close().catch(() => {})
+      r.stream.getTracks().forEach((t) => t.stop()) // the Mac's mic indicator goes off
+      void ctxRef.current?.suspend().catch(() => {})
       rec.current = null
       setLevel(0)
     }
 
-    const start = async (): Promise<void> => {
+    const start = async (opts: { at?: number; processing?: boolean }): Promise<void> => {
       const id = ++startId.current
+      const processing = opts.processing !== false
       let stream: MediaStream
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+        // Mono speech at 16 kHz is all the model needs, and uploads faster
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, sampleRate: { ideal: 16000 }, echoCancellation: processing, noiseSuppression: processing, autoGainControl: processing }
+        })
       } catch (err) {
         const name = (err as DOMException).name
         void invoke(IPC_INVOKE.DICTATION_MIC_ERROR, name === 'NotAllowedError' ? 'denied' : name === 'NotFoundError' ? 'none' : 'failed')
@@ -46,10 +52,11 @@ export function DictationPill(): React.JSX.Element {
       // Let go before the mic opened
       if (id !== startId.current) return stream.getTracks().forEach((t) => t.stop())
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      const mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32000 })
       const chunks: Blob[] = []
       mr.ondataavailable = (e) => e.data.size && chunks.push(e.data)
-      const ctx = new AudioContext()
+      const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext())
+      void ctx.resume().catch(() => {})
       const an = ctx.createAnalyser()
       an.fftSize = 512
       ctx.createMediaStreamSource(stream).connect(an)
@@ -61,8 +68,10 @@ export function DictationPill(): React.JSX.Element {
         setLevel(Math.min(1, Math.sqrt(sum / buf.length) / 40))
         if (rec.current) rec.current.raf = requestAnimationFrame(tick)
       }
-      rec.current = { mr, stream, ctx, raf: requestAnimationFrame(tick), chunks }
+      rec.current = { mr, stream, raf: requestAnimationFrame(tick), chunks }
       mr.start(250)
+      // How long the mic took to open after the key went down: anything said before this is lost
+      if (opts.at) void invoke(IPC_INVOKE.DICTATION_READY, { micMs: Date.now() - opts.at })
     }
 
     const stop = (send: boolean): void => {
@@ -82,7 +91,7 @@ export function DictationPill(): React.JSX.Element {
       r.mr.stop()
     }
 
-    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, () => void start())
+    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean }))
     const offStop = window.peakflow.on(IPC_SEND.DICTATION_STOP, (raw) => stop(!!(raw as { send?: boolean } | undefined)?.send))
     const offState = window.peakflow.on(IPC_SEND.DICTATION_STATE, (raw) => setSt(raw as DictationState))
     return () => {
@@ -90,6 +99,7 @@ export function DictationPill(): React.JSX.Element {
       offStop()
       offState()
       release()
+      void ctxRef.current?.close().catch(() => {})
     }
   }, [])
 

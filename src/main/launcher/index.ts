@@ -20,7 +20,7 @@ import type {
   LauncherRunResult, LauncherSettings, LauncherSnippet
 } from '@shared/launcher/types'
 import { launcherStore, DEFAULT_LAUNCHER_HOTKEY } from './store'
-import { getApps, isIndexedApp, settingsItems, settingsUrl } from './apps'
+import { getApps, isIndexedApp, isIndexedStartApp, settingsItems, settingsUrl } from './apps'
 import { searchFiles, filePathFor } from './files'
 import { listProcesses, quitProcess } from './processes'
 import { getRates } from './rates'
@@ -35,7 +35,7 @@ import {
 } from './window'
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
-import { initDictation, destroyDictation, runDictationDevTest } from '../dictation'
+import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation } from '../dictation'
 import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier } from '../services/local-ai'
 
 const isMac = process.platform === 'darwin'
@@ -94,9 +94,23 @@ function userItems(): LauncherItem[] {
   return [...links, ...snippets]
 }
 
+/** The last dictation, and the same words as spoken when the clean-up changed them. */
+function dictationItems(): LauncherItem[] {
+  const d = getLastDictation()
+  if (!d) return []
+  const preview = (t: string): string => t.replace(/\s+/g, ' ').slice(0, 80)
+  const items: LauncherItem[] = [
+    { id: 'dictation:paste', kind: 'command', title: 'Paste Last Dictation', subtitle: preview(d.typed), keywords: ['dictation', 'voice', 'again'], glyph: 'text' }
+  ]
+  if (d.raw !== d.typed) {
+    items.push({ id: 'dictation:paste-raw', kind: 'command', title: 'Paste Last Dictation as Spoken', subtitle: preview(d.raw), keywords: ['dictation', 'raw', 'undo clean up', 'original'], glyph: 'text' })
+  }
+  return items
+}
+
 async function allItems(): Promise<LauncherItem[]> {
   const apps = await getApps()
-  return [...apps, ...toolItems(), ...windowItems(), ...systemItems(), ...settingsItems(), ...builtInItems(), ...userItems()]
+  return [...apps, ...toolItems(), ...windowItems(), ...systemItems(), ...settingsItems(), ...builtInItems(), ...userItems(), ...dictationItems()]
 }
 
 // ─── running items ───────────────────────────────────────────────────────────
@@ -146,6 +160,22 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
     const p = id.slice(4)
     if (!isIndexedApp(p)) return { ok: false }
     return done(await openPath(p, !!opts.alt))
+  }
+  if (id === 'dictation:paste' || id === 'dictation:paste-raw') {
+    const d = getLastDictation()
+    if (!d) return { ok: false, message: 'Nothing dictated in the last 30 minutes', keepOpen: true }
+    hideLauncher({ restoreFocus: true })
+    await new Promise((r) => setTimeout(r, 250)) // the app underneath takes the keyboard back
+    return done({ ok: await pasteDictation(id === 'dictation:paste-raw' ? d.raw : d.typed) })
+  }
+  if (id.startsWith('uwp:')) {
+    // Store apps have no file to open: the shell starts them by AppUserModelID
+    const appId = id.slice(4)
+    if (process.platform !== 'win32' || !isIndexedStartApp(appId)) return { ok: false }
+    const child = spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], { detached: true, stdio: 'ignore', windowsHide: true })
+    child.on('error', () => {})
+    child.unref()
+    return done({ ok: true })
   }
   if (id.startsWith('file:')) {
     const p = filePathFor(id)

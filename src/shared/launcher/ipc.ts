@@ -35,7 +35,10 @@ export const LAUNCHER_INVOKE = {
   DICTATION_SETTINGS: 'dictation:settings',
   DICTATION_SET: 'dictation:set',
   DICTATION_SAVE_KEY: 'dictation:save-key',
-  DICTATION_REMOVE_KEY: 'dictation:remove-key'
+  DICTATION_REMOVE_KEY: 'dictation:remove-key',
+  /** My words: the raw text, and saving it */
+  DICTATION_WORDS: 'dictation:words',
+  DICTATION_SET_WORDS: 'dictation:set-words'
 } as const
 
 export const LAUNCHER_SEND = {

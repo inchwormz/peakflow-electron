@@ -108,6 +108,8 @@ function onLine(line: string): void {
 }
 
 const WIN_HOOK = `
+# No progress records: they reach stderr as CLIXML noise
+$ProgressPreference = 'SilentlyContinue'
 $src = @"
 using System;
 using System.Collections.Generic;
@@ -282,7 +284,11 @@ function start(): void {
       if (l) onLine(l)
     }
   })
-  c.stderr?.on('data', (d: Buffer) => console.warn('[Launcher] keywatch:', d.toString().trim().slice(0, 300)))
+  c.stderr?.on('data', (d: Buffer) => {
+    // PowerShell writes progress and some host messages to stderr as CLIXML: not errors
+    const t = d.toString().trim()
+    if (t && !t.startsWith('#< CLIXML') && !t.startsWith('<Objs')) console.warn('[Launcher] keywatch:', t.slice(0, 300))
+  })
   c.stdin?.on('error', () => {})
   c.on('exit', (code) => {
     if (child === c) child = null
