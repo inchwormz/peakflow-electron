@@ -274,7 +274,7 @@ async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
   last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
   const ok = await typeText(text)
   console.log(
-    `[Dictation] let go → typed in ${Date.now() - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
+    `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
   )
   busy = false
@@ -293,11 +293,14 @@ export function pasteDictation(text: string): Promise<boolean> {
 }
 
 /** Paste into the app in front, then put the clipboard back as it was. */
+let pastedAt = 0
+
 async function typeText(text: string): Promise<boolean> {
   const before = clipboard.readText()
   const saved = saveClipboard()
   clipboard.writeText(text)
   const ok = await simulateCtrlV()
+  pastedAt = Date.now()
   if (ok) {
     // Give the app time to read the clipboard before restoring it
     await new Promise((r) => setTimeout(r, 400))
