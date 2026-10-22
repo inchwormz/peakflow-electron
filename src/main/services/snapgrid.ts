@@ -23,6 +23,8 @@ import { getConfig, setConfig } from './config-store'
 import { checkAccess } from '../security/access-check'
 import { withToolAccess } from '../security/access-guard'
 import { windowSnap } from '../native/window-snap'
+import { hidePanel } from '../panel'
+import { getFocusDimService } from './focus-dim'
 import type { SnapRect, SnapWindow, DragEvent } from '../native/window-snap'
 
 const POLL_MS = 350
@@ -234,8 +236,6 @@ class SnapGridService {
   }
 
   private hidePanelSoon(): void {
-    // Lazy require: panel.ts imports the IPC layer, which imports this service
-    const { hidePanel } = require('../panel') as typeof import('../panel')
     hidePanel()
   }
 
@@ -248,7 +248,6 @@ class SnapGridService {
     void this.refreshDragWatch()
     let dim = false
     try {
-      const { getFocusDimService } = require('./focus-dim') as typeof import('./focus-dim')
       dim = getFocusDimService().getState().enabled
     } catch {
       /* FocusDim not started */
@@ -371,10 +370,8 @@ class SnapGridService {
     this.overlay = win
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:transparent;overflow:hidden}
-.z{position:absolute;box-sizing:border-box;border-radius:12px;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.75);box-shadow:0 0 0 1px rgba(0,0,0,.35),0 10px 40px rgba(0,0,0,.25);transition:left .12s ease,top .12s ease,width .12s ease,height .12s ease}
-</style></head><body><script>
-window.render=function(rs){document.body.innerHTML='';for(const r of rs){const d=document.createElement('div');d.className='z';d.style.left=r.x+'px';d.style.top=r.y+'px';d.style.width=r.w+'px';d.style.height=r.h+'px';document.body.appendChild(d)}}
-</script></body></html>`
+.z{position:absolute;box-sizing:border-box;border-radius:12px;background:rgba(255,255,255,.22);border:3px solid rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(0,0,0,.45),0 12px 48px rgba(0,0,0,.35);transition:left .12s ease,top .12s ease,width .12s ease,height .12s ease}
+</style></head><body></body></html>`
     this.overlayReady = win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => {})
     win.on('closed', () => {
       if (this.overlay === win) {
@@ -393,7 +390,9 @@ window.render=function(rs){document.body.innerHTML='';for(const r of rs){const d
       if (!win || win.isDestroyed()) return
       const b = win.getBounds()
       if (b.x !== d.bounds.x || b.y !== d.bounds.y || b.width !== d.bounds.width || b.height !== d.bounds.height) win.setBounds(d.bounds)
-      void win.webContents.executeJavaScript(`render(${JSON.stringify(local)})`).catch(() => {})
+      // No script in the page (the app's CSP blocks inline scripts): draw from here
+      const boxes = local.map((r) => `<div class="z" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"></div>`).join('')
+      void win.webContents.executeJavaScript(`document.body.innerHTML=${JSON.stringify(boxes)}`).catch(() => {})
       if (!win.isVisible()) win.showInactive()
     })
   }
@@ -401,7 +400,7 @@ window.render=function(rs){document.body.innerHTML='';for(const r of rs){const d
   private hidePreview(): void {
     const win = this.overlay
     if (win && !win.isDestroyed() && win.isVisible()) {
-      void win.webContents.executeJavaScript('render([])').catch(() => {})
+      void win.webContents.executeJavaScript("document.body.innerHTML=''").catch(() => {})
       win.hide()
     }
   }
