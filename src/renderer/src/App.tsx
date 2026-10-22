@@ -18,6 +18,7 @@ const LiquidFocusMini = lazy(() =>
   import('./tools/liquidfocus/LiquidFocusMini').then((m) => ({ default: m.LiquidFocusMini }))
 )
 const PanelApp = lazy(() => import('./panel/PanelApp').then((m) => ({ default: m.PanelApp })))
+const LauncherApp = lazy(() => import('./launcher/LauncherApp').then((m) => ({ default: m.LauncherApp })))
 const SoundSplit = lazy(() => import('./tools/soundsplit/SoundSplit').then((m) => ({ default: m.SoundSplit })))
 
 function ToolSuspense({ children }: { children: ReactNode }): React.JSX.Element {
@@ -167,6 +168,15 @@ export default function App(): React.JSX.Element {
       )
     }
 
+    // ⌥Space launcher (free command bar)
+    if (systemId === SystemWindowId.Launcher) {
+      return (
+        <Suspense fallback={null}>
+          <LauncherApp />
+        </Suspense>
+      )
+    }
+
     // System windows (no app shell chrome)
     if (systemId === SystemWindowId.ScreenSlapAlert) {
       return <AlertOverlay />
@@ -248,7 +258,7 @@ export default function App(): React.JSX.Element {
   }
 
   // System windows render without AppShell (no title bar, no chrome)
-  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini || systemId === SystemWindowId.Panel) {
+  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini || systemId === SystemWindowId.Panel || systemId === SystemWindowId.Launcher) {
     return renderTool()
   }
 
