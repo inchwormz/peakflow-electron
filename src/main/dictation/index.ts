@@ -120,6 +120,8 @@ function refreshAddon(force = false): Promise<void> {
     if (addon.state !== before) {
       console.log(`[Dictation] add-on: ${addon.state}${addon.error ? ` (${addon.error})` : ''}`)
       applyWatcher()
+      // Dictation just became usable: load the recording window now so the first hold records
+      if (settings().enabled) getPill()
     }
   })().finally(() => {
     addonRefresh = null
