@@ -1,33 +1,34 @@
 /**
- * Update checker using GitHub Releases API.
+ * In-app updates.
  *
- * Compares app.getVersion() against the latest release tag
- * on github.com/inchwormz/peakflow-releases. If a newer version exists,
- * downloads the installer directly and launches it.
+ * Windows (v2 onward) uses electron-updater's NSIS updater with the GitHub
+ * provider from electron-builder.yml `publish` (inchwormz/peakflow-releases).
+ * Each release carries latest.yml + the installer + its .blockmap, so this is
+ * the standard electron-builder route: check at startup and every 4 hours,
+ * download in the background, then ask once to restart. "Later" installs on
+ * the next quit. The installer runs silently and starts PeakFlow again.
  *
- * This approach works with manually-uploaded releases (no latest.yml needed).
- *
- * macOS never uses the Windows installer path. A Developer ID–signed Mac
- * build updates through electron-updater, which reads only latest-mac.yml
- * (and the matching .zip) from the same GitHub release. Unsigned Mac builds
- * (local/dev/preview) cannot be updated by Squirrel.Mac, so automatic
- * checks are off and the manual check points to the download page.
+ * macOS never uses the Windows path. A Developer ID–signed Mac build updates
+ * through electron-updater, which reads only latest-mac.yml (and the matching
+ * .zip) from the same GitHub release. Unsigned Mac builds (local/dev/preview)
+ * cannot be updated by Squirrel.Mac, so automatic checks are off and the
+ * manual check points to the download page.
  */
 
-import { app, dialog, net, BrowserWindow, shell } from 'electron'
-import { createWriteStream } from 'fs'
-import { join, dirname } from 'path'
-import { spawn } from 'child_process'
+import { app, dialog, shell } from 'electron'
+import { dirname } from 'path'
 import { readMacSignature } from './mac-signature'
-import type { AppUpdater } from 'electron-updater'
+import type { AppUpdater, UpdateInfo } from 'electron-updater'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const GITHUB_OWNER = 'inchwormz'
 const GITHUB_REPO = 'peakflow-releases'
-const RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 const RELEASES_PAGE = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 const isMac = process.platform === 'darwin'
+
+/** Windows: how often a running PeakFlow re-checks (it is a tray app that runs for days). */
+const WIN_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -57,151 +58,165 @@ function isNewer(remote: string, local: string): boolean {
   return r[2] > l[2]
 }
 
-/**
- * Find the installer asset (.exe) from release assets.
- * Matches patterns like "PeakFlow.Setup.1.0.0.exe" or "PeakFlowSetup-1.0.0.exe".
- */
-function findInstallerUrl(assets: Array<{ name: string; browser_download_url: string }>): string | null {
-  const installer = assets.find(
-    (a) => a.name.toLowerCase().includes('peakflow') && a.name.toLowerCase().includes('setup') && a.name.endsWith('.exe')
-  )
-  return installer?.browser_download_url ?? null
+// ─── Windows ────────────────────────────────────────────────────────────────
+
+let winUpdaterInstance: AppUpdater | null = null
+/** Version whose "ready to restart" dialog was already shown this session. */
+let winPromptedVersion: string | null = null
+let winPromptOpen = false
+
+/** Ask once per downloaded version: restart now, or install when PeakFlow quits. */
+async function promptWinRestart(updater: AppUpdater, info: UpdateInfo, force: boolean): Promise<void> {
+  if (winPromptOpen) return
+  if (!force && winPromptedVersion === info.version) return
+  winPromptedVersion = info.version
+  winPromptOpen = true
+  try {
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Ready',
+      message: `PeakFlow v${info.version} is ready. Restart to update.`,
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    // Silent installer, then start PeakFlow again. "Later" leaves
+    // autoInstallOnAppQuit to install it the next time PeakFlow quits.
+    if (result.response === 0) updater.quitAndInstall(true, true)
+  } finally {
+    winPromptOpen = false
+  }
 }
 
-/**
- * Fetch the latest release info from GitHub.
- */
-function fetchLatestRelease(): Promise<{
-  tag: string
-  name: string
-  htmlUrl: string
-  installerUrl: string | null
-}> {
-  return new Promise((resolve, reject) => {
-    const request = net.request({
-      url: RELEASES_API,
-      method: 'GET'
-    })
+/** Loaded on demand; configured once. */
+function getWinUpdater(): AppUpdater {
+  if (winUpdaterInstance) return winUpdaterInstance
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+  const winUpdater = autoUpdater
+  winUpdaterInstance = winUpdater
+  winUpdater.autoDownload = true
+  winUpdater.autoInstallOnAppQuit = true
+  winUpdater.logger = console
 
-    request.setHeader('Accept', 'application/vnd.github.v3+json')
-    request.setHeader('User-Agent', `PeakFlow/${app.getVersion()}`)
+  // Test hook (end-to-end update testing only). When PEAKFLOW_UPDATE_FEED is
+  // set, e.g. PEAKFLOW_UPDATE_FEED=http://127.0.0.1:8080/ , updates come from
+  // that generic feed (a folder serving latest.yml, the installer .exe and its
+  // .blockmap) instead of GitHub. Unset (every real user) = GitHub, unchanged.
+  const testFeed = process.env.PEAKFLOW_UPDATE_FEED
+  if (testFeed) {
+    console.log(`[AutoUpdater] PEAKFLOW_UPDATE_FEED set — using generic feed ${testFeed}`)
+    winUpdater.setFeedURL({ provider: 'generic', url: testFeed })
+  }
 
-    let body = ''
+  winUpdater.on('update-available', (info: UpdateInfo) => {
+    downloading = true
+    console.log(`[AutoUpdater] Update available: v${info.version} — downloading in background`)
+  })
 
-    request.on('response', (response) => {
-      if (response.statusCode !== 200) {
-        reject(new Error(`GitHub API returned ${response.statusCode}`))
-        return
-      }
+  winUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    downloading = false
+    console.log(`[AutoUpdater] Downloaded v${info.version}`)
+    void promptWinRestart(winUpdater, info, false)
+  })
 
-      response.on('data', (chunk) => {
-        body += chunk.toString()
+  winUpdater.on('error', (err) => {
+    downloading = false
+    console.error('[AutoUpdater] Windows update error:', err?.message ?? err)
+  })
+  return winUpdater
+}
+
+async function checkForWinUpdates(silent: boolean): Promise<void> {
+  if (checking) {
+    if (!silent) {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Checking for Updates',
+        message: 'Already checking for updates. Please wait.'
       })
+    }
+    return
+  }
 
-      response.on('end', () => {
-        try {
-          const data = JSON.parse(body)
-          if (!data.tag_name) throw new Error('No tag_name in GitHub response')
-          resolve({
-            tag: data.tag_name,
-            name: data.name || data.tag_name,
-            htmlUrl: data.html_url,
-            installerUrl: findInstallerUrl(data.assets || [])
+  const currentVersion = app.getVersion()
+  if (!app.isPackaged) {
+    // electron-updater skips unpackaged (dev) runs
+    console.log('[AutoUpdater] Skipping check: development build')
+    if (!silent) {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Updates',
+        message: `You have PeakFlow v${currentVersion}.`,
+        detail: 'Development builds do not update themselves.'
+      })
+    }
+    return
+  }
+
+  checking = true
+  const winUpdater = getWinUpdater()
+  console.log(`[AutoUpdater] Checking for updates... (current: v${currentVersion})`)
+
+  try {
+    const result = await winUpdater.checkForUpdates()
+    const latest = result?.updateInfo?.version
+    if (result?.isUpdateAvailable && latest) {
+      // Download runs in the background; 'update-downloaded' shows the restart dialog.
+      const download = result.downloadPromise
+      if (download) {
+        download.catch((dlErr) => {
+          // Already logged by the 'error' handler; only a manual check reports it.
+          if (silent) return
+          const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr)
+          dialog.showMessageBox({
+            type: 'error',
+            title: 'Download Failed',
+            message: 'Could not download the update.',
+            detail: dlMsg
           })
-        } catch (err) {
-          reject(new Error('Failed to parse GitHub response'))
-        }
-      })
-    })
-
-    request.on('error', (err) => {
-      reject(err)
-    })
-
-    request.end()
-  })
-}
-
-/**
- * Download installer exe to temp dir, showing progress on all windows' taskbar icons.
- * Returns the local file path on success.
- */
-function downloadInstaller(url: string, fileName: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const dest = join(app.getPath('temp'), fileName)
-    const file = createWriteStream(dest)
-    const request = net.request({ url, method: 'GET' })
-    request.setHeader('User-Agent', `PeakFlow/${app.getVersion()}`)
-
-    request.on('response', (response) => {
-      // Follow redirects (GitHub asset URLs redirect to S3)
-      if (response.statusCode === 302 || response.statusCode === 301) {
-        const location = response.headers['location']
-        const redirectUrl = Array.isArray(location) ? location[0] : location
-        if (redirectUrl && redirectUrl.startsWith('https://')) {
-          file.close()
-          resolve(downloadInstaller(redirectUrl, fileName))
-          return
-        }
-        file.close()
-        reject(new Error('Redirect to non-HTTPS URL'))
-        return
-      }
-
-      if (response.statusCode !== 200) {
-        file.close()
-        reject(new Error(`Download failed: HTTP ${response.statusCode}`))
-        return
-      }
-
-      const contentLength = response.headers['content-length']
-      const total = contentLength
-        ? parseInt(Array.isArray(contentLength) ? contentLength[0] : contentLength, 10)
-        : 0
-      let received = 0
-
-      response.on('data', (chunk) => {
-        received += chunk.length
-        file.write(chunk)
-        if (total > 0) {
-          const progress = received / total
-          for (const win of BrowserWindow.getAllWindows()) {
-            if (!win.isDestroyed()) win.setProgressBar(progress)
-          }
-        }
-      })
-
-      response.on('end', () => {
-        file.end(() => {
-          // Clear taskbar progress
-          for (const win of BrowserWindow.getAllWindows()) {
-            if (!win.isDestroyed()) win.setProgressBar(-1)
-          }
-          resolve(dest)
         })
-      })
-    })
-
-    request.on('error', (err) => {
-      file.close()
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) win.setProgressBar(-1)
       }
-      reject(err)
-    })
-
-    request.end()
-  })
-}
-
-/**
- * Launch the NSIS installer and exit so files are not locked during upgrade.
- * `--updated` tells electron-builder's installer to auto-close PeakFlow instead of
- * blocking on the "application is running" dialog.
- */
-function launchInstallerAndQuit(installerPath: string): void {
-  spawn(installerPath, ['--updated'], { detached: true, stdio: 'ignore' }).unref()
-  app.quit()
+      if (!silent) {
+        if (download) {
+          // Manual check: a version already downloaded earlier resolves at once.
+          void download.then(() => {
+            if (winPromptedVersion === latest) void promptWinRestart(winUpdater, result.updateInfo, true)
+          }).catch(() => undefined)
+        }
+        if (winPromptedVersion !== latest) {
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'Update Available',
+            message: `PeakFlow v${latest} is downloading.`,
+            detail: 'You will be asked to restart when it is ready.'
+          })
+        }
+      }
+    } else {
+      console.log('[AutoUpdater] No updates available — you are on the latest version')
+      if (!silent) {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'No Updates',
+          message: `You are running the latest version of PeakFlow (v${currentVersion}).`
+        })
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[AutoUpdater] Check failed:', message)
+    if (!silent) {
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'Update Check Failed',
+        message: 'Could not check for updates.',
+        detail: message
+      })
+    }
+  } finally {
+    checking = false
+  }
 }
 
 // ─── macOS ──────────────────────────────────────────────────────────────────
@@ -226,7 +241,7 @@ function isMacUpdateCapable(): boolean {
 
 let macUpdaterInstance: AppUpdater | null = null
 
-/** Loaded on demand so the Windows path never loads electron-updater. */
+/** Loaded on demand; configured once. */
 function getMacUpdater(): AppUpdater {
   if (macUpdaterInstance) return macUpdaterInstance
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -331,120 +346,19 @@ async function checkForMacUpdates(silent: boolean): Promise<void> {
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Check for updates. If `silent` is true (startup check), only shows a dialog
- * when an update IS available.
+ * Check for updates. If `silent` is true (automatic check), only shows a dialog
+ * when an update is ready.
  */
 export async function checkForUpdates(silent = false): Promise<void> {
   if (isMac) {
     return checkForMacUpdates(silent)
   }
-
-  if (checking) {
-    if (!silent) {
-      dialog.showMessageBox({
-        type: 'info',
-        title: 'Checking for Updates',
-        message: 'Already checking for updates. Please wait.'
-      })
-    }
-    return
-  }
-
-  checking = true
-  const currentVersion = app.getVersion()
-  console.log(`[AutoUpdater] Checking for updates... (current: v${currentVersion})`)
-
-  try {
-    const release = await fetchLatestRelease()
-    console.log(`[AutoUpdater] Latest release: ${release.tag}`)
-
-    if (isNewer(release.tag, currentVersion)) {
-      // Update available
-      console.log(`[AutoUpdater] Update available: ${release.tag}`)
-      const result = await dialog.showMessageBox({
-        type: 'info',
-        title: 'Update Available',
-        message: `PeakFlow ${release.tag} is available (you have v${currentVersion}).`,
-        detail: 'Would you like to download the update?',
-        buttons: ['Download', 'Later'],
-        defaultId: 0,
-        cancelId: 1
-      })
-
-      if (result.response === 0) {
-        if (!release.installerUrl) {
-          console.error('[AutoUpdater] No installer asset found in release')
-          dialog.showMessageBox({
-            type: 'error',
-            title: 'Update Error',
-            message: 'No installer found for this release.'
-          })
-          return
-        }
-
-        downloading = true
-        console.log(`[AutoUpdater] Downloading: ${release.installerUrl}`)
-
-        try {
-          const fileName = `PeakFlow-Setup-${release.tag.replace(/^v/, '')}.exe`
-          const installerPath = await downloadInstaller(release.installerUrl, fileName)
-          console.log(`[AutoUpdater] Downloaded to: ${installerPath}`)
-
-          const installResult = await dialog.showMessageBox({
-            type: 'info',
-            title: 'Download Complete',
-            message: `PeakFlow ${release.tag} is ready to install.`,
-            detail: 'The app will close and the installer will open.',
-            buttons: ['Install Now', 'Later'],
-            defaultId: 0,
-            cancelId: 1
-          })
-
-          if (installResult.response === 0) {
-            launchInstallerAndQuit(installerPath)
-          }
-        } catch (dlErr) {
-          const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr)
-          console.error('[AutoUpdater] Download failed:', dlMsg)
-          dialog.showMessageBox({
-            type: 'error',
-            title: 'Download Failed',
-            message: 'Could not download the update.',
-            detail: dlMsg
-          })
-        } finally {
-          downloading = false
-        }
-      }
-    } else {
-      // Up to date
-      console.log('[AutoUpdater] No updates available — you are on the latest version')
-      if (!silent) {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'No Updates',
-          message: `You are running the latest version of PeakFlow (v${currentVersion}).`
-        })
-      }
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error('[AutoUpdater] Check failed:', message)
-    if (!silent) {
-      dialog.showMessageBox({
-        type: 'error',
-        title: 'Update Check Failed',
-        message: 'Could not check for updates.',
-        detail: message
-      })
-    }
-  } finally {
-    checking = false
-  }
+  return checkForWinUpdates(silent)
 }
 
 /**
- * Initialize the update checker. Runs a silent check on startup.
+ * Initialize the update checker. Runs a silent check on startup
+ * (and, on Windows, every 4 hours while PeakFlow runs).
  */
 export function initAutoUpdater(): void {
   if (isMac && !isMacUpdateCapable()) {
@@ -455,6 +369,12 @@ export function initAutoUpdater(): void {
   setTimeout(() => {
     checkForUpdates(true)
   }, 5000)
+
+  if (!isMac) {
+    setInterval(() => {
+      checkForUpdates(true)
+    }, WIN_CHECK_INTERVAL_MS)
+  }
 
   console.log('[AutoUpdater] Initialized')
 }
