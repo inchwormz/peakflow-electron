@@ -10,6 +10,7 @@
  */
 
 import { execFile } from 'child_process'
+import { randomUUID } from 'crypto'
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -27,6 +28,7 @@ import { transcribe, checkKey, warmConnection, type DictationModel, type Transcr
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
+import { fetchAddonStatus, transcribeViaAddon, addonTidyFetch, usageLine, type AddonAuth, type AddonStatus } from './addon'
 
 const isMac = process.platform === 'darwin'
 const CRED_TOOL = 'Dictation'
@@ -48,6 +50,8 @@ interface DictationData {
   tidy: boolean
   /** "My words": one per line; "X -> Y" lines are replacements */
   words: string
+  /** Made up once; the add-on's server allows two computers per licence */
+  deviceId?: string
 }
 
 const store = new Store<DictationData>({
@@ -77,11 +81,38 @@ const RELEASE_PAD_MS = 150
 
 const hasKey = (): boolean => !!getCredential(CRED_TOOL, CRED_TYPE)
 
+// ─── the $5 add-on (PeakFlow's server instead of the person's own key) ────────
+
+let addon: AddonStatus = { state: 'none' }
+let addonCheckedAt = 0
+
+function addonAuth(): AddonAuth | null {
+  const licence = getCredential('license', 'key')
+  if (!licence) return null
+  let deviceId = store.get('deviceId')
+  if (!deviceId) store.set('deviceId', (deviceId = randomUUID()))
+  return { licence, deviceId }
+}
+
+const viaAddon = (): boolean => addon.state === 'active'
+
+/** Ask the server how the add-on stands (at most once a minute unless forced). */
+async function refreshAddon(force = false): Promise<void> {
+  if (!force && Date.now() - addonCheckedAt < 60_000) return
+  addonCheckedAt = Date.now()
+  const before = addon.state
+  addon = await fetchAddonStatus(addonAuth())
+  if (addon.state !== before) console.log(`[Dictation] add-on: ${addon.state}${addon.error ? ` (${addon.error})` : ''}`)
+  if (addon.state !== before) applyWatcher()
+}
+
 function settings(): DictationSettings {
-  const key = hasKey()
+  const key = hasKey() || viaAddon()
   return {
     enabled: store.get('enabled') && key,
     hasKey: key,
+    viaAddon: viaAddon(),
+    usage: viaAddon() ? usageLine(addon) : undefined,
     holdKey: store.get('holdKey'),
     model,
     cleanup: store.get('tidy'),
@@ -116,6 +147,7 @@ async function keyHint(holdKey: DictationHoldKey): Promise<string | undefined> {
 }
 
 async function settingsWithHint(): Promise<DictationSettings> {
+  await refreshAddon()
   const s = settings()
   return s.enabled ? { ...s, hint: await keyHint(s.holdKey) } : s
 }
@@ -212,6 +244,10 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
   no_speech: 'Didn’t hear anything',
   failed: 'Couldn’t turn that into text',
   model_unavailable: 'Couldn’t turn that into text',
+  addon_empty: 'You’ve used this month’s dictation. Add $5 to keep going',
+  addon_devices: 'Dictation is already on two other computers',
+  addon_daily: 'That’s 3 hours today. Dictation starts again tomorrow',
+  addon_off: 'Dictation isn’t on for this licence',
   mic_denied: 'PeakFlow can’t use the microphone',
   mic_none: 'No microphone found'
 }
@@ -300,8 +336,12 @@ async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
   const words = parseMyWords(store.get('words'))
   const ctx = await context
   const prompt = transcriptionPrompt(words, ctx)
-  let r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
-  if (r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
+  const auth = viaAddon() ? addonAuth() : null
+  let r = auth
+    ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs: releasedAt - downAt + RELEASE_PAD_MS })
+    : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
+  if (auth) void refreshAddon(true)
+  if (!auth && r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
     console.warn(`[Dictation] ${model} not available on this key (${r.detail}); using gpt-4o-mini-transcribe`)
     model = 'gpt-4o-mini-transcribe'
     r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
@@ -313,9 +353,11 @@ async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
   }
   let text = r.text
   let tidyNote = 'off'
-  if (store.get('tidy') && key && !needsTidy(r.text, words)) tidyNote = 'not needed'
-  else if (store.get('tidy') && key) {
-    const c = await cleanUp(r.text, { key, words, ctx })
+  // With the add-on the clean-up goes through PeakFlow's server too (and is metered there)
+  const tidyKey = auth ? 'add-on' : key
+  if (store.get('tidy') && tidyKey && !needsTidy(r.text, words)) tidyNote = 'not needed'
+  else if (store.get('tidy') && tidyKey) {
+    const c = await cleanUp(r.text, { key: tidyKey, words, ctx, ...(auth ? { fetchImpl: addonTidyFetch(auth), timeoutMs: 6000 } : {}) })
     text = c.text
     tidyNote = c.cleaned ? `${c.ms} ms` : `kept as spoken: ${c.rejected}`
   }
@@ -443,6 +485,10 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   applyWatcher()
   // Load the pill early when dictation is on, so the first hold records straight away
   if (settings().enabled) getPill()
+  // Someone with the add-on and no key of their own: dictation turns on once the server says so
+  void refreshAddon(true).then(() => {
+    if (settings().enabled) getPill()
+  })
 }
 
 /**
