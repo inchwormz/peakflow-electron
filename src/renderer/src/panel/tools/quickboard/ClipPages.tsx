@@ -10,7 +10,7 @@ import { invoke, isMac, useInvoke, usePanelVisible } from '../../hooks'
 import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { Btn, Empty, Gap, Grp, Hero, Note, Row } from '../../kit'
 import { useNav } from '../../nav'
-import { createAiRun, type AiResult } from './ai-run'
+import { aiAccessNote, createAiRun, type AiAccess, type AiResult } from './ai-run'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, type Clip, type Pipeline, type TransformStep } from './store'
 
 function useClip(id: string): Clip | null | undefined {
@@ -93,7 +93,7 @@ export function PasteAs({ params }: { params: RouteParams }): React.JSX.Element 
   const nav = useNav()
   const clip = useClip(params.id)
   const [data] = useInvoke<{ pipelines: Pipeline[]; available: TransformStep[] }>(IPC_INVOKE.CLIPBOARD_GET_TRANSFORMS)
-  const [access] = useInvoke<{ allowed: boolean }>(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
+  const [access] = useInvoke<AiAccess>(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
   const [hover, setHover] = useState<TransformStep[] | null>(null)
   if (clip === undefined) return <div style={{ height: 200 }} />
   if (clip === null || clip.type !== 'text') return <Missing />
@@ -139,7 +139,7 @@ export function PasteAs({ params }: { params: RouteParams }): React.JSX.Element 
         ))}
         <Row icon="globe" label="Translate" tone={aiOk ? undefined : 'muted'} go={aiOk ? `quickboard/translate/${id}` : undefined} />
       </Grp>
-      {access && !aiOk ? <Note style={{ marginTop: 10 }}>AI actions need a PeakFlow licence.</Note> : null}
+      {access && !aiOk ? <Note style={{ marginTop: 10 }}>{aiAccessNote(access.reason)}</Note> : null}
     </>
   )
 }
@@ -177,10 +177,10 @@ export function Translate({ params }: { params: RouteParams }): React.JSX.Elemen
 /* ─── AI run: processing, then paste or show the error ───────────────────── */
 
 const ERRORS: Record<string, [string, string]> = {
-  network_error: ['Couldn’t reach PeakFlow AI', 'Network error. Check your connection and try again.'],
-  timeout: ['PeakFlow AI took too long', 'Try again in a moment.'],
+  timeout: ['The AI took too long', 'Try again in a moment.'],
   not_licensed: ['AI needs a PeakFlow licence', 'AI actions are part of the paid plan.'],
-  no_license_key: ['AI needs a PeakFlow licence', 'Enter your licence key in PeakFlow settings.']
+  no_provider: ['Connect ChatGPT or Claude', 'QuickBoard’s AI uses your own ChatGPT or Claude. Install Codex or Claude Code, sign in once, then try again.'],
+  not_signed_in: ['Sign in to ChatGPT or Claude', 'Open Codex or Claude Code once and sign in, then try again.']
 }
 
 export function AiRun({ params }: { params: RouteParams }): React.JSX.Element {
@@ -215,8 +215,8 @@ export function AiRun({ params }: { params: RouteParams }): React.JSX.Element {
   if (clip === undefined) return <div style={{ height: 160 }} />
   if (clip === null || clip.type !== 'text') return <Missing />
   if (state.phase === 'run') return <Hero icon="sparkle" title={doing}>This takes a few seconds.</Hero>
-  const [title, body] = ERRORS[state.error] ?? ['Couldn’t reach PeakFlow AI', 'Something went wrong. Try again.']
-  const licence = state.error === 'not_licensed' || state.error === 'no_license_key'
+  const [title, body] = ERRORS[state.error] ?? ['The AI didn’t answer', 'Something went wrong. Try again.']
+  const licence = state.error === 'not_licensed'
   return (
     <>
       <Hero icon="info" title={title}>{body}</Hero>

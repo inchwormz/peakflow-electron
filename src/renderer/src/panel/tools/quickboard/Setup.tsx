@@ -100,10 +100,10 @@ export function Setup3(): React.JSX.Element {
 }
 
 const ERR: Record<string, string> = {
-  network_error: 'Network error. Check your connection.',
   timeout: 'It took too long. Try again.',
   not_licensed: 'AI setup needs a PeakFlow licence.',
-  no_license_key: 'Enter your licence key in PeakFlow settings first.'
+  no_provider: 'QuickBoard’s AI uses your own ChatGPT or Claude. Install Codex or Claude Code, sign in once, then try again.',
+  not_signed_in: 'Open Codex or Claude Code once and sign in, then try again.'
 }
 
 export function SetupGenerating(): React.JSX.Element {

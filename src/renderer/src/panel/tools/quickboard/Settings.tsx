@@ -13,6 +13,7 @@ import type { RouteParams } from '../../types'
 import { invoke, useInvoke, useToolConfig } from '../../hooks'
 import { Btn, Empty, Grp, IconBtn, Note, NumIn, Picker, Rec, Row, Toggle } from '../../kit'
 import { useNav } from '../../nav'
+import { aiAccessNote, type AiAccess } from './ai-run'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, OPEN_KEY, QUEUE_CANCEL_KEY, QUEUE_NEXT_KEY, WIZARD_START, type Clip, type Pipeline, type TransformStep } from './store'
 
 type Transforms = { pipelines: Pipeline[]; available: TransformStep[] }
@@ -278,14 +279,14 @@ export function ImportExport(): React.JSX.Element {
 export function AiSettings(): React.JSX.Element {
   const nav = useNav()
   const [cfg, set] = useToolConfig<QuickBoardConfig>(ToolId.QuickBoard)
-  const [access] = useInvoke<{ allowed: boolean }>(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
+  const [access] = useInvoke<AiAccess>(IPC_INVOKE.CLIPBOARD_AI_CHECK_ACCESS)
   if (!cfg) return <div style={{ height: 120 }} />
   return (
     <>
       <Grp>
         <Row
           label="Smart suggestions"
-          sub="Ideas based on what you copy"
+          sub="Sends a short summary of what you copy, never passwords"
           right={<Toggle label="Smart suggestions" checked={cfg.ai_suggestions_enabled !== false} onChange={(v) => set('ai_suggestions_enabled', v)} />}
         />
         <Row label="AI actions in Paste as…" value="Summarize, translate…" />
@@ -298,7 +299,7 @@ export function AiSettings(): React.JSX.Element {
           go="quickboard/setup/1"
         />
       </Grp>
-      {access && !access.allowed ? <Note style={{ marginTop: 10 }}>AI features need a PeakFlow licence.</Note> : null}
+      {access ? <Note style={{ marginTop: 10 }}>{access.allowed ? `AI runs on your own ${access.provider}. PeakFlow never sees it.` : aiAccessNote(access.reason)}</Note> : null}
     </>
   )
 }

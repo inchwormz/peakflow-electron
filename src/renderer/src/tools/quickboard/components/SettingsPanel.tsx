@@ -169,7 +169,7 @@ export function SettingsPanel({
           <>
             <SectionLabel>AI Features</SectionLabel>
             <div style={{ fontSize: 10, color: DS.textDim, marginBottom: 12 }}>
-              AI transforms, onboarding, and smart suggestions require a Pro license.
+              AI runs on your own ChatGPT or Claude (Codex or Claude Code) and needs a Pro license.
             </div>
             {onRerunOnboarding && (
               <button
