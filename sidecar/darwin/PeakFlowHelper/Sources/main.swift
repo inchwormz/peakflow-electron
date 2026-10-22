@@ -11,6 +11,7 @@
  *   all-windows <pid>     → windows filtered by PID
  *   app-windows <bid>     → windows filtered by bundle ID
  *   raise-app <pid>       → bring every open window of that app to the front
+ *   activate <pid>        → make that app the frontmost app
  *   visible-apps          → deduplicated list of visible apps
  *   process-name <pid>    → app name + bundle ID for a PID
  *   accessibility-check   → {"trusted": true/false}
@@ -113,6 +114,13 @@ while let line = readLine(strippingNewline: true) {
             continue
         }
         respond(jsonString(["raised": raiseAppWindows(pid: pid)]))
+
+    case "activate":
+        guard let pidStr = arg, let pid = Int32(pidStr), pid > 0 else {
+            respondError("activate requires a PID argument")
+            continue
+        }
+        respond(jsonString(["ok": activateApp(pid: pid)]))
 
     case "app-windows":
         guard let bundleId = arg else {

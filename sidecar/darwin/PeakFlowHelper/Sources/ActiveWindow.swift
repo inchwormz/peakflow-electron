@@ -270,6 +270,16 @@ func raiseAppWindows(pid: Int32) -> Int {
     return raised
 }
 
+/// Make the app with this PID frontmost. Uses Accessibility, because macOS 14
+/// can refuse a plain activate() request from a background helper.
+func activateApp(pid: Int32) -> Bool {
+    let appElement = AXUIElementCreateApplication(pid)
+    if AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue) == .success {
+        return true
+    }
+    return NSRunningApplication(processIdentifier: pid)?.activate(options: []) ?? false
+}
+
 // MARK: - Windows for bundle ID
 
 func getWindowsForBundleId(_ targetBundleId: String) -> [WindowRect] {

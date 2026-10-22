@@ -495,3 +495,6 @@ export function getVisibleAppList(skipSet?: Set<string>): Array<{ exe: string; n
     .map(([exe, name]) => ({ exe, name }))
     .sort((a, b) => a.name.localeCompare(b.name))
 }
+
+/** Windows gives focus back to the previous window itself when the panel hides. */
+export function restorePreviousApp(): void {}

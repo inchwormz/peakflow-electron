@@ -13,6 +13,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { SystemWindowId, isPanelTool } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
+import { restorePreviousApp } from './native/active-window'
 
 export const PANEL_WIDTH = 340
 const PANEL_MIN_HEIGHT = 120
@@ -182,7 +183,11 @@ export function showPanel(route?: string): void {
 export function hidePanel(): void {
   const win = getPanel()
   if (!win || !win.isVisible()) return
+  // Closed with Esc or the tray icon (not by clicking another app): PeakFlow
+  // would stay the frontmost app with no window, so hand focus back.
+  const hadFocus = win.isFocused()
   win.hide()
+  if (hadFocus && process.platform === 'darwin') restorePreviousApp()
   lastHiddenAt = Date.now()
   send(win, IPC_SEND.PANEL_VISIBILITY, false)
 }
