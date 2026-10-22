@@ -9,7 +9,28 @@
  */
 import type { TranscribeResult } from './transcribe'
 
-export const ADDON_SERVER = process.env['PEAKFLOW_DICTATION_SERVER'] || 'https://getpeakflow.pro/api/dictation'
+const PRODUCTION_SERVER = 'https://getpeakflow.pro/api/dictation'
+let ADDON_SERVER = PRODUCTION_SERVER
+
+/**
+ * Development only (main calls this when the app isn't packaged): point the
+ * add-on at a local test server. Only http://localhost / 127.0.0.1 or
+ * getpeakflow.pro over https are accepted, so the licence key can't be sent elsewhere.
+ */
+export function allowServerOverride(): void {
+  const raw = process.env['PEAKFLOW_DICTATION_SERVER']
+  if (!raw) return
+  try {
+    const u = new URL(raw)
+    const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
+    const ours = u.protocol === 'https:' && (u.hostname === 'getpeakflow.pro' || u.hostname.endsWith('.getpeakflow.pro'))
+    if (local || ours) ADDON_SERVER = raw.replace(/\/$/, '')
+  } catch { /* ignored */ }
+}
+
+export function addonServer(): string {
+  return ADDON_SERVER
+}
 
 export interface AddonStatus {
   /** off: the add-on isn't running; none: no add-on on this licence; active: dictation runs on PeakFlow's server */
@@ -37,7 +58,7 @@ const headers = (a: AddonAuth): Record<string, string> => ({ Authorization: `Lic
 export async function fetchAddonStatus(a: AddonAuth | null, fetchImpl: Fetch = fetch): Promise<AddonStatus> {
   if (!a) return { state: 'none' }
   try {
-    const res = await fetchImpl(`${ADDON_SERVER}/balance`, { headers: headers(a), signal: AbortSignal.timeout(5000) })
+    const res = await fetchImpl(`${addonServer()}/balance`, { headers: headers(a), signal: AbortSignal.timeout(5000) })
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string }
     if (res.status === 404) return { state: 'off' }
     if (res.status === 402) return { state: 'none' }
@@ -69,7 +90,7 @@ export async function transcribeViaAddon(
   if (audio.byteLength < 1000) return { ok: false, error: 'no_speech' }
   let res: Response
   try {
-    res = await fetchImpl(`${ADDON_SERVER}/transcribe`, {
+    res = await fetchImpl(`${addonServer()}/transcribe`, {
       method: 'POST',
       headers: {
         ...headers(a),
@@ -96,7 +117,7 @@ export async function transcribeViaAddon(
 export function addonTidyFetch(a: AddonAuth, fetchImpl: Fetch = fetch): Fetch {
   return (async (_url: string, init?: RequestInit) => {
     const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { messages?: unknown }
-    const res = await fetchImpl(`${ADDON_SERVER}/tidy`, {
+    const res = await fetchImpl(`${addonServer()}/tidy`, {
       method: 'POST',
       headers: { ...headers(a), 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: sent.messages }),

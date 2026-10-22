@@ -177,6 +177,8 @@ export interface DictationSettings {
   hint?: string
   /** Dictation runs on PeakFlow's server (the $5 add-on), not the person's own key */
   viaAddon?: boolean
+  /** Their own OpenAI key is saved (it can be removed even while the add-on is in use) */
+  ownKey?: boolean
   /** The add-on's usage line: "This month: 1h 12m used (32¢). …" */
   usage?: string
 }

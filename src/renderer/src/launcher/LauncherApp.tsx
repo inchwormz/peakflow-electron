@@ -928,14 +928,15 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
           </div>
         </>
       )}
-      {d.viaAddon ? (
+      {d.viaAddon && (
         <div className="lc-set">
           <div>
             <div className="lbl">Dictation add-on</div>
             <div className="sub">{d.usage}</div>
           </div>
         </div>
-      ) : (
+      )}
+      {d.ownKey && (
         <div className="lc-set">
           <div>
             <div className="lbl">OpenAI key</div>

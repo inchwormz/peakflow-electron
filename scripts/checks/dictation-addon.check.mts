@@ -49,3 +49,20 @@ const r = await tidyFetch('https://api.openai.com/v1/chat/completions', { method
 assert.deepEqual(await r.json(), { choices: [{ message: { content: 'Hi.' } }] })
 
 console.log('dictation-addon: ok')
+
+// The server address can only be changed to a local test server or getpeakflow.pro (development builds only)
+{
+  const { allowServerOverride, addonServer } = await import('../../src/main/dictation/addon.ts')
+  for (const [raw, want] of [
+    ['http://evil.example/api', 'https://getpeakflow.pro/api/dictation'],
+    ['http://getpeakflow.pro/api/dictation', 'https://getpeakflow.pro/api/dictation'],
+    ['https://getpeakflow.pro.evil.example/x', 'https://getpeakflow.pro/api/dictation'],
+    ['http://localhost:3000/api/dictation/', 'http://localhost:3000/api/dictation'],
+    ['https://preview.getpeakflow.pro/api/dictation', 'https://preview.getpeakflow.pro/api/dictation']
+  ]) {
+    process.env.PEAKFLOW_DICTATION_SERVER = raw
+    allowServerOverride()
+    assert.equal(addonServer(), want, raw)
+  }
+}
+console.log('dictation-addon server override: ok')
