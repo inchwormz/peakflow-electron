@@ -25,6 +25,7 @@ import { withToolAccess } from '../security/access-guard'
 import { windowSnap } from '../native/window-snap'
 import { hidePanel } from '../panel'
 import { getFocusDimService } from './focus-dim'
+import { setWindowCommandHandler } from '../launcher/window-commands'
 import type { SnapRect, SnapWindow, DragEvent } from '../native/window-snap'
 
 const POLL_MS = 350
@@ -419,9 +420,12 @@ export function getSnapGridService(): SnapGridService {
 
 export function initSnapGrid(): void {
   getSnapGridService().init()
+  // The launcher lists window commands ("left half" …) only while this is set.
+  setWindowCommandHandler((key) => getSnapGridService().applyLayout(key as SnapLayoutKey))
 }
 
 export function destroySnapGrid(): void {
+  setWindowCommandHandler(null)
   service?.destroy()
   service = null
 }

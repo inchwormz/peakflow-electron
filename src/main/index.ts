@@ -32,6 +32,7 @@ import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting } from './windows'
 import { initPanel, showPanel, setPanelQuitting } from './panel'
 import { runDevShots } from './dev-shots'
+import { initLauncher, destroyLauncher } from './launcher'
 import { setTrayTitle } from './tray'
 import { getLiquidFocusService } from './services/liquidfocus'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
@@ -247,6 +248,8 @@ if (!gotLock) {
     // the menu-bar icon (replaces the old Dashboard hub window)
     initPanel()
     setTimeout(() => showPanel(), 600)
+    // Free ⌥Space / Alt+Space launcher (hidden window kept ready)
+    initLauncher()
     void runDevShots() // development screenshots only (env-gated, never in packaged builds)
 
     // macOS: one-time plain-English explainer for the Accessibility permission
@@ -269,6 +272,7 @@ if (!gotLock) {
     destroyWatchdog() // FIRST — stop watchdog before teardown to prevent false positives
     setAppQuitting(true)
     setPanelQuitting(true)
+    destroyLauncher()
     console.log('[PeakFlow] Shutting down...')
     if (EXTENSION_ENABLED) destroyExtensionServer()
     if (TODOIST_ENABLED) destroyTodoist()

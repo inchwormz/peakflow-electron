@@ -107,6 +107,9 @@ function readStoredDate(key: string): Date | null {
 
 const EXPIRY_KEY = 'trial_expires_at'
 
+/** Tools whose install dates can date the app-wide trial (see ensureTrialExpiry). */
+const TRIAL_HISTORY_TOOLS: readonly ToolId[] = [ToolId.FocusDim, ToolId.LiquidFocus, ToolId.ScreenSlap, ToolId.QuickBoard]
+
 /**
  * The saved trial end, ONLY if it decrypts (safeStorage). A plaintext value is
  * never trusted as the saved end, so typing a future date into the store file
@@ -145,7 +148,10 @@ export function ensureTrialExpiry(now: Date = new Date()): Date {
   const saved = readSavedExpiry()
   if (saved) return saved
   let latestEnd: number | null = null
-  for (const id of PANEL_TOOLS) {
+  // Only the four original tools: a tool added in a later version is switched
+  // on with today's date when the update first runs, so counting it would give
+  // an expired user a fresh trial whenever the saved end is missing.
+  for (const id of TRIAL_HISTORY_TOOLS) {
     const start = readStoredDate(`tool_install_${id}`)
     if (!start) continue
     const end = start.getTime() + TRIAL_DAYS * DAY_MS
