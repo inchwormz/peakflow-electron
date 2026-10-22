@@ -165,7 +165,8 @@ export interface DictationSettings {
   enabled: boolean
   hasKey: boolean
   holdKey: DictationHoldKey
-  model: 'gpt-4o-mini-transcribe' | 'gpt-4o-transcribe'
+  /** The speech-to-text model in use (gpt-transcribe, or the fallback when the key can't use it) */
+  model: 'gpt-transcribe' | 'gpt-4o-mini-transcribe'
   /** Tidy punctuation and filler words with the person's own ChatGPT/Claude (local-ai) */
   cleanup: boolean
   /** The keyboard watcher is running with the permission it needs */

@@ -875,16 +875,6 @@ function DictationRows(): React.JSX.Element | null {
           </div>
           <div className="lc-set">
             <div>
-              <div className="lbl">Accuracy</div>
-              <div className="sub">Best catches more names and costs about twice as much</div>
-            </div>
-            <span className="seg">
-              <button aria-pressed={d.model === 'gpt-4o-mini-transcribe'} onClick={() => set('model', 'gpt-4o-mini-transcribe')}>Fast</button>
-              <button aria-pressed={d.model === 'gpt-4o-transcribe'} onClick={() => set('model', 'gpt-4o-transcribe')}>Best</button>
-            </span>
-          </div>
-          <div className="lc-set">
-            <div>
               <div className="lbl">Tidy up with AI</div>
               <div className="sub">Removes “um” and fixes punctuation with your ChatGPT or Claude. Adds a few seconds.</div>
             </div>
