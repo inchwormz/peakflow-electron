@@ -71,6 +71,8 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
         return quitApp(pid: pid, force: command == "force-quit-app")
     case "lock":
         return lockScreen()
+    case "context":
+        return dictationContext()
     default:
         return nil
     }
