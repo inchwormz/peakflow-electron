@@ -14,6 +14,7 @@ import { useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import { EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { AccessStatus, LicenseActivationResult } from '@shared/ipc-types'
+import type { LauncherSettings } from '@shared/launcher/types'
 import type { PanelToolId, RouteTable } from '../types'
 import { invoke, isMac, useInvoke, formatAccelerator } from '../hooks'
 import { Btn, Grp, Hero, Gap, Note, Primary, Rec, Row, Toggle, V, openExternal } from '../kit'
@@ -260,6 +261,8 @@ function Hotkeys(): React.JSX.Element {
   const [registered] = useInvoke<Array<{ accelerator: string; label: string }>>(IPC_INVOKE.HOTKEY_GET_REGISTERED)
   const has = (accel: string): boolean => !registered || registered.some((r) => r.accelerator.toLowerCase() === accel.toLowerCase())
   const taken = (accel: string): string | undefined => (has(accel) ? undefined : 'Not active: another app may use it')
+  // The launcher keeps its own shortcut (changed from the launcher's settings)
+  const [launcher] = useInvoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SETTINGS)
   return (
     <>
       <Note style={{ marginBottom: 2 }}>PeakFlow</Note>
@@ -267,6 +270,13 @@ function Hotkeys(): React.JSX.Element {
         {TOOL_MODULES.map((m, i) => (
           <Row key={m.id} label={`Open ${m.name}`} sub={taken(SWITCH[i])} right={<Rec value={SWITCH[i]} />} />
         ))}
+        {launcher && (
+          <Row
+            label="Open the launcher"
+            sub={launcher.hotkeyRegistered ? undefined : 'Not active: another app may use it'}
+            right={<Rec value={launcher.hotkey} />}
+          />
+        )}
       </Grp>
       <Note style={{ margin: '14px 0 2px' }}>Tools</Note>
       <Grp>

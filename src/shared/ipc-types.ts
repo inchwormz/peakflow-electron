@@ -7,6 +7,7 @@
  */
 
 import type { ToolId } from './tool-ids'
+import { LAUNCHER_INVOKE, LAUNCHER_SEND } from './launcher/ipc'
 
 // ─── Security / Licensing ────────────────────────────────────────────────────
 
@@ -223,7 +224,10 @@ export const IPC_INVOKE = {
   // Bug Report
   BUGREPORT_SEND_EMAIL: 'bugreport:send-email',
   BUGREPORT_COPY_TO_CLIPBOARD: 'bugreport:copy-to-clipboard',
-  BUGREPORT_REVEAL_LOG: 'bugreport:reveal-log'
+  BUGREPORT_REVEAL_LOG: 'bugreport:reveal-log',
+
+  // Launcher (⌥Space command bar)
+  ...LAUNCHER_INVOKE
 } as const
 
 /** Send channels (main → renderer, push notifications) */
@@ -260,7 +264,10 @@ export const IPC_SEND = {
   /** v2: a focus session was reset because you looked away */
   LIQUIDFOCUS_AWAY_RESET: 'liquidfocus:away-reset',
   /** v2: a tool setting changed ({ tool, key, value }), so every screen and the background detector follow it at once */
-  CONFIG_CHANGED: 'config:changed'
+  CONFIG_CHANGED: 'config:changed',
+
+  // Launcher (⌥Space command bar)
+  ...LAUNCHER_SEND
 } as const
 
 /** What the renderer asks APP_GET_ICON for: an app bundle id, an app name, a file path or a link. */

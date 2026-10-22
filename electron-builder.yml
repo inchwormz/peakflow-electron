@@ -60,6 +60,7 @@ mac:
     NSCameraUsageDescription: PeakFlow needs camera access for meeting prep and focus tools.
     NSMicrophoneUsageDescription: PeakFlow needs microphone access for meeting prep and mic mute controls.
     LSUIElement: true
+    NSAppleEventsUsageDescription: PeakFlow's launcher asks Finder to empty the Bin and the system to restart or shut down when you choose those commands.
   extraResources:
     - from: resources/darwin/peakflow-helper
       to: peakflow-helper
