@@ -331,6 +331,7 @@ async function typeText(text: string): Promise<boolean> {
   const before = clipboard.readText()
   const saved = saveClipboard()
   clipboard.writeText(text)
+  if (process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Dictation] pasting ${text.length} chars into ${(await readContext()).app ?? 'unknown app'}`)
   const ok = await simulateCtrlV()
   pastedAt = Date.now()
   if (ok) {

@@ -101,7 +101,8 @@ function onLine(line: string): void {
       }
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
-    } else if (ev.e === 'hold-down') holdListener?.('down')
+    } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
+    if (ev.e === 'hold-down') holdListener?.('down')
     else if (ev.e === 'hold-up') holdListener?.('up')
     else if (ev.e === 'hold-cancel') holdListener?.('cancel')
   } catch { /* not ours */ }
