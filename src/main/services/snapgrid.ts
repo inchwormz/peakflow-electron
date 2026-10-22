@@ -205,6 +205,14 @@ class SnapGridService {
     }, () => 'Your trial has ended')
   }
 
+  /** Arrange with the layout that fits how many windows are on the screen
+   *  (John, 23 Oct: "a hotkey to auto-arrange all of the open windows") */
+  async autoArrange(): Promise<string> {
+    const n = (await this.windowsOnTargetScreen(await this.currentTarget())).length
+    if (n <= 1) return n ? this.applyLayout('fill') : 'No windows to arrange'
+    return this.arrange(n === 2 ? 'halves' : n === 3 ? 'main2' : n === 4 ? 'grid' : 'focus')
+  }
+
   async undo(opts: { fromPanel?: boolean } = {}): Promise<string> {
     const w = await this.currentTarget()
     const stack = w ? this.history.get(w.id) : undefined
