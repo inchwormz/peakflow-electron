@@ -64,6 +64,7 @@ let releasedAt = 0
 let recording = false
 let maxTimer: ReturnType<typeof setTimeout> | null = null
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+let showTimer: ReturnType<typeof setTimeout> | null = null
 let busy = false
 /** gpt-transcribe unless this key turned out not to have it (remembered until restart) */
 let model: DictationModel = 'gpt-transcribe'
@@ -216,8 +217,10 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
 }
 
 function fail(code: keyof typeof ERROR_TEXT): void {
+  clearShowTimer()
   recording = false
   busy = false
+  showPill()
   state({ phase: 'error', message: ERROR_TEXT[code] })
   hidePill(2600)
 }
@@ -228,7 +231,13 @@ function onDown(): void {
   if (recording || busy || !settings().enabled) return
   downAt = Date.now()
   recording = true
-  showPill()
+  // Recording starts now (nothing said is lost) but the pill waits until this is
+  // clearly a hold, so taps and double taps (SnapGrid) never flash it
+  clearShowTimer()
+  showTimer = setTimeout(() => {
+    showTimer = null
+    if (recording) showPill()
+  }, MIN_HOLD_MS)
   state({ phase: 'listening' })
   // PEAKFLOW_DICTATION_MIC_RAW=1 (testing): no echo cancelling, noise suppression or auto gain
   sendPill(IPC_SEND.DICTATION_START, { at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1' })
@@ -244,7 +253,9 @@ function onUp(): void {
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = null
   recording = false
+  clearShowTimer()
   if (Date.now() - downAt < MIN_HOLD_MS) return cancel()
+  showPill()
   releasedAt = Date.now()
   busy = true
   state({ phase: 'transcribing' })
@@ -269,7 +280,13 @@ async function readContext(): Promise<DictationContext> {
 }
 
 /** Tap, or another key pressed with the hold key (a shortcut, not dictation). */
+function clearShowTimer(): void {
+  if (showTimer) clearTimeout(showTimer)
+  showTimer = null
+}
+
 function cancel(): void {
+  clearShowTimer()
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = null
   recording = false
