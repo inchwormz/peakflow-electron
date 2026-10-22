@@ -119,10 +119,10 @@ async function settingsWithHint(): Promise<DictationSettings> {
   return s.enabled ? { ...s, hint: await keyHint(s.holdKey) } : s
 }
 
-/** Watch the hold key only while dictation is on and has a key. */
+/** Holding the key dictates only while dictation is on (the key is still watched for SnapGrid's double tap). */
 function applyWatcher(): void {
   const s = settings()
-  setHoldKey(s.enabled ? s.holdKey : null)
+  setHoldKey(s.holdKey, s.enabled)
 }
 
 // ─── the pill ────────────────────────────────────────────────────────────────
