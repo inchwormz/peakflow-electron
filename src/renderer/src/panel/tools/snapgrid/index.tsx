@@ -65,6 +65,13 @@ const preview = (kind: 'layout' | 'arrange' | null, key?: string): void => {
   invoke(IPC_INVOKE.SNAPGRID_PREVIEW, kind, key).catch(() => {})
 }
 
+/** Hide the preview when keyboard focus leaves the layouts, but not when the
+ *  panel itself loses focus (on Windows, showing the preview window does that) */
+const leavePreview = (e: React.FocusEvent): void => {
+  const next = e.relatedTarget as HTMLElement | null
+  if (document.hasFocus() && !next?.closest('.sg-grid, .sg-arr')) preview(null)
+}
+
 /* ─── main screen ────────────────────────────────────────────────────────── */
 
 function Main(): React.JSX.Element {
@@ -130,7 +137,7 @@ function Main(): React.JSX.Element {
             aria-label={`${l.name} (${keys(l.accel)})`}
             onMouseEnter={() => { setHover(l); preview('layout', l.key) }}
             onFocus={() => { setHover(l); preview('layout', l.key) }}
-            onBlur={() => preview(null)}
+            onBlur={leavePreview}
             onClick={() => run(IPC_INVOKE.SNAPGRID_APPLY, l.key)}
           >
             <Mini layout={l} />
@@ -154,7 +161,7 @@ function Main(): React.JSX.Element {
               disabled={!s.windows.length}
               onMouseEnter={() => preview('arrange', a.key)}
               onFocus={() => preview('arrange', a.key)}
-              onBlur={() => preview(null)}
+              onBlur={leavePreview}
               onClick={() => run(IPC_INVOKE.SNAPGRID_ARRANGE, a.key)}
             >
               <span className="sg-tile">

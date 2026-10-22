@@ -7,7 +7,8 @@
 .pf .sg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .pf .sg-tile { position: relative; display: block; width: 100%; height: 42px; border-radius: 7px; border: 0.5px solid var(--line); background: var(--surface); padding: 5px 6px; transition: background .12s var(--ease), border-color .12s var(--ease); }
 .pf button.sg-tile:hover, .pf .sg-atile:hover .sg-tile { background: var(--hover); border-color: var(--line-strong); }
-.pf .sg-mini { position: relative; display: block; width: 100%; height: 100%; border-radius: 3px; background: #0c0c0c; box-shadow: inset 0 0 0 0.5px var(--line-strong); }
+/* The screen: a thin outline so you can see how much of it a layout takes */
+.pf .sg-mini { position: relative; display: block; width: 100%; height: 100%; border-radius: 3px; background: #0c0c0c; border: 1px solid rgba(255, 255, 255, 0.28); }
 .pf .sg-mini i { position: absolute; border-radius: 2px; background: #4a4a4a; display: grid; place-items: center; transition: background .12s var(--ease); }
 .pf .sg-mini i.o { background: #262626; }
 .pf button.sg-tile:hover .sg-mini i, .pf button.sg-tile:focus-visible .sg-mini i, .pf .sg-atile:hover .sg-mini i { background: var(--text); }
