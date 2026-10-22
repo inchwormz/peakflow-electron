@@ -966,7 +966,10 @@ class FocusDimService {
       this._desktopNullTicks = 0
 
       // ── Drag detection ──────────────────────────────────────────────
-      if (conf.drag_escape) {
+      // PeakFlow's own panel moves while it opens and closes; that is not the
+      // user dragging a window, and treating it as one faded the dim out and
+      // back in (a grey flash) every time the panel closed.
+      if (conf.drag_escape && activeWin.pid !== process.pid) {
         const windowId = `${activeWin.pid}:${activeWin.title}`
         const sameWindow = windowId === this._lastTrackWindowId
         const posChanged = activeWin.x !== this._lastTrackX || activeWin.y !== this._lastTrackY
