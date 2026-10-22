@@ -1083,10 +1083,12 @@ class FocusDimService {
       }
 
       if (rects.length === 0) {
-        // Fallback to single active window
-        this.hideCanvas()
-        this.sendOverlayUpdate({ x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h })
-        return
+        // The window list for a newly focused app arrives a moment later (on
+        // Mac it waits behind the helper's other commands, such as raise-app).
+        // Cut out just the active window on the canvas until then. Switching
+        // to the 4 divs here hid the canvas at once and faded the divs in
+        // from zero, which washed the whole screen grey.
+        rects = [{ x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h }]
       }
 
       // Dirty check: hash rects + active window (so border follows focus changes)
