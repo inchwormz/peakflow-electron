@@ -115,7 +115,7 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     plain_text_mode: false,
     ai_onboarding_complete: false,
     ai_translate_default_lang: '',
-    ai_suggestions_enabled: true,
+    ai_suggestions_enabled: false,
     ai_last_suggestion_date: '',
     ai_dismissed_suggestions: []
   },

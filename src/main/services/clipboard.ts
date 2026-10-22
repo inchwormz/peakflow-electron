@@ -24,13 +24,16 @@ import { join, basename, extname } from 'path'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig } from './config-store'
-import { looksLikeSecret } from '../security/secret-detection'
+import { looksLikeSecret, isPrivateClipboard } from '../security/secret-detection'
 import { isExcludedApp } from '../security/excluded-apps'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { simulateCtrlV } from '../native/keyboard'
 import { writeClip, type ClipWriters } from './clip-write'
 import { afterFileCapture } from './clip-dedupe'
 import { getActiveWindow, getProcessExeName } from '../native/active-window'
+
+/** Stands in for the hash of a private clip, so the same clip isn't re-checked */
+const PRIVATE_MARK = 'private'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -321,6 +324,17 @@ class ClipboardService {
         if (!files.length) this.lastFileKey = ''
       }
       if (this.lastFileKey) return
+
+      // Password managers mark what they copy as private: never record it
+      if (isPrivateClipboard((f) => clipboard.has(f))) {
+        if (formatsChanged || this.lastTextHash !== PRIVATE_MARK) {
+          this.skippedCount++
+          console.log(`[QuickBoard] Skipped private clip (total: ${this.skippedCount})`)
+        }
+        this.lastTextHash = PRIVATE_MARK
+        this.lastImageHash = PRIVATE_MARK
+        return
+      }
 
       // Check for text first
       const text = clipboard.readText()
