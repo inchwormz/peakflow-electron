@@ -154,3 +154,23 @@ export interface LauncherOpenInfo {
   /** Show a view straight away ('ai' for a hotkey that goes to Quick Ask) */
   view?: string
 }
+
+// ─── dictation ──────────────────────────────────────────────────────────────
+
+export type DictationHoldKey = 'rcmd' | 'ropt' | 'fn' | 'rctrl' | 'ralt'
+
+export interface DictationSettings {
+  enabled: boolean
+  hasKey: boolean
+  holdKey: DictationHoldKey
+  model: 'gpt-4o-mini-transcribe' | 'gpt-4o-transcribe'
+  /** Tidy punctuation and filler words with the person's own ChatGPT/Claude (local-ai) */
+  cleanup: boolean
+  /** The keyboard watcher is running with the permission it needs */
+  active: boolean
+}
+
+export interface DictationState {
+  phase: 'listening' | 'transcribing' | 'done' | 'error' | 'idle'
+  message?: string
+}

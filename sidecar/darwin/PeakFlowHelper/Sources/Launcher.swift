@@ -19,6 +19,12 @@
  * {"e": "ready", "trusted": bool} at start and {"e": "expanded", "keyword": "..."}
  * after each expansion. Typed text never leaves this process: only the
  * keyword that matched is reported.
+ *
+ * Dictation's hold-to-talk key rides on the same tap: {"hold": "rcmd"}
+ * (rcmd | ropt | rctrl | fn, or null for off) and the watcher prints
+ * {"e": "hold-down"} when that key goes down alone, {"e": "hold-up"} when it
+ * is released, and {"e": "hold-cancel"} if another key is pressed meanwhile
+ * (the person was using a shortcut, not dictating).
  */
 
 import Cocoa
@@ -174,6 +180,16 @@ private var snippets: [String: String] = [:]
 private var maxKeywordLength = 0
 private var typed = ""
 private var keywatchTap: CFMachPort?
+private var holdKeyCode: Int64 = -1
+private var holdFlag: CGEventFlags = []
+private var holdDown = false
+
+private let HOLD_KEYS: [String: (Int64, CGEventFlags)] = [
+    "rcmd": (54, .maskCommand),
+    "ropt": (61, .maskAlternate),
+    "rctrl": (62, .maskControl),
+    "fn": (63, .maskSecondaryFn)
+]
 
 private func emit(_ obj: [String: Any]) {
     print(jsonString(obj))
@@ -232,7 +248,29 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         typed = ""
         return Unmanaged.passUnretained(event)
     }
+    if type == .flagsChanged {
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        if holdKeyCode >= 0 && code == holdKeyCode {
+            let down = event.flags.contains(holdFlag)
+            if down && !holdDown {
+                holdDown = true
+                emit(["e": "hold-down"])
+            } else if !down && holdDown {
+                holdDown = false
+                emit(["e": "hold-up"])
+            }
+        } else if holdDown && code != holdKeyCode {
+            // Another modifier joined in: a shortcut like ⌘⇧4, not dictation
+            holdDown = false
+            emit(["e": "hold-cancel"])
+        }
+        return Unmanaged.passUnretained(event)
+    }
     guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+    if holdDown {
+        holdDown = false
+        emit(["e": "hold-cancel"])
+    }
 
     let flags = event.flags
     if flags.contains(.maskCommand) || flags.contains(.maskControl) {
@@ -275,6 +313,18 @@ private func readSnippetUpdates() {
             guard let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
+            if obj.keys.contains("hold") {
+                let name = obj["hold"] as? String ?? ""
+                DispatchQueue.main.async {
+                    if let (code, flag) = HOLD_KEYS[name] {
+                        holdKeyCode = code
+                        holdFlag = flag
+                    } else {
+                        holdKeyCode = -1
+                    }
+                    holdDown = false
+                }
+            }
             if let map = obj["snippets"] as? [String: String] {
                 let clean = map.filter { !$0.key.isEmpty && $0.key.count <= 32 }
                 DispatchQueue.main.async {
@@ -292,7 +342,7 @@ private func readSnippetUpdates() {
 func runKeyWatch() -> Never {
     let trusted = AXIsProcessTrusted()
     readSnippetUpdates()
-    let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
+    let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
     guard trusted,
           let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                       eventsOfInterest: CGEventMask(mask), callback: keywatchCallback, userInfo: nil) else {

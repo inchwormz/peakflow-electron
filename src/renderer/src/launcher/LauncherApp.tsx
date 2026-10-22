@@ -12,7 +12,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type {
   AiChunk, AiProviderId, AiStatus, AiTextAction, CurrencyRates, LauncherItem, LauncherOpenInfo, LauncherProcess,
-  LauncherRunResult, LauncherSettings, SelectionResult
+  LauncherRunResult, LauncherSettings, SelectionResult, DictationHoldKey, DictationSettings
 } from '@shared/launcher/types'
 import { rankItems, type Usage } from '@shared/launcher/rank'
 import { calculate, type CalcResult } from '@shared/launcher/calc'
@@ -772,6 +772,7 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { setti
           <button className="btn" onClick={onConnect}>Connect</button>
         )}
       </div>
+      <DictationRows />
       <div className="lc-set">
         <div>
           <div className="lbl">Snippets and quick links</div>
@@ -779,6 +780,110 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { setti
         </div>
       </div>
     </div>
+  )
+}
+
+const HOLD_KEYS: Array<[DictationHoldKey, string]> = isMac()
+  ? [['rcmd', 'Right ⌘'], ['ropt', 'Right ⌥'], ['fn', 'fn'], ['rctrl', 'Right ⌃']]
+  : [['rctrl', 'Right Ctrl'], ['ralt', 'Right Alt']]
+
+const KEY_INPUT: React.CSSProperties = {
+  width: 150, borderRadius: 'var(--r-ctl)', border: '0.5px solid var(--line-strong)', background: 'var(--surface)',
+  color: 'var(--text)', fontSize: 'var(--t-body)', padding: '6px 10px', outline: 'none'
+}
+
+const KEY_ERRORS: Record<string, string> = {
+  bad_key: 'OpenAI didn’t accept that key',
+  network: 'Couldn’t reach OpenAI: check the internet connection',
+  failed: 'Couldn’t save the key'
+}
+
+/** Dictation: hold a key, talk, let go. Needs the person's own OpenAI key. */
+function DictationRows(): React.JSX.Element | null {
+  const [d, setD] = useState<DictationSettings | null>(null)
+  const [key, setKey] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
+  }, [])
+  if (!d) return null
+  const set = (k: string, v: unknown): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v).then(setD)
+  const save = async (): Promise<void> => {
+    setSaving(true)
+    setErr('')
+    const r = await invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
+    setSaving(false)
+    setD(r.settings)
+    if (r.ok) setKey('')
+    else setErr(KEY_ERRORS[r.error ?? 'failed'] ?? KEY_ERRORS.failed)
+  }
+  const holdName = HOLD_KEYS.find(([k]) => k === d.holdKey)?.[1] ?? d.holdKey
+  if (!d.hasKey) {
+    return (
+      <div className="lc-set">
+        <div>
+          <div className="lbl">Dictation</div>
+          <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 3 minutes).'}</div>
+        </div>
+        <span className="row">
+          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" style={KEY_INPUT} aria-label="OpenAI API key" />
+          <button className="btn" disabled={!key || saving} onClick={() => void save()}>{saving ? 'Checking…' : 'Save'}</button>
+        </span>
+      </div>
+    )
+  }
+  return (
+    <>
+      <div className="lc-set">
+        <div>
+          <div className="lbl">Dictation</div>
+          <div className="sub">
+            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go` : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
+          </div>
+        </div>
+        <span className="row">
+          {d.enabled && !d.active && isMac() && <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>}
+          <button className="switch" role="switch" aria-checked={d.enabled} aria-label="Dictation" onClick={() => set('enabled', !d.enabled)} />
+        </span>
+      </div>
+      {d.enabled && (
+        <>
+          <div className="lc-set">
+            <div><div className="lbl">Hold to talk</div></div>
+            <span className="seg">
+              {HOLD_KEYS.map(([k, name]) => (
+                <button key={k} aria-pressed={d.holdKey === k} onClick={() => set('holdKey', k)}>{name}</button>
+              ))}
+            </span>
+          </div>
+          <div className="lc-set">
+            <div>
+              <div className="lbl">Accuracy</div>
+              <div className="sub">Best catches more names and costs about twice as much</div>
+            </div>
+            <span className="seg">
+              <button aria-pressed={d.model === 'gpt-4o-mini-transcribe'} onClick={() => set('model', 'gpt-4o-mini-transcribe')}>Fast</button>
+              <button aria-pressed={d.model === 'gpt-4o-transcribe'} onClick={() => set('model', 'gpt-4o-transcribe')}>Best</button>
+            </span>
+          </div>
+          <div className="lc-set">
+            <div>
+              <div className="lbl">Tidy up with AI</div>
+              <div className="sub">Removes “um” and fixes punctuation with your ChatGPT or Claude. Adds a few seconds.</div>
+            </div>
+            <button className="switch" role="switch" aria-checked={d.cleanup} aria-label="Tidy up with AI" onClick={() => set('cleanup', !d.cleanup)} />
+          </div>
+        </>
+      )}
+      <div className="lc-set">
+        <div>
+          <div className="lbl">OpenAI key</div>
+          <div className="sub">Saved encrypted on this computer</div>
+        </div>
+        <button className="btn" onClick={() => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then(setD)}>Remove</button>
+      </div>
+    </>
   )
 }
 

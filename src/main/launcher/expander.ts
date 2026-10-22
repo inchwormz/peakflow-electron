@@ -8,6 +8,9 @@
  *   Windows: a low-level keyboard hook in a PowerShell/C# sidecar reports the
  *          keyword it saw (after deleting it); we paste the text with Ctrl+V
  *          and put the clipboard back. NOT RUN ON WINDOWS YET.
+ *
+ * The same watcher reports dictation's hold-to-talk key going down and up
+ * (setHoldKey / onHoldKey), since Electron's shortcuts only see key presses.
  */
 
 import { spawn, type ChildProcess } from 'child_process'
@@ -23,6 +26,35 @@ let active = false
 let wanted = false
 let current: LauncherSnippet[] = []
 let restarts = 0
+let snippetsWanted = false
+let holdKey: string | null = null
+let holdListener: ((e: 'down' | 'up' | 'cancel') => void) | null = null
+
+/** Windows virtual-key codes for the hold keys */
+const WIN_HOLD_VK: Record<string, number> = { rctrl: 0xa3, ralt: 0xa5 }
+
+export function onHoldKey(fn: (e: 'down' | 'up' | 'cancel') => void): void {
+  holdListener = fn
+}
+
+/** The dictation key to watch ('rcmd' | 'ropt' | 'rctrl' | 'fn' on Mac, 'rctrl' | 'ralt' on Windows), or null for none. */
+export function setHoldKey(key: string | null): void {
+  holdKey = key
+  refreshWanted()
+  if (!wanted) return stopExpansion(false)
+  if (!child) start()
+  else sendHold()
+}
+
+function refreshWanted(): void {
+  wanted = snippetsWanted || !!holdKey
+}
+
+function sendHold(): void {
+  if (!child?.stdin?.writable) return
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: holdKey }) + '\n')
+  else child.stdin.write(`HOLD ${holdKey ? WIN_HOLD_VK[holdKey] ?? 0 : 0}\n`)
+}
 
 export function isExpansionActive(): boolean {
   return active
@@ -63,10 +95,15 @@ function onLine(line: string): void {
     if (ev.e === 'ready') {
       active = ev.trusted !== false
       if (!active) console.warn('[Launcher] Snippet expansion needs the Accessibility permission')
-      else sendSnippets()
+      else {
+        sendSnippets()
+        sendHold()
+      }
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
-    }
+    } else if (ev.e === 'hold-down') holdListener?.('down')
+    else if (ev.e === 'hold-up') holdListener?.('up')
+    else if (ev.e === 'hold-cancel') holdListener?.('cancel')
   } catch { /* not ours */ }
 }
 
@@ -104,6 +141,12 @@ public static class PfKeyWatch {
   static IntPtr hook = IntPtr.Zero;
   static StringBuilder typed = new StringBuilder();
   static volatile string[] keywords = new string[0];
+  static volatile int holdVk = 0;
+  static bool holdDown = false;
+  const int WM_KEYUP = 0x0101;
+  const int WM_SYSKEYUP = 0x0105;
+
+  static void Emit(string e) { Console.Out.WriteLine("{\\"e\\":\\"" + e + "\\"}"); Console.Out.Flush(); }
 
   static void Backspaces(int n) {
     INPUT[] inputs = new INPUT[n * 2];
@@ -116,9 +159,19 @@ public static class PfKeyWatch {
 
   static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
     try {
-      if (nCode >= 0 && ((int)wParam == WM_KEYDOWN || (int)wParam == WM_SYSKEYDOWN)) {
+      if (nCode >= 0) {
         KBDLLHOOKSTRUCT k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-        if ((k.flags & LLKHF_INJECTED) == 0) Handle(k);
+        bool isDown = (int)wParam == WM_KEYDOWN || (int)wParam == WM_SYSKEYDOWN;
+        bool isUp = (int)wParam == WM_KEYUP || (int)wParam == WM_SYSKEYUP;
+        if ((k.flags & LLKHF_INJECTED) == 0) {
+          if (holdVk != 0 && k.vkCode == (uint)holdVk) {
+            if (isDown && !holdDown) { holdDown = true; Emit("hold-down"); }
+            else if (isUp && holdDown) { holdDown = false; Emit("hold-up"); }
+          } else if (isDown) {
+            if (holdDown) { holdDown = false; Emit("hold-cancel"); }
+            Handle(k);
+          }
+        }
       }
     } catch (Exception ex) { Console.Error.WriteLine("hook error: " + ex.Message); }
     return CallNextHookEx(hook, nCode, wParam, lParam);
@@ -159,7 +212,12 @@ public static class PfKeyWatch {
     Thread reader = new Thread(delegate () {
       string line;
       while ((line = Console.In.ReadLine()) != null) {
-        if (line.StartsWith("SET")) {
+        if (line.StartsWith("HOLD ")) {
+          int vk = 0;
+          int.TryParse(line.Substring(5).Trim(), out vk);
+          holdVk = vk;
+          holdDown = false;
+        } else if (line.StartsWith("SET")) {
           List<string> list = new List<string>();
           foreach (string part in line.Substring(3).Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)) {
             try { list.Add(Encoding.UTF8.GetString(Convert.FromBase64String(part))); } catch (Exception ex) { Console.Error.WriteLine("bad keyword: " + ex.Message); }
@@ -221,8 +279,10 @@ function start(): void {
 
 /** Turn expansion on/off and give it the current snippets. Safe to call often. */
 export function updateExpansion(enabled: boolean, snippets: LauncherSnippet[]): void {
-  wanted = enabled && snippets.some((s) => s.keyword)
-  current = snippets
+  snippetsWanted = enabled && snippets.some((s) => s.keyword)
+  // Expansion off: the watcher may still run for dictation, with no keywords
+  current = snippetsWanted ? snippets : []
+  refreshWanted()
   if (!wanted) return stopExpansion(false)
   if (!child) start()
   else sendSnippets()

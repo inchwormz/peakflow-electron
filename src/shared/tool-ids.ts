@@ -25,7 +25,9 @@ export enum SystemWindowId {
   /** The one-app panel that drops down from the menu-bar icon (v2 UI) */
   Panel = 'panel',
   /** The ⌥Space / Alt+Space launcher (free command bar) */
-  Launcher = 'launcher'
+  Launcher = 'launcher',
+  /** Dictation's small recording pill (hold a key, talk, let go) */
+  Dictation = 'dictation'
 }
 
 export type WindowId = ToolId | SystemWindowId

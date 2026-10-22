@@ -24,7 +24,17 @@ export const LAUNCHER_INVOKE = {
   LAUNCHER_AI_ASK: 'launcher:ai-ask',
   LAUNCHER_AI_CANCEL: 'launcher:ai-cancel',
   LAUNCHER_AI_CONNECT: 'launcher:ai-connect',
-  LAUNCHER_SELECTION: 'launcher:selection'
+  LAUNCHER_SELECTION: 'launcher:selection',
+  // Dictation (hold a key, talk, let go)
+  DICTATION_READY: 'dictation:ready',
+  /** The pill sends the recorded audio (ArrayBuffer, mime) */
+  DICTATION_AUDIO: 'dictation:audio',
+  /** The pill couldn't open the microphone ('denied' | 'none' | 'failed') */
+  DICTATION_MIC_ERROR: 'dictation:mic-error',
+  DICTATION_SETTINGS: 'dictation:settings',
+  DICTATION_SET: 'dictation:set',
+  DICTATION_SAVE_KEY: 'dictation:save-key',
+  DICTATION_REMOVE_KEY: 'dictation:remove-key'
 } as const
 
 export const LAUNCHER_SEND = {
@@ -34,5 +44,11 @@ export const LAUNCHER_SEND = {
   /** AI answer so far (AiChunk) */
   LAUNCHER_AI_CHUNK: 'launcher:ai-chunk',
   /** Snippets / links / settings changed: reload items */
-  LAUNCHER_CHANGED: 'launcher:changed'
+  LAUNCHER_CHANGED: 'launcher:changed',
+  /** Start recording (the hold key went down) */
+  DICTATION_START: 'dictation:start',
+  /** Stop recording; send the audio if { send: true } */
+  DICTATION_STOP: 'dictation:stop',
+  /** What the pill shows (DictationState) */
+  DICTATION_STATE: 'dictation:state'
 } as const

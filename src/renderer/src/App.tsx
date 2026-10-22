@@ -19,6 +19,7 @@ const LiquidFocusMini = lazy(() =>
 )
 const PanelApp = lazy(() => import('./panel/PanelApp').then((m) => ({ default: m.PanelApp })))
 const LauncherApp = lazy(() => import('./launcher/LauncherApp').then((m) => ({ default: m.LauncherApp })))
+const DictationPill = lazy(() => import('./launcher/DictationPill').then((m) => ({ default: m.DictationPill })))
 const SoundSplit = lazy(() => import('./tools/soundsplit/SoundSplit').then((m) => ({ default: m.SoundSplit })))
 
 function ToolSuspense({ children }: { children: ReactNode }): React.JSX.Element {
@@ -177,6 +178,15 @@ export default function App(): React.JSX.Element {
       )
     }
 
+    // Dictation's recording pill
+    if (systemId === SystemWindowId.Dictation) {
+      return (
+        <Suspense fallback={null}>
+          <DictationPill />
+        </Suspense>
+      )
+    }
+
     // System windows (no app shell chrome)
     if (systemId === SystemWindowId.ScreenSlapAlert) {
       return <AlertOverlay />
@@ -258,7 +268,7 @@ export default function App(): React.JSX.Element {
   }
 
   // System windows render without AppShell (no title bar, no chrome)
-  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini || systemId === SystemWindowId.Panel || systemId === SystemWindowId.Launcher) {
+  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini || systemId === SystemWindowId.Panel || systemId === SystemWindowId.Launcher || systemId === SystemWindowId.Dictation) {
     return renderTool()
   }
 

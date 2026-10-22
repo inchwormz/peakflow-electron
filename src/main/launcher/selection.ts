@@ -34,11 +34,11 @@ function winKeys(): (vks: Array<[number, boolean]>) => boolean {
 }
 /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 
-interface SavedClipboard {
+export interface SavedClipboard {
   formats: Array<{ format: string; data: Buffer }>
 }
 
-function saveClipboard(): SavedClipboard {
+export function saveClipboard(): SavedClipboard {
   const formats: SavedClipboard['formats'] = []
   for (const f of clipboard.availableFormats()) {
     try {
@@ -48,7 +48,7 @@ function saveClipboard(): SavedClipboard {
   return { formats }
 }
 
-function restoreClipboard(saved: SavedClipboard, fallbackText: string): void {
+export function restoreClipboard(saved: SavedClipboard, fallbackText: string): void {
   clipboard.clear()
   let wrote = false
   for (const { format, data } of saved.formats) {

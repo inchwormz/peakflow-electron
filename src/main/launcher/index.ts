@@ -35,6 +35,7 @@ import {
 } from './window'
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
+import { initDictation, destroyDictation, runDictationDevTest } from '../dictation'
 import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand } from '../services/local-ai'
 
 const isMac = process.platform === 'darwin'
@@ -75,7 +76,7 @@ function builtInItems(): LauncherItem[] {
     { id: 'view:kill', kind: 'command', title: 'Kill Process', subtitle: 'Quit apps that are stuck or using memory', keywords: ['force quit', 'task manager', 'quit app', 'memory', 'end task'], glyph: 'kill', view: 'kill' },
     { id: 'view:snippet-form', kind: 'command', title: 'Add Snippet', subtitle: 'Save text you type a lot, then type its keyword anywhere', keywords: ['snippet', 'text expansion', 'new snippet'], glyph: 'plus', view: 'snippet-form' },
     { id: 'view:link-form', kind: 'command', title: 'Add Quick Link', subtitle: 'Save a website or folder to open from here', keywords: ['bookmark', 'quick link', 'new link'], glyph: 'plus', view: 'link-form' },
-    { id: 'view:settings', kind: 'command', title: 'Launcher Settings', subtitle: 'Shortcut, snippets, AI', keywords: ['launcher', 'hotkey', 'shortcut', 'preferences'], glyph: 'settings', view: 'settings' },
+    { id: 'view:settings', kind: 'command', title: 'Launcher Settings', subtitle: 'Shortcut, snippets, AI, dictation', keywords: ['launcher', 'hotkey', 'shortcut', 'preferences', 'dictation', 'voice', 'speech', 'talk'], glyph: 'settings', view: 'settings' },
     { id: 'view:ai-setup', kind: 'ai', title: 'Connect ChatGPT or Claude', subtitle: 'Free AI with your own plan', keywords: ['ai', 'chatgpt', 'claude', 'codex', 'connect'], glyph: 'sparkle', view: 'ai-setup' }
   ]
   return [...own, ...folders, ...engines]
@@ -439,6 +440,7 @@ export function initLauncher(): void {
   initLauncherWindow()
   registerHotkey(launcherStore.hotkey)
   updateExpansion(launcherStore.expansion, launcherStore.snippets())
+  initDictation(() => getLauncherWindow()?.webContents)
   // Warm the app index and the AI check so the first open has everything
   void getApps()
   void listAiProviders().catch(() => {})
@@ -448,12 +450,14 @@ export function initLauncher(): void {
   })
   // Retry snippet expansion when the bar opens (the permission may have been granted since)
   getLauncherWindow()?.on('show', () => retryExpansion())
+  void runDictationDevTest() // development test driver only (env-gated, never in packaged builds)
   void runLauncherDevTest() // development test driver only (env-gated, never in packaged builds)
 }
 
 export function destroyLauncher(): void {
   setLauncherQuitting(true)
   for (const c of aiRuns.values()) c.abort()
+  destroyDictation()
   stopExpansion()
   stopKeepAwake()
   if (registeredHotkey) globalShortcut.unregister(registeredHotkey)
