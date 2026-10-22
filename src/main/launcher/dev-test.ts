@@ -15,6 +15,7 @@
  *   { "shot": "04-calculator" }            save <name>.png of the bar
  *   { "eval": "js" }                       run JS in the page; result logged
  *   { "hide": true }
+ *   { "emulateFocus": true }                draw the page as focused (focus rings) without taking focus
  */
 
 import { app } from 'electron'
@@ -34,6 +35,7 @@ interface Step {
   shot?: string
   eval?: string
   hide?: boolean
+  emulateFocus?: boolean
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -49,6 +51,11 @@ export async function runLauncherDevTest(): Promise<void> {
   const mac = process.platform === 'darwin'
   for (const s of plan) {
     try {
+      if (s.emulateFocus) {
+        const d = getLauncherWindow()!.webContents.debugger
+        if (!d.isAttached()) d.attach('1.3')
+        await d.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+      }
       if (s.open) {
         showLauncher({ at: Date.now(), inactive: true })
         await sleep(250)

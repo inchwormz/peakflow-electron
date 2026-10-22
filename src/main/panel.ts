@@ -13,7 +13,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { SystemWindowId, isPanelTool } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
-import { restorePreviousApp } from './native/active-window'
+import { restorePreviousApp, rememberFrontApp, getActiveWindow } from './native/active-window'
 
 export const PANEL_WIDTH = 340
 const PANEL_MIN_HEIGHT = 120
@@ -174,20 +174,54 @@ export function showPanel(route?: string): void {
     flushPendingRoute(win)
   }
   position(win)
+  if (process.platform === 'darwin' && !win.isVisible()) rememberFrontApp()
   win.show()
   win.focus()
   win.setAlwaysOnTop(true, 'pop-up-menu')
   send(win, IPC_SEND.PANEL_VISIBILITY, true)
+  watchUnfocusedShow(win)
 }
 
-export function hidePanel(): void {
+let unfocusedWatch: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Windows can refuse focus to an app that isn't in front (on launch, for
+ * example). The panel then shows without focus, never gets a blur, and sat
+ * on top of every other app. Until it does get focus, hide it once the user
+ * switches to another window.
+ */
+function watchUnfocusedShow(win: BrowserWindow): void {
+  if (unfocusedWatch) clearInterval(unfocusedWatch)
+  const key = (w: ReturnType<typeof getActiveWindow>): string => (w ? `${w.pid}:${w.title}` : '')
+  const start = key(getActiveWindow())
+  let ticks = 0
+  unfocusedWatch = setInterval(() => {
+    ticks++
+    const front = getActiveWindow()
+    const done = win.isDestroyed() || !win.isVisible() || win.isFocused()
+    if (!done && front && front.pid !== process.pid && key(front) !== start) hidePanel(true)
+    if (done || !win.isVisible() || ticks > 240) {
+      if (unfocusedWatch) clearInterval(unfocusedWatch)
+      unfocusedWatch = null
+    }
+  }, 250)
+}
+
+export function hidePanel(force = false): void {
   const win = getPanel()
   if (!win || !win.isVisible()) return
-  // Closed with Esc or the tray icon (not by clicking another app): PeakFlow
-  // would stay the frontmost app with no window, so hand focus back.
-  const hadFocus = win.isFocused()
+  // Closed with Esc or the tray icon (not by clicking another app). On a Mac,
+  // hiding the focused panel left PeakFlow in front with no window, and macOS
+  // washed the whole screen light grey for about half a second. Give focus
+  // back to the previous app first; the panel's blur handler then hides it,
+  // the same path as clicking another app, which shows no wash.
+  if (!force && process.platform === 'darwin' && win.isFocused() && restorePreviousApp()) {
+    setTimeout(() => {
+      if (win.isVisible()) hidePanel(true)
+    }, 300)
+    return
+  }
   win.hide()
-  if (hadFocus && process.platform === 'darwin') restorePreviousApp()
   lastHiddenAt = Date.now()
   send(win, IPC_SEND.PANEL_VISIBILITY, false)
 }

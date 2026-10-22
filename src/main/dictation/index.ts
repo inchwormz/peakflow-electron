@@ -9,6 +9,7 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { execFile } from 'child_process'
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -19,11 +20,13 @@ import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationHoldKey, DictationSettings, DictationState } from '@shared/launcher/types'
 import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
 import { ensureMediaAccess } from '../services/permissions-darwin'
-import { runLocalAi } from '../services/local-ai'
 import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { saveClipboard, restoreClipboard } from '../launcher/selection'
 import { simulateCtrlV } from '../native/keyboard'
-import { transcribe, checkKey, type DictationModel, type TranscribeError } from './transcribe'
+import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
+import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
+import { runMacHelper } from '../native/mac-helper'
+import { getActiveWindow } from '../native/active-window'
 
 const isMac = process.platform === 'darwin'
 const CRED_TOOL = 'Dictation'
@@ -35,20 +38,23 @@ const MAX_HOLD_MS = 5 * 60_000
 const PILL_W = 220
 const PILL_H = 44
 
-const MAC_KEYS: DictationHoldKey[] = ['rcmd', 'ropt', 'fn', 'rctrl']
+const MAC_KEYS: DictationHoldKey[] = ['fn', 'ropt', 'rcmd', 'rctrl']
 const WIN_KEYS: DictationHoldKey[] = ['rctrl', 'ralt']
 
 interface DictationData {
   enabled: boolean
   holdKey: DictationHoldKey
-  model: DictationModel
-  cleanup: boolean
+  /** Light clean-up (fillers, punctuation, "no wait"); on by default since it passed the test set */
+  tidy: boolean
+  /** "My words": one per line; "X -> Y" lines are replacements */
+  words: string
 }
 
 const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
-  defaults: { enabled: false, holdKey: isMac ? 'rcmd' : 'rctrl', model: 'gpt-4o-mini-transcribe', cleanup: false }
+  // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
+  defaults: { enabled: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '' }
 })
 
 let pill: BrowserWindow | null = null
@@ -59,6 +65,14 @@ let recording = false
 let maxTimer: ReturnType<typeof setTimeout> | null = null
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 let busy = false
+/** gpt-transcribe unless this key turned out not to have it (remembered until restart) */
+let model: DictationModel = 'gpt-transcribe'
+/** Read on key-down while the person talks: the app and the text around the cursor */
+let context: Promise<DictationContext> = Promise.resolve({})
+/** The last dictation as spoken and as typed, for "Paste last dictation as spoken" */
+let last: { raw: string; typed: string; at: number } | null = null
+/** Keep recording this long after the key comes up, so the last word isn't clipped */
+const RELEASE_PAD_MS = 150
 
 const hasKey = (): boolean => !!getCredential(CRED_TOOL, CRED_TYPE)
 
@@ -68,16 +82,47 @@ function settings(): DictationSettings {
     enabled: store.get('enabled') && key,
     hasKey: key,
     holdKey: store.get('holdKey'),
-    model: store.get('model'),
-    cleanup: store.get('cleanup'),
+    model,
+    cleanup: store.get('tidy'),
+    wordCount: parseMyWords(store.get('words')).hints.length,
     active: store.get('enabled') && key && isExpansionActive()
   }
 }
 
-/** Watch the hold key only while dictation is on and has a key. */
+const DICTATION_APPS = /wispr|superwhisper|macwhisper|voiceink|aqua voice|willow/i
+
+/**
+ * Plain-words warnings for the chosen key: another dictation app running
+ * (it may listen to the same key), or macOS's own fn action still switched on.
+ * We can't read other apps' shortcut settings, so this says "may".
+ */
+async function keyHint(holdKey: DictationHoldKey): Promise<string | undefined> {
+  if (!isMac) return undefined
+  const hints: string[] = []
+  const apps = (await runMacHelper(['running-apps'], 3000)) as unknown
+  const other = Array.isArray(apps)
+    ? (apps as Array<{ name?: unknown }>).map((a) => (typeof a.name === 'string' ? a.name : '')).find((n) => DICTATION_APPS.test(n))
+    : undefined
+  if (other) hints.push(`${other} is running and may use the same key. If both react, pick another key here or in ${other}.`)
+  if (holdKey === 'fn') {
+    // 0 = Do Nothing; missing or anything else means macOS also acts on fn (emoji, input source, its own dictation)
+    const fnAction = await new Promise<string>((resolve) =>
+      execFile('defaults', ['read', 'com.apple.HIToolbox', 'AppleFnUsageType'], { timeout: 2000 }, (err, out) => resolve(err ? '' : String(out).trim()))
+    )
+    if (fnAction !== '0') hints.push('So macOS doesn’t also react to fn, set System Settings › Keyboard › “Press fn key to” to “Do Nothing”.')
+  }
+  return hints.length ? hints.join(' ') : undefined
+}
+
+async function settingsWithHint(): Promise<DictationSettings> {
+  const s = settings()
+  return s.enabled ? { ...s, hint: await keyHint(s.holdKey) } : s
+}
+
+/** Holding the key dictates only while dictation is on (the key is still watched for SnapGrid's double tap). */
 function applyWatcher(): void {
   const s = settings()
-  setHoldKey(s.enabled ? s.holdKey : null)
+  setHoldKey(s.holdKey, s.enabled)
 }
 
 // ─── the pill ────────────────────────────────────────────────────────────────
@@ -165,6 +210,7 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
   network: 'No internet connection',
   no_speech: 'Didn’t hear anything',
   failed: 'Couldn’t turn that into text',
+  model_unavailable: 'Couldn’t turn that into text',
   mic_denied: 'PeakFlow can’t use the microphone',
   mic_none: 'No microphone found'
 }
@@ -184,7 +230,11 @@ function onDown(): void {
   recording = true
   showPill()
   state({ phase: 'listening' })
-  sendPill(IPC_SEND.DICTATION_START)
+  // PEAKFLOW_DICTATION_MIC_RAW=1 (testing): no echo cancelling, noise suppression or auto gain
+  sendPill(IPC_SEND.DICTATION_START, { at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1' })
+  // While they talk: open the connection to OpenAI and read where the text is going
+  warmConnection(getCredential(CRED_TOOL, CRED_TYPE))
+  context = readContext()
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = setTimeout(() => onUp(), MAX_HOLD_MS)
 }
@@ -198,7 +248,24 @@ function onUp(): void {
   releasedAt = Date.now()
   busy = true
   state({ phase: 'transcribing' })
-  sendPill(IPC_SEND.DICTATION_STOP, { send: true })
+  setTimeout(() => sendPill(IPC_SEND.DICTATION_STOP, { send: true }), RELEASE_PAD_MS)
+}
+
+/** The front app and up to 500 characters each side of the cursor (never password fields). */
+async function readContext(): Promise<DictationContext> {
+  if (isMac) {
+    const r = await runMacHelper(['context'], 800)
+    if (!r || r.secure === true) return { app: typeof r?.app === 'string' ? r.app : undefined }
+    const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+    return { app: str(r.app), before: str(r.before), after: str(r.after) }
+  }
+  try {
+    // Windows: the window title's last part is usually the app ("Report - Word")
+    const title = getActiveWindow()?.title ?? ''
+    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined }
+  } catch {
+    return {}
+  }
 }
 
 /** Tap, or another key pressed with the hold key (a shortcut, not dictation). */
@@ -212,33 +279,61 @@ function cancel(): void {
 }
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
-  const r = await transcribe(new Uint8Array(buf), { key: getCredential(CRED_TOOL, CRED_TYPE), model: store.get('model'), mime })
+  const key = getCredential(CRED_TOOL, CRED_TYPE)
+  const words = parseMyWords(store.get('words'))
+  const ctx = await context
+  const prompt = transcriptionPrompt(words, ctx)
+  let r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
+  if (r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
+    console.warn(`[Dictation] ${model} not available on this key (${r.detail}); using gpt-4o-mini-transcribe`)
+    model = 'gpt-4o-mini-transcribe'
+    r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
+  }
   const sttMs = Date.now() - releasedAt
   if (!r.ok || !r.text) {
     if (r.detail) console.warn(`[Dictation] ${r.error}: ${r.detail}`)
     return fail(r.error ?? 'failed')
   }
   let text = r.text
-  if (store.get('cleanup')) {
-    const c = await runLocalAi({
-      system: 'Clean up this dictated text: fix punctuation and capitals, remove filler words (um, uh, like) and false starts. Keep the wording and meaning. Reply with only the cleaned text.',
-      prompt: text
-    }).catch(() => null)
-    if (c?.ok && c.text?.trim()) text = c.text.trim()
+  let tidyNote = 'off'
+  if (store.get('tidy') && key && !needsTidy(r.text, words)) tidyNote = 'not needed'
+  else if (store.get('tidy') && key) {
+    const c = await cleanUp(r.text, { key, words, ctx })
+    text = c.text
+    tidyNote = c.cleaned ? `${c.ms} ms` : `kept as spoken: ${c.rejected}`
   }
+  text = applyReplacements(text, words.replacements)
+  last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
   const ok = await typeText(text)
-  console.log(`[Dictation] let go → typed in ${Date.now() - releasedAt} ms (speech-to-text ${sttMs} ms, ${(buf.byteLength / 1024).toFixed(0)} KB)`)
+  console.log(
+    `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
+      `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
+  )
   busy = false
   state({ phase: ok ? 'done' : 'error', message: ok ? undefined : 'Copied: press ⌘V to paste' })
   hidePill(ok ? 500 : 2600)
 }
 
+/** The last dictation, for the launcher's "Paste last dictation" commands (kept for 30 minutes). */
+export function getLastDictation(): { raw: string; typed: string } | null {
+  return last && Date.now() - last.at < 30 * 60_000 ? { raw: last.raw, typed: last.typed } : null
+}
+
+/** Paste text into the app in front (from the launcher, after the bar has gone). */
+export function pasteDictation(text: string): Promise<boolean> {
+  return typeText(text)
+}
+
 /** Paste into the app in front, then put the clipboard back as it was. */
+let pastedAt = 0
+
 async function typeText(text: string): Promise<boolean> {
   const before = clipboard.readText()
   const saved = saveClipboard()
   clipboard.writeText(text)
+  if (process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Dictation] pasting ${text.length} chars into ${(await readContext()).app ?? 'unknown app'}`)
   const ok = await simulateCtrlV()
+  pastedAt = Date.now()
   if (ok) {
     // Give the app time to read the clipboard before restoring it
     await new Promise((r) => setTimeout(r, 400))
@@ -271,7 +366,10 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
   const fromPill = (e: Electron.IpcMainInvokeEvent): boolean => !!pill && !pill.isDestroyed() && e.sender === pill.webContents
   const fromLauncher = (e: Electron.IpcMainInvokeEvent): boolean => e.sender === getLauncherContents()
 
-  h(IPC_INVOKE.DICTATION_READY, () => undefined)
+  h(IPC_INVOKE.DICTATION_READY, (e, m?: { micMs?: number }) => {
+    // The pill reports how long the microphone took to open after the key went down
+    if (fromPill(e) && m && typeof m.micMs === 'number') console.log(`[Dictation] microphone open ${Math.round(m.micMs)} ms after key-down`)
+  })
   h(IPC_INVOKE.DICTATION_AUDIO, (e, buf: unknown, mime: unknown) => {
     if (!fromPill(e) || !busy) return
     if (!(buf instanceof ArrayBuffer) && !ArrayBuffer.isView(buf)) return fail('failed')
@@ -284,7 +382,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
-  h(IPC_INVOKE.DICTATION_SETTINGS, () => settings())
+  h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromLauncher(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
@@ -295,16 +393,20 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
       }
     } else if (key === 'holdKey' && typeof value === 'string' && (isMac ? MAC_KEYS : WIN_KEYS).includes(value as DictationHoldKey)) {
       store.set('holdKey', value as DictationHoldKey)
-    } else if (key === 'model' && (value === 'gpt-4o-mini-transcribe' || value === 'gpt-4o-transcribe')) {
-      store.set('model', value)
     } else if (key === 'cleanup' && typeof value === 'boolean') {
-      store.set('cleanup', value)
+      store.set('tidy', value)
     }
     applyWatcher()
     if (settings().enabled) getPill()
-    return settings()
+    return settingsWithHint()
   })
   h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromLauncher(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
+  h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromLauncher(e) ? store.get('words') : ''))
+  h(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
+    if (!fromLauncher(e) || typeof text !== 'string') return settings()
+    store.set('words', text.slice(0, 20_000))
+    return settings()
+  })
   h(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
     if (!fromLauncher(e)) return settings()
     deleteCredential(CRED_TOOL, CRED_TYPE)
@@ -335,9 +437,11 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
 export async function runDictationDevTest(): Promise<void> {
   const audioPath = process.env['PEAKFLOW_DICTATION_TEST_AUDIO']
   const out = process.env['PEAKFLOW_LAUNCHER_SHOTS']
-  if (!is.dev || app.isPackaged || !audioPath || !out) return
+  const frames = process.env['PEAKFLOW_DICTATION_FRAMES'] === '1'
+  if (!is.dev || app.isPackaged || (!audioPath && !frames) || !out) return
   mkdirSync(out, { recursive: true })
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  if (frames || !audioPath) return recordPillFrames(join(out, 'frames'))
   const shot = async (name: string): Promise<void> => {
     await sleep(350)
     const img = await getPill().webContents.capturePage()
@@ -356,15 +460,62 @@ export async function runDictationDevTest(): Promise<void> {
   state({ phase: 'transcribing' })
   await shot('31-dictation-typing')
   const audio = new Uint8Array(readFileSync(audioPath))
-  for (const model of ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'] as const) {
+  for (const m of ['gpt-transcribe', 'gpt-4o-mini-transcribe'] as const) {
     const t0 = Date.now()
-    const r = await transcribe(audio, { key: getCredential(CRED_TOOL, CRED_TYPE), model, mime: 'audio/wav' })
-    console.log(`[DictationTest] ${model}: ${Date.now() - t0} ms → ${r.ok ? JSON.stringify(r.text) : r.error}`)
+    const r = await transcribe(audio, { key: getCredential(CRED_TOOL, CRED_TYPE), model: m, mime: 'audio/wav' })
+    console.log(`[DictationTest] ${m}: ${Date.now() - t0} ms → ${r.ok ? JSON.stringify(r.text) : r.error}`)
+  }
+  // The whole pipeline minus the paste: hints, streamed transcription, clean-up, replacements
+  {
+    const words = parseMyWords(store.get('words'))
+    const ctx: DictationContext = { app: 'Mail' }
+    const t0 = Date.now()
+    const r = await transcribe(audio, { key: getCredential(CRED_TOOL, CRED_TYPE), model, mime: 'audio/wav', prompt: transcriptionPrompt(words, ctx), stream: true })
+    const sttMs = Date.now() - t0
+    if (r.ok && r.text) {
+      const c = needsTidy(r.text, words) ? await cleanUp(r.text, { key: getCredential(CRED_TOOL, CRED_TYPE) ?? '', words, ctx }) : null
+      const typed = applyReplacements(c?.text ?? r.text, words.replacements)
+      last = { raw: applyReplacements(r.text, words.replacements), typed, at: Date.now() }
+      console.log(`[DictationTest] pipeline: ${sttMs} ms speech-to-text, clean-up ${c ? `${c.ms} ms${c.rejected ? ` (kept raw: ${c.rejected})` : ''}` : 'not needed'} → ${JSON.stringify(typed)} (raw ${JSON.stringify(r.text)})`)
+    }
   }
   state({ phase: 'error', message: ERROR_TEXT.no_speech })
   await shot('32-dictation-error')
   hidePill()
   console.log('[DictationTest] finished')
+}
+
+/**
+ * Development only: records the pill's animation as numbered PNG frames, using
+ * a made-up speech level instead of the microphone (no mic, no keyboard, no API).
+ */
+async function recordPillFrames(dir: string): Promise<void> {
+  mkdirSync(dir, { recursive: true })
+  const w = getPill()
+  if (w.webContents.isLoading()) await new Promise<void>((r) => w.webContents.once('did-finish-load', () => r()))
+  await new Promise((r) => setTimeout(r, 600))
+  showPill()
+  // Syllables at about 4 a second, in phrases with short pauses, then silence
+  const level = (t: number): number => {
+    if (t < 0.5 || (t > 2.3 && t < 2.8) || t > 4.4) return 0.02
+    const syl = Math.pow(Math.max(0, Math.sin(t * Math.PI * 4.2 + Math.sin(t * 3.1))), 1.6)
+    return 0.15 + 0.75 * syl * (0.7 + 0.3 * Math.sin(t * 1.7))
+  }
+  const plan: Array<[number, DictationState]> = [[0, { phase: 'listening' }], [5.2, { phase: 'transcribing' }], [6.6, { phase: 'done' }], [7.3, { phase: 'idle' }]]
+  const t0 = Date.now()
+  let n = 0
+  let step = 0
+  while (true) {
+    const t = (Date.now() - t0) / 1000
+    if (t > 7.6) break
+    while (step < plan.length && t >= plan[step][0]) state(plan[step++][1])
+    await w.webContents.executeJavaScript(`window.__pfLevel = ${level(t).toFixed(3)}`)
+    const img = await w.webContents.capturePage()
+    writeFileSync(join(dir, `${String(n++).padStart(4, '0')}-${Math.round(t * 1000)}.png`), img.toPNG())
+    await new Promise((r) => setTimeout(r, 12))
+  }
+  hidePill()
+  console.log(`[DictationTest] ${n} pill frames in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${dir}`)
 }
 
 export function destroyDictation(): void {

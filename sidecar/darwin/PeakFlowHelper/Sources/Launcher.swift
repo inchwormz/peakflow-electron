@@ -10,6 +10,10 @@
  *   force-quit-app <pid>   → {"ok": bool}       NSRunningApplication.forceTerminate()
  *   running-apps           → [{pid, name, bundleId, path}]  regular (Dock) apps
  *   lock                   → {"ok": bool}
+ *   context                → {"app", "bundleId", "before", "after", "secure", "trusted"}
+ *                            dictation context: the front app and up to 500 characters each side
+ *                            of the cursor in its focused text field. Never reads password fields
+ *                            (secure: true and no text). Accessibility only; no clipboard or focus change.
  *
  * Long-running mode: `peakflow-helper keywatch` watches typing for snippet
  * keywords. It reads one JSON line per update from stdin,
@@ -136,6 +140,48 @@ func selectedText(axOnly: Bool = false) -> String {
     return jsonLine(["text": text, "via": text.isEmpty ? "none" : "copy", "trusted": true])
 }
 
+// MARK: - dictation context
+
+func dictationContext(limit: Int = 500) -> String {
+    guard AXIsProcessTrusted() else { return jsonLine(["trusted": false]) }
+    guard let app = NSWorkspace.shared.frontmostApplication else { return jsonLine(["trusted": true]) }
+    var out: [String: Any] = ["app": app.localizedName ?? "", "bundleId": app.bundleIdentifier ?? "", "trusted": true]
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetMessagingTimeout(axApp, 0.25) // a slow app must not hold up dictation
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+          let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() else { return jsonLine(out) }
+    let el = f as! AXUIElement // swiftlint:disable:this force_cast
+    var role: CFTypeRef?
+    var subrole: CFTypeRef?
+    AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+    AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+    if (subrole as? String) == (kAXSecureTextFieldSubrole as String) || (role as? String) == "AXSecureTextField" {
+        out["secure"] = true
+        return jsonLine(out)
+    }
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &value) == .success,
+          let text = value as? String, !text.isEmpty else { return jsonLine(out) }
+    let ns = text as NSString
+    var cursor = ns.length
+    var selLen = 0
+    var rangeRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+       let r = rangeRef, CFGetTypeID(r) == AXValueGetTypeID() {
+        var range = CFRange(location: 0, length: 0)
+        if AXValueGetValue(r as! AXValue, .cfRange, &range) { // swiftlint:disable:this force_cast
+            cursor = max(0, min(ns.length, range.location))
+            selLen = max(0, min(ns.length - cursor, range.length))
+        }
+    }
+    let start = max(0, cursor - limit)
+    let afterStart = cursor + selLen
+    out["before"] = ns.substring(with: NSRange(location: start, length: cursor - start))
+    out["after"] = ns.substring(with: NSRange(location: afterStart, length: min(limit, ns.length - afterStart)))
+    return jsonLine(out)
+}
+
 // MARK: - apps
 
 func runningApps() -> String {
@@ -181,6 +227,10 @@ private var maxKeywordLength = 0
 private var typed = ""
 private var keywatchTap: CFMachPort?
 private var holdKeyCode: Int64 = -1
+/// Other key codes that mean the same key (fn is 63, the Globe key on newer keyboards can report 179)
+private var holdAltCodes: Set<Int64> = []
+/// PEAKFLOW_KEYWATCH_DEBUG=1: log every modifier change to stderr (PeakFlow prints it)
+private let keyDebug = getenv("PEAKFLOW_KEYWATCH_DEBUG").map { String(cString: $0) } == "1"
 private var holdFlag: CGEventFlags = []
 private var holdDown = false
 
@@ -250,7 +300,11 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     }
     if type == .flagsChanged {
         let code = event.getIntegerValueField(.keyboardEventKeycode)
-        if holdKeyCode >= 0 && code == holdKeyCode {
+        if keyDebug {
+            FileHandle.standardError.write("flagsChanged code=\(code) flags=0x\(String(event.flags.rawValue, radix: 16)) fn=\(event.flags.contains(.maskSecondaryFn)) hold=\(holdKeyCode) down=\(holdDown)\n".data(using: .utf8)!)
+        }
+        let isHoldKey = holdKeyCode >= 0 && (code == holdKeyCode || holdAltCodes.contains(code))
+        if isHoldKey {
             let down = event.flags.contains(holdFlag)
             if down && !holdDown {
                 holdDown = true
@@ -259,7 +313,11 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
                 holdDown = false
                 emit(["e": "hold-up"])
             }
-        } else if holdDown && code != holdKeyCode {
+            // fn alone makes macOS open the emoji picker (or switch input source) on release, which
+            // then takes the paste. Hide fn's own down/up from apps: fn + arrows and the F-keys are
+            // translated by the keyboard driver before this tap, so they keep working.
+            if !holdAltCodes.isEmpty { return nil }
+        } else if holdDown {
             // Another modifier joined in: a shortcut like ⌘⇧4, not dictation
             holdDown = false
             emit(["e": "hold-cancel"])
@@ -319,6 +377,7 @@ private func readSnippetUpdates() {
                     if let (code, flag) = HOLD_KEYS[name] {
                         holdKeyCode = code
                         holdFlag = flag
+                        holdAltCodes = name == "fn" ? [179] : []
                     } else {
                         holdKeyCode = -1
                     }
@@ -344,7 +403,7 @@ func runKeyWatch() -> Never {
     readSnippetUpdates()
     let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
     guard trusted,
-          let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+          let tap = CGEvent.tapCreate(tap: getenv("PEAKFLOW_KEYWATCH_TAP").map { String(cString: $0) } == "hid" ? .cghidEventTap : .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                       eventsOfInterest: CGEventMask(mask), callback: keywatchCallback, userInfo: nil) else {
         emit(["e": "ready", "trusted": false])
         // Stay alive so PeakFlow can tell the helper is up; it restarts us once permission is granted

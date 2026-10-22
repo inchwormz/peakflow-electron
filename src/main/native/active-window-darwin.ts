@@ -205,9 +205,19 @@ export function raiseAppWindows(pid: number, _hwnd?: unknown): void {
  * nothing gets focus until the user clicks. Give focus back to the app that
  * was in front before the panel opened.
  */
-export function restorePreviousApp(): void {
-  if (!isValidPid(lastOtherAppPid)) return
+export function restorePreviousApp(): boolean {
+  if (!isValidPid(lastOtherAppPid)) return false
   sendCommand(`activate ${lastOtherAppPid}`).catch(() => {})
+  return true
+}
+
+/** Note which app is in front before PeakFlow takes focus (the panel opening). */
+export function rememberFrontApp(): void {
+  sendCommand('active-window').then((raw) => {
+    if (raw === 'null' || raw.startsWith('{"error"')) return
+    const pid = (JSON.parse(raw) as { pid?: number }).pid
+    if (typeof pid === 'number' && pid !== process.pid) lastOtherAppPid = pid
+  }).catch(() => {})
 }
 
 export function getVisibleAppList(_skipSet?: Set<string>): Array<{ exe: string; name: string }> {

@@ -497,4 +497,8 @@ export function getVisibleAppList(skipSet?: Set<string>): Array<{ exe: string; n
 }
 
 /** Windows gives focus back to the previous window itself when the panel hides. */
-export function restorePreviousApp(): void {}
+export function restorePreviousApp(): boolean {
+  return false
+}
+
+export function rememberFrontApp(): void {}

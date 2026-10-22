@@ -20,6 +20,7 @@ import type { LauncherSnippet } from '@shared/launcher/types'
 import { getMacHelperPath } from '../native/mac-helper'
 import { simulateCtrlV } from '../native/keyboard'
 import { checkAccessibility } from '../services/permissions-darwin'
+import { KeyTaps } from './key-taps'
 
 let child: ChildProcess | null = null
 let active = false
@@ -28,7 +29,10 @@ let current: LauncherSnippet[] = []
 let restarts = 0
 let snippetsWanted = false
 let holdKey: string | null = null
+let dictating = false
 let holdListener: ((e: 'down' | 'up' | 'cancel') => void) | null = null
+const doubleListeners = new Set<() => void>()
+const taps = new KeyTaps()
 
 /** Windows virtual-key codes for the hold keys */
 const WIN_HOLD_VK: Record<string, number> = { rctrl: 0xa3, ralt: 0xa5 }
@@ -37,9 +41,36 @@ export function onHoldKey(fn: (e: 'down' | 'up' | 'cancel') => void): void {
   holdListener = fn
 }
 
-/** The dictation key to watch ('rcmd' | 'ropt' | 'rctrl' | 'fn' on Mac, 'rctrl' | 'ralt' on Windows), or null for none. */
-export function setHoldKey(key: string | null): void {
+/**
+ * A quick double tap of the dictation key (SnapGrid's auto-arrange). The key is
+ * watched while anything is subscribed, even with dictation off. Returns an unsubscribe.
+ */
+export function onDictationKeyDouble(fn: () => void): () => void {
+  doubleListeners.add(fn)
+  applyHoldKey()
+  return () => {
+    doubleListeners.delete(fn)
+    applyHoldKey()
+  }
+}
+
+/**
+ * The dictation key ('rcmd' | 'ropt' | 'rctrl' | 'fn' on Mac, 'rctrl' | 'ralt' on Windows)
+ * and whether a hold dictates. With dictation off the key is still watched for double taps.
+ */
+export function setHoldKey(key: string | null, dictate = true): void {
   holdKey = key
+  dictating = dictate
+  applyHoldKey()
+}
+
+/** The key the watcher should report, or null */
+function watchedKey(): string | null {
+  return holdKey && (dictating || doubleListeners.size) ? holdKey : null
+}
+
+function applyHoldKey(): void {
+  taps.reset()
   refreshWanted()
   if (!wanted) return stopExpansion(false)
   if (!child) start()
@@ -47,13 +78,21 @@ export function setHoldKey(key: string | null): void {
 }
 
 function refreshWanted(): void {
-  wanted = snippetsWanted || !!holdKey
+  wanted = snippetsWanted || !!watchedKey()
 }
 
 function sendHold(): void {
   if (!child?.stdin?.writable) return
-  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: holdKey }) + '\n')
-  else child.stdin.write(`HOLD ${holdKey ? WIN_HOLD_VK[holdKey] ?? 0 : 0}\n`)
+  const key = watchedKey()
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key }) + '\n')
+  else child.stdin.write(`HOLD ${key ? WIN_HOLD_VK[key] ?? 0 : 0}\n`)
+}
+
+function onKey(e: 'down' | 'up' | 'cancel'): void {
+  for (const a of taps.feed(e, Date.now())) {
+    if (a === 'double') doubleListeners.forEach((fn) => fn())
+    else if (dictating) holdListener?.(a)
+  }
 }
 
 export function isExpansionActive(): boolean {
@@ -101,13 +140,16 @@ function onLine(line: string): void {
       }
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
-    } else if (ev.e === 'hold-down') holdListener?.('down')
-    else if (ev.e === 'hold-up') holdListener?.('up')
-    else if (ev.e === 'hold-cancel') holdListener?.('cancel')
+    } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
+    if (ev.e === 'hold-down') onKey('down')
+    else if (ev.e === 'hold-up') onKey('up')
+    else if (ev.e === 'hold-cancel') onKey('cancel')
   } catch { /* not ours */ }
 }
 
 const WIN_HOOK = `
+# No progress records: they reach stderr as CLIXML noise
+$ProgressPreference = 'SilentlyContinue'
 $src = @"
 using System;
 using System.Collections.Generic;
@@ -282,7 +324,11 @@ function start(): void {
       if (l) onLine(l)
     }
   })
-  c.stderr?.on('data', (d: Buffer) => console.warn('[Launcher] keywatch:', d.toString().trim().slice(0, 300)))
+  c.stderr?.on('data', (d: Buffer) => {
+    // PowerShell writes progress and some host messages to stderr as CLIXML: not errors
+    const t = d.toString().trim()
+    if (t && !t.startsWith('#< CLIXML') && !t.startsWith('<Objs')) console.warn('[Launcher] keywatch:', t.slice(0, 300))
+  })
   c.stdin?.on('error', () => {})
   c.on('exit', (code) => {
     if (child === c) child = null

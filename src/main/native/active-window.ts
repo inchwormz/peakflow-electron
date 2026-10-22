@@ -43,6 +43,10 @@ export function restorePreviousApp() {
   return getImpl().restorePreviousApp()
 }
 
+export function rememberFrontApp() {
+  return getImpl().rememberFrontApp()
+}
+
 export function clearPidExeCache() {
   return getImpl().clearPidExeCache()
 }
