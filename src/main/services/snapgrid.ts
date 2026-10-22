@@ -393,6 +393,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden}
       // No script in the page (the app's CSP blocks inline scripts): draw from here
       const boxes = local.map((r) => `<div class="z" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"></div>`).join('')
       void win.webContents.executeJavaScript(`document.body.innerHTML=${JSON.stringify(boxes)}`).catch(() => {})
+      win.setOpacity(1)
       if (!win.isVisible()) win.showInactive()
     })
   }
@@ -400,6 +401,9 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden}
   private hidePreview(): void {
     const win = this.overlay
     if (win && !win.isDestroyed() && win.isVisible()) {
+      // Transparent first: macOS fades out the last frame on hide, and the
+      // page clear below lands after that frame was captured
+      win.setOpacity(0)
       void win.webContents.executeJavaScript("document.body.innerHTML=''").catch(() => {})
       win.hide()
     }
