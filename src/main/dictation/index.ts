@@ -436,9 +436,11 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
 export async function runDictationDevTest(): Promise<void> {
   const audioPath = process.env['PEAKFLOW_DICTATION_TEST_AUDIO']
   const out = process.env['PEAKFLOW_LAUNCHER_SHOTS']
-  if (!is.dev || app.isPackaged || !audioPath || !out) return
+  const frames = process.env['PEAKFLOW_DICTATION_FRAMES'] === '1'
+  if (!is.dev || app.isPackaged || (!audioPath && !frames) || !out) return
   mkdirSync(out, { recursive: true })
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  if (frames || !audioPath) return recordPillFrames(join(out, 'frames'))
   const shot = async (name: string): Promise<void> => {
     await sleep(350)
     const img = await getPill().webContents.capturePage()
@@ -480,6 +482,39 @@ export async function runDictationDevTest(): Promise<void> {
   await shot('32-dictation-error')
   hidePill()
   console.log('[DictationTest] finished')
+}
+
+/**
+ * Development only: records the pill's animation as numbered PNG frames, using
+ * a made-up speech level instead of the microphone (no mic, no keyboard, no API).
+ */
+async function recordPillFrames(dir: string): Promise<void> {
+  mkdirSync(dir, { recursive: true })
+  const w = getPill()
+  if (w.webContents.isLoading()) await new Promise<void>((r) => w.webContents.once('did-finish-load', () => r()))
+  await new Promise((r) => setTimeout(r, 600))
+  showPill()
+  // Syllables at about 4 a second, in phrases with short pauses, then silence
+  const level = (t: number): number => {
+    if (t < 0.5 || (t > 2.3 && t < 2.8) || t > 4.4) return 0.02
+    const syl = Math.pow(Math.max(0, Math.sin(t * Math.PI * 4.2 + Math.sin(t * 3.1))), 1.6)
+    return 0.15 + 0.75 * syl * (0.7 + 0.3 * Math.sin(t * 1.7))
+  }
+  const plan: Array<[number, DictationState]> = [[0, { phase: 'listening' }], [5.2, { phase: 'transcribing' }], [6.6, { phase: 'done' }], [7.3, { phase: 'idle' }]]
+  const t0 = Date.now()
+  let n = 0
+  let step = 0
+  while (true) {
+    const t = (Date.now() - t0) / 1000
+    if (t > 7.6) break
+    while (step < plan.length && t >= plan[step][0]) state(plan[step++][1])
+    await w.webContents.executeJavaScript(`window.__pfLevel = ${level(t).toFixed(3)}`)
+    const img = await w.webContents.capturePage()
+    writeFileSync(join(dir, `${String(n++).padStart(4, '0')}-${Math.round(t * 1000)}.png`), img.toPNG())
+    await new Promise((r) => setTimeout(r, 12))
+  }
+  hidePill()
+  console.log(`[DictationTest] ${n} pill frames in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${dir}`)
 }
 
 export function destroyDictation(): void {
