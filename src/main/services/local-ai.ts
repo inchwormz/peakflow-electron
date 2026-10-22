@@ -166,7 +166,7 @@ async function signedIn(id: 'codex' | 'claude', bin: string): Promise<boolean> {
   let v = false
   if (id === 'claude') {
     try {
-      v = JSON.parse(r.out.slice(r.out.indexOf('{'))).loggedIn === true
+      v = (JSON.parse(r.out.slice(r.out.indexOf('{'))) as { loggedIn?: boolean }).loggedIn === true
     } catch {
       v = r.code === 0 && !/not logged in/i.test(r.out)
     }
@@ -296,7 +296,7 @@ function runCli(
       const line = (l: string): void => {
         let ev: Record<string, unknown>
         try {
-          ev = JSON.parse(l)
+          ev = JSON.parse(l) as Record<string, unknown>
         } catch {
           errText += l + '\n'
           return
@@ -309,7 +309,7 @@ function runCli(
               onChunk?.(text)
             }
           } else if (ev.type === 'result') {
-            if (ev.is_error) errText += String(ev.result ?? '')
+            if (ev.is_error) errText += typeof ev.result === 'string' ? ev.result : JSON.stringify(ev.result ?? '')
             else if (typeof ev.result === 'string') finalText = ev.result
           }
         } else {
@@ -377,7 +377,7 @@ async function runOllama(prompt: string, system: string, json: boolean, signal: 
     let buf = ''
     let text = ''
     for (;;) {
-      const { done, value } = await reader.read()
+      const { done, value } = (await reader.read()) as { done: boolean; value?: Uint8Array }
       if (done) break
       buf += dec.decode(value, { stream: true })
       let i: number
