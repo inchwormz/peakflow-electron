@@ -962,6 +962,14 @@ class FocusDimService {
     const conf = this.getConf()
     const activeWin = getActiveWindow()
 
+    // PeakFlow in front with none of its windows focused: the panel has just
+    // hidden and focus is on its way back to the previous app. Keep the
+    // current dim instead of drawing the hidden panel or revealing the desktop.
+    if (activeWin && activeWin.pid === process.pid && !BrowserWindow.getFocusedWindow()) {
+      this._desktopNullTicks = 0
+      return
+    }
+
     if (activeWin) {
       this._desktopNullTicks = 0
 
