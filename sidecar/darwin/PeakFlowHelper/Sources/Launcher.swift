@@ -227,6 +227,10 @@ private var maxKeywordLength = 0
 private var typed = ""
 private var keywatchTap: CFMachPort?
 private var holdKeyCode: Int64 = -1
+/// Other key codes that mean the same key (fn is 63, the Globe key on newer keyboards can report 179)
+private var holdAltCodes: Set<Int64> = []
+/// PEAKFLOW_KEYWATCH_DEBUG=1: log every modifier change to stderr (PeakFlow prints it)
+private let keyDebug = getenv("PEAKFLOW_KEYWATCH_DEBUG").map { String(cString: $0) } == "1"
 private var holdFlag: CGEventFlags = []
 private var holdDown = false
 
@@ -296,7 +300,11 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     }
     if type == .flagsChanged {
         let code = event.getIntegerValueField(.keyboardEventKeycode)
-        if holdKeyCode >= 0 && code == holdKeyCode {
+        if keyDebug {
+            FileHandle.standardError.write("flagsChanged code=\(code) flags=0x\(String(event.flags.rawValue, radix: 16)) fn=\(event.flags.contains(.maskSecondaryFn)) hold=\(holdKeyCode) down=\(holdDown)\n".data(using: .utf8)!)
+        }
+        let isHoldKey = holdKeyCode >= 0 && (code == holdKeyCode || holdAltCodes.contains(code))
+        if isHoldKey {
             let down = event.flags.contains(holdFlag)
             if down && !holdDown {
                 holdDown = true
@@ -305,7 +313,11 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
                 holdDown = false
                 emit(["e": "hold-up"])
             }
-        } else if holdDown && code != holdKeyCode {
+            // fn alone makes macOS open the emoji picker (or switch input source) on release, which
+            // then takes the paste. Hide fn's own down/up from apps: fn + arrows and the F-keys are
+            // translated by the keyboard driver before this tap, so they keep working.
+            if !holdAltCodes.isEmpty { return nil }
+        } else if holdDown {
             // Another modifier joined in: a shortcut like ⌘⇧4, not dictation
             holdDown = false
             emit(["e": "hold-cancel"])
@@ -365,6 +377,7 @@ private func readSnippetUpdates() {
                     if let (code, flag) = HOLD_KEYS[name] {
                         holdKeyCode = code
                         holdFlag = flag
+                        holdAltCodes = name == "fn" ? [179] : []
                     } else {
                         holdKeyCode = -1
                     }
@@ -390,7 +403,7 @@ func runKeyWatch() -> Never {
     readSnippetUpdates()
     let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
     guard trusted,
-          let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+          let tap = CGEvent.tapCreate(tap: getenv("PEAKFLOW_KEYWATCH_TAP").map { String(cString: $0) } == "hid" ? .cghidEventTap : .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                       eventsOfInterest: CGEventMask(mask), callback: keywatchCallback, userInfo: nil) else {
         emit(["e": "ready", "trusted": false])
         // Stay alive so PeakFlow can tell the helper is up; it restarts us once permission is granted
