@@ -371,7 +371,7 @@ class SnapGridService {
     this.overlay = win
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:transparent;overflow:hidden}
-.z{position:absolute;box-sizing:border-box;border-radius:12px;background:rgba(255,255,255,.22);border:3px solid rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(0,0,0,.45),0 12px 48px rgba(0,0,0,.35);transition:left .12s ease,top .12s ease,width .12s ease,height .12s ease}
+.z{position:absolute;box-sizing:border-box;border-radius:12px;background:rgba(110,116,128,.3);border:3px solid rgba(255,255,255,.95);box-shadow:0 0 0 1px rgba(0,0,0,.5),inset 0 0 0 1px rgba(0,0,0,.35),0 12px 48px rgba(0,0,0,.35);transition:left .12s ease,top .12s ease,width .12s ease,height .12s ease}
 </style></head><body></body></html>`
     this.overlayReady = win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => {})
     win.on('closed', () => {
@@ -394,6 +394,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden}
       // No script in the page (the app's CSP blocks inline scripts): draw from here
       const boxes = local.map((r) => `<div class="z" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"></div>`).join('')
       void win.webContents.executeJavaScript(`document.body.innerHTML=${JSON.stringify(boxes)}`).catch(() => {})
+      if (process.platform === 'darwin') win.setOpacity(1)
       if (!win.isVisible()) win.showInactive()
     })
   }
@@ -401,6 +402,10 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden}
   private hidePreview(): void {
     const win = this.overlay
     if (win && !win.isDestroyed() && win.isVisible()) {
+      // Transparent first: macOS fades out the last frame on hide, and the
+      // page clear below lands after that frame was captured. Not on Windows:
+      // window opacity there stops a transparent window drawing at all.
+      if (process.platform === 'darwin') win.setOpacity(0)
       void win.webContents.executeJavaScript("document.body.innerHTML=''").catch(() => {})
       win.hide()
     }
