@@ -16,6 +16,7 @@ import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initFocusDim, destroyFocusDim } from './services/focus-dim'
+import { initSnapGrid, destroySnapGrid } from './services/snapgrid'
 import { initClipboard, destroyClipboard } from './services/clipboard'
 import { initCalendar, destroyCalendar } from './services/google-calendar'
 import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
@@ -220,6 +221,7 @@ if (!gotLock) {
 
     // Only start services for tools the user has installed via the Dashboard
     if (isToolInstalled(ToolId.FocusDim))    initFocusDim()
+    if (isToolInstalled(ToolId.SnapGrid))    initSnapGrid()
     if (isToolInstalled(ToolId.QuickBoard))  initClipboard()
     if (isToolInstalled(ToolId.ScreenSlap))  initCalendar()
     if (isToolInstalled(ToolId.ScreenSlap))  initScreenSlap()
@@ -276,6 +278,7 @@ if (!gotLock) {
     destroyCalendar()
     destroyClipboard()
     destroyFocusDim()
+    destroySnapGrid()
     destroyActiveWindowHelper() // after FocusDim, so its polling can't restart the helper
     unregisterHotkeys()
     destroyTray()

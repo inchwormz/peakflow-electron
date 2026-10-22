@@ -18,6 +18,8 @@ import { toggleMicMute } from './services/mic-mute'
 import { isToolInstalled } from './security/trial'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
+import { SNAP_LAYOUTS, SNAP_UNDO_ACCEL } from '@shared/snapgrid-layouts'
+import { getSnapGridService } from './services/snapgrid'
 
 /** Registry of all active hotkeys: accelerator → label (for conflict detection) */
 const hotkeyRegistry = new Map<string, string>()
@@ -86,7 +88,10 @@ export function registerHotkeys(): void {
   // QuickBoard sequential paste queue hotkeys
   registerQueueHotkeys()
 
-  // v2 switcher: ⌥⌘1–4 open the panel on FocusDim, Liquid Focus, ScreenSlap, QuickBoard
+  // SnapGrid window layouts (⌃⌥ + arrows / letters)
+  registerSnapGridHotkeys()
+
+  // v2 switcher: ⌥⌘1–5 open the panel on FocusDim, Liquid Focus, ScreenSlap, QuickBoard, SnapGrid
   registerSwitcherHotkeys()
 }
 
@@ -122,6 +127,22 @@ export function registerToolHotkey(toolId: ToolId): void {
   // Also register FocusDim feature hotkeys on install
   if (toolId === ToolId.FocusDim) {
     registerFocusDimFeatureHotkeys()
+  }
+}
+
+/**
+ * SnapGrid layout keys. Registered after FocusDim's, so if a key is already
+ * taken (FocusDim, or another app) SnapGrid skips it rather than stealing it.
+ */
+function registerSnapGridHotkeys(): void {
+  if (!isToolInstalled(ToolId.SnapGrid)) return
+  const svc = getSnapGridService()
+  for (const layout of SNAP_LAYOUTS) {
+    if (globalShortcut.isRegistered(layout.accel)) continue
+    registerSingleHotkey(`snapgrid:${layout.key}`, layout.accel, () => void svc.applyLayout(layout.key))
+  }
+  if (!globalShortcut.isRegistered(SNAP_UNDO_ACCEL)) {
+    registerSingleHotkey('snapgrid:undo', SNAP_UNDO_ACCEL, () => void svc.undo())
   }
 }
 

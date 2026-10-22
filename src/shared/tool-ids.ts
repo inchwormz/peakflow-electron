@@ -8,7 +8,8 @@ export enum ToolId {
   ScreenSlap = 'screenslap',
   MeetReady = 'meetready',
   LiquidFocus = 'liquidfocus',
-  SoundSplit = 'soundsplit'
+  SoundSplit = 'soundsplit',
+  SnapGrid = 'snapgrid'
 }
 
 /** Window types that aren't tools (licensing, settings, etc.) */
@@ -35,7 +36,8 @@ export const TOOL_DISPLAY_NAMES: Record<ToolId, string> = {
   [ToolId.QuickBoard]: 'QuickBoard',
   [ToolId.LiquidFocus]: 'Liquid Focus',
   [ToolId.MeetReady]: 'MeetReady',
-  [ToolId.SoundSplit]: 'SoundSplit'
+  [ToolId.SoundSplit]: 'SoundSplit',
+  [ToolId.SnapGrid]: 'SnapGrid'
 }
 
 /** Default hotkeys (matching Python app hotkeys) */
@@ -46,7 +48,7 @@ export const DEFAULT_HOTKEYS: Partial<Record<ToolId, string>> = {
 }
 
 /**
- * The four tools in the one-app panel, in switcher order (hotkeys ⌥⌘1–4).
+ * The tools in the one-app panel, in switcher order (hotkeys ⌥⌘1–5).
  * John, 19 Oct 2026: MeetReady and SoundSplit are out for now. Their code stays;
  * they are only hidden from the switcher, settings, tray and hotkeys.
  */
@@ -54,7 +56,9 @@ export const PANEL_TOOLS: readonly ToolId[] = [
   ToolId.FocusDim,
   ToolId.LiquidFocus,
   ToolId.ScreenSlap,
-  ToolId.QuickBoard
+  ToolId.QuickBoard,
+  // John, 22 Oct 2026: "thats great! build it!" (Magnet-style window organizer)
+  ToolId.SnapGrid
 ]
 
 /** Tools hidden from every surface in v2 (code kept). */

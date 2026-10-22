@@ -74,7 +74,8 @@ const SWITCH_ACCELERATORS: Partial<Record<ToolId, string>> = {
   [ToolId.FocusDim]: 'Alt+CommandOrControl+1',
   [ToolId.LiquidFocus]: 'Alt+CommandOrControl+2',
   [ToolId.ScreenSlap]: 'Alt+CommandOrControl+3',
-  [ToolId.QuickBoard]: 'Alt+CommandOrControl+4'
+  [ToolId.QuickBoard]: 'Alt+CommandOrControl+4',
+  [ToolId.SnapGrid]: 'Alt+CommandOrControl+5'
 }
 
 /**

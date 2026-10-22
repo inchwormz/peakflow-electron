@@ -86,6 +86,15 @@ export const IPC_INVOKE = {
   FOCUSDIM_ADD_EXCLUDED_APP: 'focusdim:add-excluded-app',
   FOCUSDIM_REMOVE_EXCLUDED_APP: 'focusdim:remove-excluded-app',
 
+  // SnapGrid
+  SNAPGRID_GET_STATE: 'snapgrid:get-state',
+  SNAPGRID_APPLY: 'snapgrid:apply',
+  SNAPGRID_ARRANGE: 'snapgrid:arrange',
+  SNAPGRID_PREVIEW: 'snapgrid:preview',
+  SNAPGRID_UNDO: 'snapgrid:undo',
+  SNAPGRID_SET_DRAG: 'snapgrid:set-drag',
+  SNAPGRID_OPEN_OS_SETTINGS: 'snapgrid:open-os-settings',
+
   // App-level
   APP_GET_AUTO_START: 'app:get-auto-start',
   APP_SET_AUTO_START: 'app:set-auto-start',
@@ -233,6 +242,7 @@ export const IPC_SEND = {
   CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-status',
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',
+  SNAPGRID_STATE_CHANGED: 'snapgrid:state-changed',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
   CALENDAR_STATUS_CHANGED: 'calendar:status-changed',

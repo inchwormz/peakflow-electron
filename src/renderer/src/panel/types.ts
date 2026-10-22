@@ -9,7 +9,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import type { IconName } from './icons'
 
-export type PanelToolId = 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard'
+export type PanelToolId = 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'snapgrid'
 
 export type RouteParams = Record<string, string>
 
