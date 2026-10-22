@@ -157,6 +157,13 @@ public static class PfKeyWatch {
     SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
   }
 
+  static void Tap(ushort vk) {
+    INPUT[] inputs = new INPUT[2];
+    inputs[0].type = 1; inputs[0].ki.wVk = vk;
+    inputs[1].type = 1; inputs[1].ki.wVk = vk; inputs[1].ki.dwFlags = 2;
+    SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
+
   static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
     try {
       if (nCode >= 0) {
@@ -165,8 +172,16 @@ public static class PfKeyWatch {
         bool isUp = (int)wParam == WM_KEYUP || (int)wParam == WM_SYSKEYUP;
         if ((k.flags & LLKHF_INJECTED) == 0) {
           if (holdVk != 0 && k.vkCode == (uint)holdVk) {
-            if (isDown && !holdDown) { holdDown = true; Emit("hold-down"); }
+            if (isDown && !holdDown) {
+              holdDown = true;
+              Emit("hold-down");
+              // A lone Alt press opens the app's menu bar on release, which would eat the paste:
+              // an unassigned key (0xE8) in between stops that
+              if (holdVk == 0xA5) ThreadPool.QueueUserWorkItem(delegate { Tap(0xE8); });
+            }
             else if (isUp && holdDown) { holdDown = false; Emit("hold-up"); }
+          } else if (holdDown && holdVk == 0xA5 && k.vkCode == 0xA2 && (k.scanCode & 0x200) != 0) {
+            // AltGr layouts send a fake Left Ctrl with Right Alt (and repeat it): not another key
           } else if (isDown) {
             if (holdDown) { holdDown = false; Emit("hold-cancel"); }
             Handle(k);
