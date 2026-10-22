@@ -9,6 +9,7 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { execFile } from 'child_process'
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -37,7 +38,7 @@ const MAX_HOLD_MS = 5 * 60_000
 const PILL_W = 220
 const PILL_H = 44
 
-const MAC_KEYS: DictationHoldKey[] = ['rcmd', 'ropt', 'fn', 'rctrl']
+const MAC_KEYS: DictationHoldKey[] = ['fn', 'ropt', 'rcmd', 'rctrl']
 const WIN_KEYS: DictationHoldKey[] = ['rctrl', 'ralt']
 
 interface DictationData {
@@ -52,7 +53,8 @@ interface DictationData {
 const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
-  defaults: { enabled: false, holdKey: isMac ? 'rcmd' : 'rctrl', tidy: true, words: '' }
+  // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
+  defaults: { enabled: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '' }
 })
 
 let pill: BrowserWindow | null = null
@@ -85,6 +87,36 @@ function settings(): DictationSettings {
     wordCount: parseMyWords(store.get('words')).hints.length,
     active: store.get('enabled') && key && isExpansionActive()
   }
+}
+
+const DICTATION_APPS = /wispr|superwhisper|macwhisper|voiceink|aqua voice|willow/i
+
+/**
+ * Plain-words warnings for the chosen key: another dictation app running
+ * (it may listen to the same key), or macOS's own fn action still switched on.
+ * We can't read other apps' shortcut settings, so this says "may".
+ */
+async function keyHint(holdKey: DictationHoldKey): Promise<string | undefined> {
+  if (!isMac) return undefined
+  const hints: string[] = []
+  const apps = (await runMacHelper(['running-apps'], 3000)) as unknown
+  const other = Array.isArray(apps)
+    ? (apps as Array<{ name?: unknown }>).map((a) => (typeof a.name === 'string' ? a.name : '')).find((n) => DICTATION_APPS.test(n))
+    : undefined
+  if (other) hints.push(`${other} is running and may use the same key. If both react, pick another key here or in ${other}.`)
+  if (holdKey === 'fn') {
+    // 0 = Do Nothing; missing or anything else means macOS also acts on fn (emoji, input source, its own dictation)
+    const fnAction = await new Promise<string>((resolve) =>
+      execFile('defaults', ['read', 'com.apple.HIToolbox', 'AppleFnUsageType'], { timeout: 2000 }, (err, out) => resolve(err ? '' : String(out).trim()))
+    )
+    if (fnAction !== '0') hints.push('So macOS doesn’t also react to fn, set System Settings › Keyboard › “Press fn key to” to “Do Nothing”.')
+  }
+  return hints.length ? hints.join(' ') : undefined
+}
+
+async function settingsWithHint(): Promise<DictationSettings> {
+  const s = settings()
+  return s.enabled ? { ...s, hint: await keyHint(s.holdKey) } : s
 }
 
 /** Watch the hold key only while dictation is on and has a key. */
@@ -349,7 +381,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
-  h(IPC_INVOKE.DICTATION_SETTINGS, () => settings())
+  h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromLauncher(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
@@ -365,7 +397,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     }
     applyWatcher()
     if (settings().enabled) getPill()
-    return settings()
+    return settingsWithHint()
   })
   h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromLauncher(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
   h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromLauncher(e) ? store.get('words') : ''))
