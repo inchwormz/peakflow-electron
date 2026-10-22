@@ -173,6 +173,8 @@ export interface DictationSettings {
   wordCount: number
   /** The keyboard watcher is running with the permission it needs */
   active: boolean
+  /** A warning about the chosen key (another dictation app, macOS's fn action) */
+  hint?: string
 }
 
 export interface DictationState {

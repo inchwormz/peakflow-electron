@@ -841,7 +841,7 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
 }
 
 const HOLD_KEYS: Array<[DictationHoldKey, string]> = isMac()
-  ? [['rcmd', 'Right ⌘'], ['ropt', 'Right ⌥'], ['fn', 'fn'], ['rctrl', 'Right ⌃']]
+  ? [['fn', 'fn'], ['ropt', 'Right ⌥'], ['rcmd', 'Right ⌘'], ['rctrl', 'Right ⌃']]
   : [['rctrl', 'Right Ctrl'], ['ralt', 'Right Alt']]
 
 const KEY_ERRORS: Record<string, string> = {
@@ -902,7 +902,10 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
       {d.enabled && (
         <>
           <div className="lc-set">
-            <div><div className="lbl">Hold to talk</div></div>
+            <div>
+              <div className="lbl">Hold to talk</div>
+              {d.hint && <div className="sub" role="note">{d.hint}</div>}
+            </div>
             <span className="seg">
               {HOLD_KEYS.map(([k, name]) => (
                 <button key={k} aria-pressed={d.holdKey === k} onClick={() => set('holdKey', k)}>{name}</button>

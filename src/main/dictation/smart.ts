@@ -130,6 +130,8 @@ const FILLER_RE = /\b(um+|uh+|erm*|ah+|hmm+|you know)\b/i
 const REPEAT_RE = /\b([\p{L}']+)[\s,]+\1\b/iu
 const DIGIT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
 const squash = (t: string): string => t.toLowerCase().replace(/\d/g, (d) => DIGIT_WORDS[Number(d)]).replace(/[^\p{L}]/gu, '')
+/** Digits read as the letters they look like ("Iter0" heard as "Itero") */
+const squashLook = (t: string): string => t.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'l').replace(/[^\p{L}]/gu, '')
 
 /**
  * Whether the clean-up has anything to do. Skipping it saves about 0.9 s on
@@ -139,10 +141,13 @@ const squash = (t: string): string => t.toLowerCase().replace(/\d/g, (d) => DIGI
 export function needsTidy(raw: string, words: MyWords): boolean {
   if (FILLER_RE.test(raw) || CORRECTION_RE.test(raw) || REPEAT_RE.test(raw)) return true
   const flat = squash(raw)
+  const flatLook = squashLook(raw)
   return words.hints.some((h) => {
-    const sq = squash(h)
     // Same word in any case ("linear" with "Linear" listed) is an ordinary word, not a miss
-    return sq.length >= 4 && flat.includes(sq) && !new RegExp(`\\b${escapeRe(h)}\\b`, 'i').test(raw)
+    if (new RegExp(`\\b${escapeRe(h)}\\b`, 'i').test(raw)) return false
+    const sq = squash(h)
+    const look = squashLook(h)
+    return (sq.length >= 4 && flat.includes(sq)) || (look !== h.toLowerCase() && look.length >= 4 && flatLook.includes(look))
   })
 }
 

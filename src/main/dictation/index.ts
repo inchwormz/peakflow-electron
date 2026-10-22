@@ -9,6 +9,7 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { execFile } from 'child_process'
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -37,7 +38,7 @@ const MAX_HOLD_MS = 5 * 60_000
 const PILL_W = 220
 const PILL_H = 44
 
-const MAC_KEYS: DictationHoldKey[] = ['rcmd', 'ropt', 'fn', 'rctrl']
+const MAC_KEYS: DictationHoldKey[] = ['fn', 'ropt', 'rcmd', 'rctrl']
 const WIN_KEYS: DictationHoldKey[] = ['rctrl', 'ralt']
 
 interface DictationData {
@@ -52,7 +53,8 @@ interface DictationData {
 const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
-  defaults: { enabled: false, holdKey: isMac ? 'rcmd' : 'rctrl', tidy: true, words: '' }
+  // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
+  defaults: { enabled: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '' }
 })
 
 let pill: BrowserWindow | null = null
@@ -85,6 +87,36 @@ function settings(): DictationSettings {
     wordCount: parseMyWords(store.get('words')).hints.length,
     active: store.get('enabled') && key && isExpansionActive()
   }
+}
+
+const DICTATION_APPS = /wispr|superwhisper|macwhisper|voiceink|aqua voice|willow/i
+
+/**
+ * Plain-words warnings for the chosen key: another dictation app running
+ * (it may listen to the same key), or macOS's own fn action still switched on.
+ * We can't read other apps' shortcut settings, so this says "may".
+ */
+async function keyHint(holdKey: DictationHoldKey): Promise<string | undefined> {
+  if (!isMac) return undefined
+  const hints: string[] = []
+  const apps = (await runMacHelper(['running-apps'], 3000)) as unknown
+  const other = Array.isArray(apps)
+    ? (apps as Array<{ name?: unknown }>).map((a) => (typeof a.name === 'string' ? a.name : '')).find((n) => DICTATION_APPS.test(n))
+    : undefined
+  if (other) hints.push(`${other} is running and may use the same key. If both react, pick another key here or in ${other}.`)
+  if (holdKey === 'fn') {
+    // 0 = Do Nothing; missing or anything else means macOS also acts on fn (emoji, input source, its own dictation)
+    const fnAction = await new Promise<string>((resolve) =>
+      execFile('defaults', ['read', 'com.apple.HIToolbox', 'AppleFnUsageType'], { timeout: 2000 }, (err, out) => resolve(err ? '' : String(out).trim()))
+    )
+    if (fnAction !== '0') hints.push('So macOS doesn’t also react to fn, set System Settings › Keyboard › “Press fn key to” to “Do Nothing”.')
+  }
+  return hints.length ? hints.join(' ') : undefined
+}
+
+async function settingsWithHint(): Promise<DictationSettings> {
+  const s = settings()
+  return s.enabled ? { ...s, hint: await keyHint(s.holdKey) } : s
 }
 
 /** Watch the hold key only while dictation is on and has a key. */
@@ -349,7 +381,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
-  h(IPC_INVOKE.DICTATION_SETTINGS, () => settings())
+  h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromLauncher(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
@@ -365,7 +397,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     }
     applyWatcher()
     if (settings().enabled) getPill()
-    return settings()
+    return settingsWithHint()
   })
   h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromLauncher(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
   h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromLauncher(e) ? store.get('words') : ''))
@@ -404,9 +436,11 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
 export async function runDictationDevTest(): Promise<void> {
   const audioPath = process.env['PEAKFLOW_DICTATION_TEST_AUDIO']
   const out = process.env['PEAKFLOW_LAUNCHER_SHOTS']
-  if (!is.dev || app.isPackaged || !audioPath || !out) return
+  const frames = process.env['PEAKFLOW_DICTATION_FRAMES'] === '1'
+  if (!is.dev || app.isPackaged || (!audioPath && !frames) || !out) return
   mkdirSync(out, { recursive: true })
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  if (frames || !audioPath) return recordPillFrames(join(out, 'frames'))
   const shot = async (name: string): Promise<void> => {
     await sleep(350)
     const img = await getPill().webContents.capturePage()
@@ -448,6 +482,39 @@ export async function runDictationDevTest(): Promise<void> {
   await shot('32-dictation-error')
   hidePill()
   console.log('[DictationTest] finished')
+}
+
+/**
+ * Development only: records the pill's animation as numbered PNG frames, using
+ * a made-up speech level instead of the microphone (no mic, no keyboard, no API).
+ */
+async function recordPillFrames(dir: string): Promise<void> {
+  mkdirSync(dir, { recursive: true })
+  const w = getPill()
+  if (w.webContents.isLoading()) await new Promise<void>((r) => w.webContents.once('did-finish-load', () => r()))
+  await new Promise((r) => setTimeout(r, 600))
+  showPill()
+  // Syllables at about 4 a second, in phrases with short pauses, then silence
+  const level = (t: number): number => {
+    if (t < 0.5 || (t > 2.3 && t < 2.8) || t > 4.4) return 0.02
+    const syl = Math.pow(Math.max(0, Math.sin(t * Math.PI * 4.2 + Math.sin(t * 3.1))), 1.6)
+    return 0.15 + 0.75 * syl * (0.7 + 0.3 * Math.sin(t * 1.7))
+  }
+  const plan: Array<[number, DictationState]> = [[0, { phase: 'listening' }], [5.2, { phase: 'transcribing' }], [6.6, { phase: 'done' }], [7.3, { phase: 'idle' }]]
+  const t0 = Date.now()
+  let n = 0
+  let step = 0
+  while (true) {
+    const t = (Date.now() - t0) / 1000
+    if (t > 7.6) break
+    while (step < plan.length && t >= plan[step][0]) state(plan[step++][1])
+    await w.webContents.executeJavaScript(`window.__pfLevel = ${level(t).toFixed(3)}`)
+    const img = await w.webContents.capturePage()
+    writeFileSync(join(dir, `${String(n++).padStart(4, '0')}-${Math.round(t * 1000)}.png`), img.toPNG())
+    await new Promise((r) => setTimeout(r, 12))
+  }
+  hidePill()
+  console.log(`[DictationTest] ${n} pill frames in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${dir}`)
 }
 
 export function destroyDictation(): void {
