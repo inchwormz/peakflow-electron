@@ -59,12 +59,26 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
         return recognizeText(path: path)
     case "accessibility-check":
         return jsonString(["trusted": checkAccessibility()])
+    // Launcher (Launcher.swift)
+    case "activate-previous":
+        return activatePrevious()
+    case "selection":
+        return selectedText()
+    case "running-apps":
+        return runningApps()
+    case "quit-app", "force-quit-app":
+        guard let pid = arg.flatMap({ Int32($0) }) else { return jsonLine(["ok": false, "error": "pid required"]) }
+        return quitApp(pid: pid, force: command == "force-quit-app")
+    case "lock":
+        return lockScreen()
     default:
         return nil
     }
 }
 
 let cliArgs = CommandLine.arguments
+// Launcher snippet expansion: long-running keyword watcher (Launcher.swift)
+if cliArgs.count > 1 && cliArgs[1] == "keywatch" { runKeyWatch() }
 if cliArgs.count > 1 {
     let arg = cliArgs.count > 2 ? cliArgs[2...].joined(separator: " ") : nil
     if let result = runOneShot(cliArgs[1], arg) {
