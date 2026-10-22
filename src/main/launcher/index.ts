@@ -20,7 +20,7 @@ import type {
   LauncherRunResult, LauncherSettings, LauncherSnippet
 } from '@shared/launcher/types'
 import { launcherStore, DEFAULT_LAUNCHER_HOTKEY } from './store'
-import { getApps, isIndexedApp, settingsItems, settingsUrl } from './apps'
+import { getApps, isIndexedApp, isIndexedStartApp, settingsItems, settingsUrl } from './apps'
 import { searchFiles, filePathFor } from './files'
 import { listProcesses, quitProcess } from './processes'
 import { getRates } from './rates'
@@ -146,6 +146,15 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
     const p = id.slice(4)
     if (!isIndexedApp(p)) return { ok: false }
     return done(await openPath(p, !!opts.alt))
+  }
+  if (id.startsWith('uwp:')) {
+    // Store apps have no file to open: the shell starts them by AppUserModelID
+    const appId = id.slice(4)
+    if (process.platform !== 'win32' || !isIndexedStartApp(appId)) return { ok: false }
+    const child = spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], { detached: true, stdio: 'ignore', windowsHide: true })
+    child.on('error', () => {})
+    child.unref()
+    return done({ ok: true })
   }
   if (id.startsWith('file:')) {
     const p = filePathFor(id)

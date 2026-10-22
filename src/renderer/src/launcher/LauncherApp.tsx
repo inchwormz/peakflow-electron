@@ -165,6 +165,11 @@ export function LauncherApp(): React.JSX.Element {
     loadItems()
     void loadAiStatus()
     void invoke<CurrencyRates | null>(IPC_INVOKE.LAUNCHER_RATES).then(setRates)
+    // Windows can drop the focus given while the bar was hidden: put it back when the window gets focus
+    const onWinFocus = (): void => {
+      if (!document.activeElement || document.activeElement === document.body) inputRef.current?.focus()
+    }
+    window.addEventListener('focus', onWinFocus)
     const offShown = window.peakflow.on(IPC_SEND.LAUNCHER_SHOWN, (raw) => {
       const info = raw as LauncherOpenInfo
       openAt.current = info.at
@@ -196,6 +201,7 @@ export function LauncherApp(): React.JSX.Element {
     void invoke(IPC_INVOKE.LAUNCHER_READY)
     return () => {
       offShown()
+      window.removeEventListener('focus', onWinFocus)
       offChanged()
       offChunk()
     }

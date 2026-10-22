@@ -56,7 +56,7 @@ $out = foreach ($p in $apps) {
 `
 
 async function winList(): Promise<LauncherProcess[]> {
-  const encoded = Buffer.from(WIN_LIST, 'utf16le').toString('base64')
+  const encoded = Buffer.from("$ProgressPreference = 'SilentlyContinue'\n" + WIN_LIST, 'utf16le').toString('base64')
   const out = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', encoded], 8000)
   try {
     const list = JSON.parse(out.trim()) as Array<{ pid: number; name: string; memory: number; path: string }>
