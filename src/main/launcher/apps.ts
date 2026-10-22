@@ -6,7 +6,7 @@
  * The list is rebuilt in the background when it's more than a minute old.
  */
 
-import { readdir } from 'fs/promises'
+import { readdir, realpath } from 'fs/promises'
 import { homedir } from 'os'
 import { basename, extname, join } from 'path'
 import type { LauncherItem } from '@shared/launcher/types'
@@ -56,14 +56,17 @@ async function macApps(): Promise<LauncherItem[]> {
   }
   await Promise.all(roots.map((r) => scan(r, 2)))
   add('/System/Library/CoreServices/Finder.app')
-  return [...found.entries()].map(([name, path]) => ({
-    id: `app:${path}`,
-    kind: 'app' as const,
-    title: name,
-    subtitle: path.startsWith('/System') ? 'System app' : undefined,
-    keywords: APP_KEYWORDS[name],
-    iconPath: path
-  }))
+  // Icons come from the real bundle: Safari and other Cryptex apps are symlinks, whose icon is blank
+  return Promise.all(
+    [...found.entries()].map(async ([name, path]) => ({
+      id: `app:${path}`,
+      kind: 'app' as const,
+      title: name,
+      subtitle: path.startsWith('/System') ? 'System app' : undefined,
+      keywords: APP_KEYWORDS[name],
+      iconPath: await realpath(path).catch(() => path)
+    }))
+  )
 }
 
 const SKIP_SHORTCUT = /uninstall|readme|help|documentation|release notes|website|license|eula/i
@@ -125,7 +128,7 @@ export async function getApps(): Promise<LauncherItem[]> {
 }
 
 export function isIndexedApp(path: string): boolean {
-  return apps.some((a) => a.iconPath === path)
+  return apps.some((a) => a.id === `app:${path}`)
 }
 
 // ─── settings pages ──────────────────────────────────────────────────────────
