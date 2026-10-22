@@ -28,10 +28,15 @@ export interface AiProviderInfo {
   signedIn?: boolean
 }
 
+/** light: the provider's smallest, cheapest model (saves the person's usage). best: their CLI's default model. */
+export type AiTier = 'light' | 'best'
+
 export interface RunLocalAiOptions {
   prompt: string
   system?: string
   provider?: AiProviderId
+  /** Omitted: the person's saved choice for that provider (light unless they picked best) */
+  tier?: AiTier
   /** Ask for JSON only; the reply is trimmed to the JSON value */
   json?: boolean
   signal?: AbortSignal
@@ -177,17 +182,18 @@ async function signedIn(id: 'codex' | 'claude', bin: string): Promise<boolean> {
   return v
 }
 
-async function ollamaModel(): Promise<string | null> {
+async function ollamaModel(tier: AiTier = 'light'): Promise<string | null> {
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(800) })
     if (!res.ok) return null
     const body = (await res.json()) as { models?: Array<{ name: string; size?: number }> }
     const models = body.models ?? []
     if (!models.length) return null
-    // Prefer a stored choice, else the smallest model (fastest answers)
+    // Prefer a stored choice, else the smallest model (light) or the largest (best)
     const chosen = prefs().get('ollamaModel') as string | undefined
     if (chosen && models.some((m) => m.name === chosen)) return chosen
-    return [...models].sort((a, b) => (a.size ?? 0) - (b.size ?? 0))[0].name
+    const bySize = [...models].sort((a, b) => (a.size ?? 0) - (b.size ?? 0))
+    return (tier === 'best' ? bySize[bySize.length - 1] : bySize[0]).name
   } catch {
     return null
   }
@@ -226,6 +232,33 @@ export async function getDefaultAiProvider(): Promise<AiProviderId | null> {
   return pick?.id ?? null
 }
 
+/** The model size to use for a provider: light (default, saves the person's usage) or best. */
+export function getAiTier(id: AiProviderId): AiTier {
+  return prefs().get(`tier.${id}`) === 'best' ? 'best' : 'light'
+}
+
+export function setAiTier(id: AiProviderId, tier: AiTier): void {
+  if (ORDER.includes(id) && (tier === 'light' || tier === 'best')) prefs().set(`tier.${id}`, tier)
+}
+
+// The Codex CLI's lightest model, read from its own model list (names change between versions)
+let codexLight: { bin: string; model: string | null } | null = null
+
+async function codexLightModel(bin: string): Promise<string | null> {
+  if (codexLight?.bin === bin) return codexLight.model
+  const r = await run(bin, ['debug', 'models'], await childEnv(bin), 8000)
+  let model: string | null = null
+  try {
+    const body = JSON.parse(r.out.slice(r.out.indexOf('{'))) as { models?: Array<{ slug?: string; visibility?: string; priority?: number }> }
+    const light = (body.models ?? [])
+      .filter((m) => typeof m.slug === 'string' && m.visibility !== 'hide' && /luna|mini|nano|lite/i.test(m.slug))
+      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+    model = light[0]?.slug ?? null
+  } catch { /* old CLI without the list: use its default */ }
+  codexLight = { bin, model }
+  return model
+}
+
 /** Forget cached sign-in answers (after the person signs in from the setup screen). */
 export function refreshAiProviders(): void {
   signInCache.clear()
@@ -254,15 +287,17 @@ function runCli(
   prompt: string,
   system: string,
   signal: AbortSignal | undefined,
-  onChunk: ((t: string) => void) | undefined
+  onChunk: ((t: string) => void) | undefined,
+  model: string | null
 ): Promise<RunLocalAiResult> {
   return new Promise((resolve) => {
     void childEnv(bin).then((env) => {
+      const pick = model ? ['--model', model] : []
       const args =
         id === 'claude'
           ? ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', '--no-session-persistence',
-             '--strict-mcp-config', '--setting-sources', '', '--system-prompt', system]
-          : ['exec', '--json', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-c', 'model_reasoning_effort="low"', '-']
+             '--strict-mcp-config', '--setting-sources', '', ...pick, '--system-prompt', system]
+          : ['exec', '--json', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-c', 'model_reasoning_effort="low"', ...pick, '-']
       let child: ChildProcess
       try {
         child = spawn(bin, args, { env, cwd: workDir(), shell: isWin && bin.endsWith('.cmd'), windowsHide: true })
@@ -355,8 +390,8 @@ function runCli(
   })
 }
 
-async function runOllama(prompt: string, system: string, json: boolean, signal: AbortSignal | undefined, onChunk: ((t: string) => void) | undefined): Promise<RunLocalAiResult> {
-  const model = await ollamaModel()
+async function runOllama(prompt: string, system: string, json: boolean, signal: AbortSignal | undefined, onChunk: ((t: string) => void) | undefined, tier: AiTier): Promise<RunLocalAiResult> {
+  const model = await ollamaModel(tier)
   if (!model) return { ok: false, error: 'no_provider' }
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), RUN_TIMEOUT_MS)
@@ -409,12 +444,21 @@ export async function runLocalAi(opts: RunLocalAiOptions): Promise<RunLocalAiRes
   if (!provider) return { ok: false, error: 'no_provider' }
   const system = [opts.system?.trim() || DEFAULT_SYSTEM, opts.json ? JSON_RULE : ''].filter(Boolean).join('\n\n')
   let result: RunLocalAiResult
+  const tier = opts.tier ?? getAiTier(provider)
   if (provider === 'ollama') {
-    result = await runOllama(opts.prompt, system, !!opts.json, opts.signal, opts.onChunk)
+    result = await runOllama(opts.prompt, system, !!opts.json, opts.signal, opts.onChunk, tier)
   } else {
     const bin = await findBinary(provider)
     if (!bin) return { ok: false, error: 'no_provider' }
-    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk)
+    // Light: Claude's Haiku tier; Codex's smallest listed model. Best: the CLI's own default.
+    const model = tier === 'best' ? null : provider === 'claude' ? 'haiku' : await codexLightModel(bin)
+    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model)
+    // The plan doesn't offer that model (or this CLI doesn't know it): use the default instead
+    if (!result.ok && model && result.error === 'failed' && !opts.signal?.aborted) {
+      console.warn(`[LocalAI] ${provider} light model ${model} failed; using the default model`)
+      if (provider === 'codex') codexLight = { bin, model: null }
+      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null)
+    }
   }
   if (result.ok && opts.json && result.text) result = { ...result, text: extractJson(result.text) }
   return result

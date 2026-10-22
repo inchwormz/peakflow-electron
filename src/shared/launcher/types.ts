@@ -83,6 +83,8 @@ export interface AiProviderStatus {
   /** Ollama: the model it will use */
   model?: string
   detail?: string
+  /** light: the smallest model (saves the person's usage); best: their default */
+  tier: 'light' | 'best'
 }
 
 export interface AiStatus {
