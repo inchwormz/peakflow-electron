@@ -36,7 +36,7 @@ import {
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
 import { initDictation, destroyDictation, runDictationDevTest } from '../dictation'
-import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand } from '../services/local-ai'
+import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier } from '../services/local-ai'
 
 const isMac = process.platform === 'darwin'
 
@@ -268,7 +268,7 @@ function askAi(p: AiAskPayload): number {
 async function aiStatus(): Promise<AiStatus> {
   const [list, selected] = await Promise.all([listAiProviders(), getDefaultAiProvider()])
   return {
-    providers: list.map((p) => ({ id: p.id, name: p.id === 'ollama' ? 'Local model' : p.label, installed: p.installed, signedIn: p.signedIn ?? null, model: p.id === 'ollama' && p.installed ? p.label.replace(/^.*\((.*)\)$/, '$1') : undefined })),
+    providers: list.map((p) => ({ id: p.id, name: p.id === 'ollama' ? 'Local model' : p.label, installed: p.installed, signedIn: p.signedIn ?? null, model: p.id === 'ollama' && p.installed ? p.label.replace(/^.*\((.*)\)$/, '$1') : undefined, tier: getAiTier(p.id) })),
     selected
   }
 }
@@ -420,6 +420,10 @@ function registerIpc(): void {
   h(IPC_INVOKE.LAUNCHER_AI_STATUS, () => aiStatus())
   h(IPC_INVOKE.LAUNCHER_AI_SET_PROVIDER, (e, id: unknown) => {
     if (fromLauncher(e) && (id === 'codex' || id === 'claude' || id === 'ollama')) setDefaultAiProvider(id as AiProviderId)
+    return aiStatus()
+  })
+  h(IPC_INVOKE.LAUNCHER_AI_SET_TIER, (e, id: unknown, tier: unknown) => {
+    if (fromLauncher(e) && (id === 'codex' || id === 'claude' || id === 'ollama') && (tier === 'light' || tier === 'best')) setAiTier(id, tier)
     return aiStatus()
   })
   h(IPC_INVOKE.LAUNCHER_AI_ASK, (e, p: AiAskPayload) => (fromLauncher(e) && p && typeof p === 'object' ? askAi(p) : 0))

@@ -10,7 +10,7 @@
  */
 
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
-import { readFileSync, writeFileSync } from 'fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
 import { is } from '@electron-toolkit/utils'
@@ -336,6 +336,7 @@ export async function runDictationDevTest(): Promise<void> {
   const audioPath = process.env['PEAKFLOW_DICTATION_TEST_AUDIO']
   const out = process.env['PEAKFLOW_LAUNCHER_SHOTS']
   if (!is.dev || app.isPackaged || !audioPath || !out) return
+  mkdirSync(out, { recursive: true })
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
   const shot = async (name: string): Promise<void> => {
     await sleep(350)

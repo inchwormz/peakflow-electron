@@ -21,6 +21,7 @@ export const LAUNCHER_INVOKE = {
   LAUNCHER_SET_SETTING: 'launcher:set-setting',
   LAUNCHER_AI_STATUS: 'launcher:ai-status',
   LAUNCHER_AI_SET_PROVIDER: 'launcher:ai-set-provider',
+  LAUNCHER_AI_SET_TIER: 'launcher:ai-set-tier',
   LAUNCHER_AI_ASK: 'launcher:ai-ask',
   LAUNCHER_AI_CANCEL: 'launcher:ai-cancel',
   LAUNCHER_AI_CONNECT: 'launcher:ai-connect',
