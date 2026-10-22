@@ -840,7 +840,7 @@ function DictationRows(): React.JSX.Element | null {
       <div className="lc-set">
         <div>
           <div className="lbl">Dictation</div>
-          <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 3 minutes).'}</div>
+          <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 2 minutes of talking).'}</div>
         </div>
         <span className="row">
           <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" style={KEY_INPUT} aria-label="OpenAI API key" />
