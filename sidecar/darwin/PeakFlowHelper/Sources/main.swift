@@ -63,7 +63,7 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
     case "activate-previous":
         return activatePrevious()
     case "selection":
-        return selectedText()
+        return selectedText(axOnly: arg == "ax")
     case "running-apps":
         return runningApps()
     case "quit-app", "force-quit-app":

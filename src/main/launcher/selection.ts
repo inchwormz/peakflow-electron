@@ -86,10 +86,16 @@ async function winSelection(stepAside: () => void, comeBack: () => void): Promis
 
 export async function getSelectedText(stepAside: () => void, comeBack: () => void, holdOpen: (on: boolean) => void): Promise<SelectionResult> {
   if (process.platform === 'darwin') {
-    // The helper may bring the other app forward to copy from it; keep the bar
-    // from hiding on that blur and bring it back after
+    // 1. Ask the app through Accessibility: no clipboard, no focus change, the bar stays up
+    const ax = await runMacHelper(['selection', 'ax'], 2000)
+    if (ax?.trusted === false) return { text: '', trusted: false }
+    if (typeof ax?.text === 'string' && ax.text) return { text: ax.text, trusted: true }
+    // 2. Browsers and Electron apps don't answer that: step aside so ⌘C reaches the
+    //    app underneath (not the bar), copy, put the clipboard back, come back
     holdOpen(true)
+    stepAside()
     try {
+      await sleep(80)
       const r = await runMacHelper(['selection'], 3000)
       return { text: typeof r?.text === 'string' ? r.text : '', trusted: r?.trusted !== false }
     } finally {

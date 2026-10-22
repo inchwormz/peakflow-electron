@@ -4,7 +4,8 @@
  *
  * One-shot commands (see runOneShot in main.swift):
  *   activate-previous      → {"ok": bool}       bring back the app the user was in
- *   selection              → {"text": "...", "via": "ax"|"copy"|"none", "trusted": bool}
+ *   selection [ax]         → {"text": "...", "via": "ax"|"copy"|"none", "trusted": bool}
+ *                            ("ax": Accessibility only, never touches the clipboard or focus)
  *   quit-app <pid>         → {"ok": bool}       NSRunningApplication.terminate()
  *   force-quit-app <pid>   → {"ok": bool}       NSRunningApplication.forceTerminate()
  *   running-apps           → [{pid, name, bundleId, path}]  regular (Dock) apps
@@ -92,7 +93,7 @@ private func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) {
 /// Selected text in the previous app. Tries the Accessibility API first (no
 /// clipboard, no focus change); apps that don't expose it (browsers,
 /// Electron apps) get a simulated Cmd+C with the clipboard put back after.
-func selectedText() -> String {
+func selectedText(axOnly: Bool = false) -> String {
     guard AXIsProcessTrusted() else { return jsonLine(["text": "", "via": "none", "trusted": false]) }
     guard let app = previousApp() else { return jsonLine(["text": "", "via": "none", "trusted": true]) }
 
@@ -107,6 +108,8 @@ func selectedText() -> String {
             return jsonLine(["text": s, "via": "ax", "trusted": true])
         }
     }
+
+    if axOnly { return jsonLine(["text": "", "via": "none", "trusted": true]) }
 
     // Fallback: copy in the previous app, read, restore the clipboard
     app.activate(options: [])
