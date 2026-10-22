@@ -26,6 +26,7 @@ import { windowSnap } from '../native/window-snap'
 import { hidePanel } from '../panel'
 import { getFocusDimService } from './focus-dim'
 import { setWindowCommandHandler } from '../launcher/window-commands'
+import { onDictationKeyDouble } from '../launcher/expander'
 import type { SnapRect, SnapWindow, DragEvent } from '../native/window-snap'
 
 const POLL_MS = 350
@@ -434,14 +435,20 @@ export function getSnapGridService(): SnapGridService {
   return service
 }
 
+let offDoubleTap: (() => void) | null = null
+
 export function initSnapGrid(): void {
   getSnapGridService().init()
   // The launcher lists window commands ("left half" …) only while this is set.
   setWindowCommandHandler((key) => getSnapGridService().applyLayout(key as SnapLayoutKey))
+  // Double-tap the dictation key (fn on Mac, right Ctrl on Windows) to auto-arrange
+  offDoubleTap = onDictationKeyDouble(() => void getSnapGridService().autoArrange())
 }
 
 export function destroySnapGrid(): void {
   setWindowCommandHandler(null)
+  offDoubleTap?.()
+  offDoubleTap = null
   service?.destroy()
   service = null
 }
