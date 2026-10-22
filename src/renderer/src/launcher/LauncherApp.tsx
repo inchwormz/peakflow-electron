@@ -715,6 +715,7 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { setti
   const [recording, setRecording] = useState(false)
   const set = (key: string, value: unknown): void => void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SET_SETTING, key, value).then(onChange)
   const usable = (aiStatus?.providers ?? []).filter((p) => p.installed && p.signedIn !== false)
+  const selectedAi = usable.find((p) => p.id === aiStatus?.selected)
   return (
     <div>
       <div className="lc-set">
@@ -772,6 +773,21 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { setti
           <button className="btn" onClick={onConnect}>Connect</button>
         )}
       </div>
+      {selectedAi && (
+        <div className="lc-set">
+          <div>
+            <div className="lbl">{PROVIDER_NAMES[selectedAi.id]} model</div>
+            <div className="sub">{selectedAi.tier === 'best' ? 'Uses your plan’s top model: slower, uses more of your limit' : 'A smaller model: quick, and uses less of your plan’s limit'}</div>
+          </div>
+          <span className="seg">
+            {(['light', 'best'] as const).map((t) => (
+              <button key={t} aria-pressed={selectedAi.tier === t} onClick={() => void invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_SET_TIER, selectedAi.id, t).then(onAi)}>
+                {t === 'light' ? 'Light' : 'Best'}
+              </button>
+            ))}
+          </span>
+        </div>
+      )}
       <DictationRows />
       <div className="lc-set">
         <div>
