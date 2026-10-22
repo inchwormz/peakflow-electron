@@ -519,7 +519,7 @@ function formatTimeIn(zone: string, at: Date): { time: string; day: string } {
     dOpts.timeZone = zone
   }
   return {
-    time: at.toLocaleTimeString('en-US', opts).toLowerCase().replace(/ /g, ' '),
+    time: at.toLocaleTimeString('en-US', opts).toLowerCase().replace(/\u202f/g, ' '),
     day: at.toLocaleDateString('en-GB', dOpts)
   }
 }

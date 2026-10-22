@@ -22,7 +22,7 @@ function file(): string {
 function loadDisk(): void {
   if (cached) return
   try {
-    cached = JSON.parse(readFileSync(file(), 'utf-8'))
+    cached = JSON.parse(readFileSync(file(), 'utf-8')) as CurrencyRates & { fetchedAt: number }
   } catch {
     cached = null
   }

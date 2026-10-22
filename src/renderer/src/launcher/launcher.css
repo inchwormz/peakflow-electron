@@ -81,3 +81,4 @@ html, body { background: #0f0f0f; overflow: hidden; }
 .lc .lc-confirm .t { font-size: var(--t-body); }
 .lc .lc-confirm .row { display: flex; gap: 8px; justify-content: flex-end; }
 .lc .lc-mem { font-variant-numeric: tabular-nums; }
+.lc .lc-crumb:focus, .lc .lc-crumb:focus-visible { outline: none; box-shadow: none; }

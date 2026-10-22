@@ -178,6 +178,7 @@ export function LauncherApp(): React.JSX.Element {
       setEditing(null)
       setFiles({ q: '', list: [] })
       loadItems()
+      void loadAiStatus()
       if (!rates) void invoke<CurrencyRates | null>(IPC_INVOKE.LAUNCHER_RATES).then(setRates)
       inputRef.current?.focus()
       // Open time: hotkey pressed → bar painted
@@ -198,7 +199,6 @@ export function LauncherApp(): React.JSX.Element {
       offChanged()
       offChunk()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── size follows content ──
@@ -206,9 +206,9 @@ export function LauncherApp(): React.JSX.Element {
     const el = rootRef.current
     if (!el) return
     const ro = new ResizeObserver(() => {
-      const top = el.querySelector('.lc-top') as HTMLElement | null
-      const body = el.querySelector('.lc-body') as HTMLElement | null
-      const foot = el.querySelector('.lc-foot') as HTMLElement | null
+      const top = el.querySelector<HTMLElement>('.lc-top')
+      const body = el.querySelector<HTMLElement>('.lc-body')
+      const foot = el.querySelector<HTMLElement>('.lc-foot')
       const content = body ? Array.from(body.children).reduce((h, c) => h + (c as HTMLElement).offsetHeight, 0) + 12 : 0
       const h = (top?.offsetHeight ?? 54) + (body ? Math.min(content, 440) : 0) + (foot?.offsetHeight ?? 34)
       void invoke(IPC_INVOKE.LAUNCHER_RESIZE, h)
@@ -296,17 +296,18 @@ export function LauncherApp(): React.JSX.Element {
 
   const startAi = useCallback(
     async (title: string, redo: AiRun['redo'], provider?: AiProviderId) => {
-      const status = aiStatus ?? (await invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS))
-      const p = provider ?? status.selected
-      if (!p) {
+      // Main picks the saved choice when no provider is given, so a stale list here can't send it to the wrong AI
+      const status = await invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS)
+      setAiStatus(status)
+      if (!(provider ?? status.selected)) {
         setView('ai-setup')
         return
       }
-      const reqId = await invoke<number>(IPC_INVOKE.LAUNCHER_AI_ASK, { ...redo, provider: p })
+      const reqId = await invoke<number>(IPC_INVOKE.LAUNCHER_AI_ASK, { ...redo, provider })
       setAi({ reqId, title, text: '', done: false, redo })
       setView('ai')
     },
-    [aiStatus]
+    []
   )
 
   const runAiAction = useCallback(
@@ -582,7 +583,8 @@ function AiAnswer({ ai, status, onProvider, onConnect }: { ai: AiRun; status: Ai
   return (
     <div className="lc-ai">
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <span className="lc-ai-q">{ai.redo.text ? `${ai.redo.text.replace(/\s+/g, ' ').slice(0, 90)}${ai.redo.text.length > 90 ? '…' : ''}` : ai.title}</span>
+        {/* The question is already in the top bar; show the selected text the action works on */}
+        <span className="lc-ai-q">{ai.redo.text ? `“${ai.redo.text.replace(/\s+/g, ' ').slice(0, 90)}${ai.redo.text.length > 90 ? '…' : ''}”` : ''}</span>
         {usable.length > 1 && (
           <span className="seg" style={{ flex: 'none' }}>
             {usable.map((p) => (

@@ -15,9 +15,9 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 // ─── Windows: Ctrl+C through SendInput (own anonymous structs; keyboard-win32 owns the named ones) ──
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let winSend: ((vks: Array<[number, boolean]>) => boolean) | null = null
 
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- koffi is untyped */
 function winKeys(): (vks: Array<[number, boolean]>) => boolean {
   if (winSend) return winSend
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -32,6 +32,7 @@ function winKeys(): (vks: Array<[number, boolean]>) => boolean {
   }
   return winSend
 }
+/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 
 interface SavedClipboard {
   formats: Array<{ format: string; data: Buffer }>

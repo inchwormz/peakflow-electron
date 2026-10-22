@@ -95,7 +95,8 @@ export type AiTextAction = 'grammar' | 'rewrite' | 'summarise' | 'translate' | '
 
 export interface AiAskPayload {
   prompt: string
-  provider: AiProviderId
+  /** Omitted: the person's saved choice */
+  provider?: AiProviderId
   action?: AiTextAction
   /** Text the action works on (selected text) */
   text?: string

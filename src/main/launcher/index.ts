@@ -34,6 +34,7 @@ import {
   refocusLauncher, stepAsideLauncher, setLauncherQuitting, getLauncherWindow, onLauncherHidden
 } from './window'
 import { getAppIcon } from '../services/app-icons'
+import { runLauncherDevTest } from './dev-test'
 import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand } from '../services/local-ai'
 
 const isMac = process.platform === 'darwin'
@@ -137,7 +138,7 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
   // Commands that act on another app's window or the screen run after the bar has gone
   const after = (fn: () => Promise<LauncherRunResult>): Promise<LauncherRunResult> => {
     hideLauncher()
-    return new Promise((resolve) => setTimeout(() => fn().then(resolve, () => resolve({ ok: false })), 60))
+    return new Promise((resolve) => setTimeout(() => void fn().then(resolve, () => resolve({ ok: false })), 60))
   }
 
   if (id.startsWith('app:')) {
@@ -182,6 +183,7 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
     const text = fillPlaceholders(s.text)
     if (opts.alt) {
       clipboard.writeText(text)
+      hideLauncher({ restoreFocus: true })
       return done({ ok: true, message: 'Copied' })
     }
     const ok = await pasteText(text, hideLauncher)
@@ -235,7 +237,7 @@ function askAi(p: AiAskPayload): number {
   const ctrl = new AbortController()
   aiRuns.set(reqId, ctrl)
   const chunk = (c: Omit<AiChunk, 'reqId'>): void => sendToLauncher(IPC_SEND.LAUNCHER_AI_CHUNK, { reqId, ...c } satisfies AiChunk)
-  const provider = (['codex', 'claude', 'ollama'] as const).includes(p.provider) ? p.provider : undefined
+  const provider = p.provider && (['codex', 'claude', 'ollama'] as const).includes(p.provider) ? p.provider : undefined
   const action = p.action && p.action in ACTION_SYSTEM ? p.action : undefined
   const prompt = String(p.prompt ?? '').slice(0, 20_000)
   const text = String(p.text ?? '').slice(0, 60_000)
@@ -353,7 +355,7 @@ function registerIpc(): void {
     return getAppIcon({ path: p })
   })
   h(IPC_INVOKE.LAUNCHER_HIDE, (e) => {
-    if (fromLauncher(e)) hideLauncher()
+    if (fromLauncher(e)) hideLauncher({ restoreFocus: true })
   })
   h(IPC_INVOKE.LAUNCHER_RESIZE, (e, height: unknown) => {
     if (fromLauncher(e)) resizeLauncher(height)
@@ -362,7 +364,7 @@ function registerIpc(): void {
     if (!fromLauncher(e) || typeof text !== 'string') return false
     if (opts?.paste) return pasteText(text, hideLauncher)
     clipboard.writeText(text)
-    hideLauncher()
+    hideLauncher({ restoreFocus: true })
     return true
   })
   h(IPC_INVOKE.LAUNCHER_PROCESSES, (e) => (fromLauncher(e) ? listProcesses() : []))
@@ -446,6 +448,7 @@ export function initLauncher(): void {
   })
   // Retry snippet expansion when the bar opens (the permission may have been granted since)
   getLauncherWindow()?.on('show', () => retryExpansion())
+  void runLauncherDevTest() // development test driver only (env-gated, never in packaged builds)
 }
 
 export function destroyLauncher(): void {

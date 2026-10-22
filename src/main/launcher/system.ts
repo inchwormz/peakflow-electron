@@ -77,9 +77,9 @@ const COMMANDS: SysCommand[] = [
     title: 'Keep Awake',
     keywords: ['caffeinate', 'stay awake', 'no sleep', 'amphetamine', 'prevent sleep'],
     glyph: 'coffee',
-    run: async () => {
+    run: () => {
       const on = setKeepAwake(!isKeepAwake())
-      return { ok: true, keepOpen: true, message: on ? 'Keep Awake is on: the screen won’t sleep' : 'Keep Awake is off' }
+      return Promise.resolve({ ok: true, keepOpen: true, message: on ? 'Keep Awake is on: the screen won’t sleep' : 'Keep Awake is off' })
     }
   },
   {
@@ -87,13 +87,13 @@ const COMMANDS: SysCommand[] = [
     title: 'Sleep',
     keywords: ['suspend', 'sleep computer'],
     glyph: 'moon',
-    run: async () => {
+    run: () => {
       // Give the bar a moment to close first
       setTimeout(() => {
         if (isMac) void exec('pmset', ['sleepnow'])
         else if (isWin) void exec('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0'])
       }, 300)
-      return ok()
+      return Promise.resolve(ok())
     }
   },
   {

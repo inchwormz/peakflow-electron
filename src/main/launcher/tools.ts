@@ -97,9 +97,9 @@ const COMMANDS: ToolCommand[] = [
     subtitle: 'Plan, shortcuts, updates',
     keywords: ['peakflow', 'preferences', 'licence', 'license'],
     glyph: 'settings',
-    run: async () => {
+    run: () => {
       showPanel('app')
-      return { ok: true }
+      return Promise.resolve({ ok: true })
     }
   }
 ]

@@ -2,13 +2,14 @@
  * The launcher window: one frameless bar, created hidden at startup and kept
  * alive, so the hotkey only has to show it (no page load on open).
  *
- * macOS: an NSPanel ('panel' type) that takes the keyboard without making
- * PeakFlow the active app, like Spotlight. The app you were in stays active,
- * so closing the bar hands focus straight back and the AI actions can read
- * that app's selection. It floats over full-screen apps too.
+ * macOS: a 'panel' window so it floats over full-screen apps. PeakFlow is made
+ * the active app while the bar is up (a non-activating panel never got the
+ * keyboard in Electron); dismissing the bar hands focus back to the app you
+ * were in (restoreFocus).
  */
 
-import { BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
+import { runMacHelper } from '../native/mac-helper'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { SystemWindowId } from '@shared/tool-ids'
@@ -102,7 +103,7 @@ function create(): BrowserWindow {
   })
   const query = { toolId: SystemWindowId.Launcher }
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    void w.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${new URLSearchParams(query)}`)
+    void w.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${new URLSearchParams(query).toString()}`)
   } else {
     void w.loadFile(join(__dirname, '../renderer/index.html'), { query })
   }
@@ -118,28 +119,40 @@ export function isLauncherVisible(): boolean {
   return !!getLauncherWindow()?.isVisible()
 }
 
-export function showLauncher(info: Partial<LauncherOpenInfo> = {}): void {
+export function showLauncher(info: Partial<LauncherOpenInfo> & { inactive?: boolean } = {}): void {
   if (!getLauncherWindow()) win = create()
   const w = win!
   shownAt = Date.now()
   // Tell the page first so it resets while still hidden (no flash of the last search)
   send(IPC_SEND.LAUNCHER_SHOWN, { at: info.at ?? shownAt, view: info.view } satisfies LauncherOpenInfo)
   place(w)
+  if (info.inactive) {
+    // dev test driver: on screen, but the keyboard stays where the person has it
+    w.showInactive()
+    return
+  }
   w.show()
+  if (process.platform === 'darwin') app.focus({ steal: true })
   w.focus()
   w.setAlwaysOnTop(true, 'pop-up-menu')
 }
 
-export function hideLauncher(): void {
+/**
+ * Hide the bar. restoreFocus: the person dismissed it (Esc, copied an answer),
+ * so on macOS the app they were in becomes active again. Not used when the bar
+ * opened something, which then comes forward by itself.
+ */
+export function hideLauncher(opts: { restoreFocus?: boolean } = {}): void {
   const w = getLauncherWindow()
   if (!w || !w.isVisible()) return
   w.hide()
+  if (opts.restoreFocus && process.platform === 'darwin') void runMacHelper(['activate-previous'], 1500)
   send(IPC_SEND.LAUNCHER_HIDDEN)
   onHidden?.()
 }
 
 export function toggleLauncher(at = Date.now()): void {
-  if (isLauncherVisible()) hideLauncher()
+  if (isLauncherVisible()) hideLauncher({ restoreFocus: true })
   else showLauncher({ at })
 }
 
