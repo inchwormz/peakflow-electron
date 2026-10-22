@@ -8,7 +8,7 @@
 import { checkAccess } from '../security/access-check'
 import { redactPersonalInfo } from '../security/secret-detection'
 import { ToolId } from '@shared/tool-ids'
-import { getDefaultAiProvider, runLocalAi } from './local-ai'
+import { getDefaultAiProvider, listAiProviders, runLocalAi } from './local-ai'
 import {
   TRANSFORM_PROMPTS,
   getTranslatePrompt,
@@ -42,12 +42,14 @@ export interface AiAccess {
 export async function checkAiAccess(): Promise<AiAccess> {
   const status = await checkAccess(ToolId.QuickBoard)
   if (!status.isToolLicensed) return { allowed: false, reason: 'not_licensed' }
-  const provider = await getDefaultAiProvider()
-  if (!provider) return { allowed: false, reason: 'no_provider' }
-  return { allowed: true, provider: provider.label }
+  const id = await getDefaultAiProvider()
+  if (!id) return { allowed: false, reason: 'no_provider' }
+  const provider = (await listAiProviders()).find((p) => p.id === id)
+  return { allowed: true, provider: provider?.label ?? 'AI' }
 }
 
 async function run(
+  system: string,
   prompt: string,
   timeoutMs: number,
   json = false
@@ -57,7 +59,7 @@ async function run(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await runLocalAi({ prompt, json, signal: controller.signal })
+    const res = await runLocalAi({ system, prompt, json, signal: controller.signal })
     if (controller.signal.aborted) return { ok: false, error: 'timeout' }
     if (!res.ok || !res.text) return { ok: false, error: res.error ?? 'failed' }
     return { ok: true, text: res.text.trim() }
@@ -84,7 +86,7 @@ export async function aiTransform(
 ): Promise<AiTransformResult> {
   const system = type === 'translate' ? (targetLang ? getTranslatePrompt(targetLang) : '') : TRANSFORM_PROMPTS[type]
   if (!system) return { ok: false, error: 'unknown_transform_type' }
-  const res = await run(`${system}\n\n${text.slice(0, MAX_TEXT_LENGTH)}`, 60000)
+  const res = await run(system, text.slice(0, MAX_TEXT_LENGTH), 60000)
   return res.ok ? { ok: true, result: res.text } : { ok: false, error: res.error }
 }
 
@@ -138,8 +140,8 @@ export async function aiOnboard(answers: OnboardAnswers): Promise<AiOnboardResul
   }
   if (a.aiTools?.length) lines.push(`AI coding tools: ${a.aiTools.join(', ')}`)
   const system = a.devContext ? ONBOARD_PROMPT + DEV_ONBOARD_ADDENDUM : ONBOARD_PROMPT
-  const prompt = `${system}\n\nUser context:\n${redactPersonalInfo(lines.filter(Boolean).join('\n'))}`
-  const res = await run(prompt, 180000, true)
+  const prompt = `User context:\n${redactPersonalInfo(lines.filter(Boolean).join('\n'))}`
+  const res = await run(system, prompt, 180000, true)
   if (!res.ok) return { ok: false, error: res.error }
   try {
     return { ok: true, config: parseJsonReply(res.text) as OnboardConfig }
@@ -182,8 +184,8 @@ export async function aiSuggest(historyStats: HistoryStats): Promise<AiSuggestRe
     ...historyStats,
     repeatedItems: historyStats.repeatedItems.map((r) => ({ ...r, preview: redactPersonalInfo(r.preview) }))
   }
-  const prompt = `${SUGGEST_PROMPT}\n\nReturn only the JSON object.\n\nClipboard usage data:\n${JSON.stringify(stats, null, 2)}`
-  const res = await run(prompt, 120000, true)
+  const prompt = `Clipboard usage data:\n${JSON.stringify(stats, null, 2)}`
+  const res = await run(SUGGEST_PROMPT, prompt, 120000, true)
   if (!res.ok) return { ok: false, error: res.error }
   try {
     const parsed = parseJsonReply(res.text) as { suggestions?: AiSuggestion[] }
