@@ -13,8 +13,9 @@
  *   - Every memory block is allocated before the clipboard is emptied; if
  *     putting any of them on the clipboard fails, the clipboard is emptied
  *     rather than left holding text without its marker.
- *   - The restore checks, while holding the clipboard, that nobody copied
- *     anything since our write.
+ *   - Our write carries a one-off token; the restore checks, while holding
+ *     the clipboard, that the token is still there, so a copy made meanwhile
+ *     is never overwritten.
  *
  * Win32 through koffi, bound on first use so this file loads on macOS too.
  * NOT RUN ON WINDOWS YET (written 24 Oct 2026 without a Windows test run).
@@ -22,6 +23,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- koffi is untyped */
 
+import { randomBytes } from 'crypto'
 import { OWN_WRITE_MARK_WIN } from '../services/clipboard-own-writes'
 
 export interface SavedWinClipboard {
@@ -72,6 +74,7 @@ function bind(): any {
     CloseClipboard: user32.func('bool __stdcall CloseClipboard()'),
     EmptyClipboard: user32.func('bool __stdcall EmptyClipboard()'),
     EnumClipboardFormats: user32.func('uint32_t __stdcall EnumClipboardFormats(uint32_t format)'),
+    CountClipboardFormats: user32.func('int __stdcall CountClipboardFormats()'),
     GetClipboardData: user32.func('void * __stdcall GetClipboardData(uint32_t format)'),
     SetClipboardData: user32.func('void * __stdcall SetClipboardData(uint32_t format, void *hMem)'),
     RegisterClipboardFormatW: user32.func('uint32_t __stdcall RegisterClipboardFormatW(str16 name)'),
@@ -86,6 +89,12 @@ function bind(): any {
     DeleteEnhMetaFile: gdi32.func('bool __stdcall DeleteEnhMetaFile(void *hEmf)')
   }
   return api
+}
+
+/** Checks only: swap in a simulated Win32 clipboard (scripts/checks/clipboard-privacy.check.mts). */
+export function _useFakeWin32ForChecks(fakeApi: unknown, fakeKoffi: unknown): void {
+  api = fakeApi
+  K = fakeKoffi
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -110,6 +119,8 @@ function snapshot(): SavedWinClipboard | null {
   const w = bind()
   const ids: number[] = []
   for (let id = w.EnumClipboardFormats(0) as number; id !== 0; id = w.EnumClipboardFormats(id) as number) ids.push(id)
+  // EnumClipboardFormats also returns 0 on failure: a short list could be missing a privacy marker
+  if (ids.length !== (w.CountClipboardFormats() as number)) return null
   const present = new Set(ids)
   const saved: SavedWinClipboard = { formats: [], emf: null }
   for (const id of ids) {
@@ -127,10 +138,7 @@ function snapshot(): SavedWinClipboard | null {
       continue
     }
     const size = Number(w.GlobalSize(h))
-    if (!size) {
-      saved.formats.push({ id, data: Buffer.alloc(0) })
-      continue
-    }
+    if (!size) return null // unreadable or discarded: refuse rather than save it as empty
     const p = w.GlobalLock(h)
     if (!p) return null
     try {
@@ -205,8 +213,25 @@ function install(blocks: Block[]): boolean {
   return true
 }
 
-/** Change counters that mean "still our write": the value while we held the clipboard and, if closing bumped it by one, that too. */
-export type OwnWriteStamp = number[]
+/** Identifies one of our writes: the random token in its marker, and the change counter just after it. */
+export interface OwnWriteStamp {
+  token: Buffer
+  sequence: number
+}
+
+/** `true` if the (open) clipboard still holds the write with this token. */
+function holdsToken(token: Buffer): boolean {
+  const w = bind()
+  const h = w.GetClipboardData(w.RegisterClipboardFormatW(OWN_WRITE_MARK_WIN) as number)
+  if (!h || Number(w.GlobalSize(h)) < token.length) return false
+  const p = w.GlobalLock(h)
+  if (!p) return false
+  try {
+    return Buffer.from(new Uint8Array(K.view(p, token.length))).equals(token)
+  } finally {
+    w.GlobalUnlock(h)
+  }
+}
 
 /**
  * In one clipboard session: save everything, then replace it with `text`
@@ -218,7 +243,7 @@ export type OwnWriteStamp = number[]
 export async function saveAndWriteOwnText(hwnd: bigint, text: string): Promise<{ saved: SavedWinClipboard; stamp: OwnWriteStamp } | null> {
   if (!(await open(hwnd))) return null
   const w = bind()
-  let during = 0
+  const token = randomBytes(16)
   let result: { saved: SavedWinClipboard } | null = null
   try {
     const saved = snapshot()
@@ -228,22 +253,26 @@ export async function saveAndWriteOwnText(hwnd: bigint, text: string): Promise<{
       emf: null,
       formats: [
         // Markers first, text last
-        { id: w.RegisterClipboardFormatW(OWN_WRITE_MARK_WIN) as number, data: zero },
+        { id: w.RegisterClipboardFormatW(OWN_WRITE_MARK_WIN) as number, data: token },
         { id: w.RegisterClipboardFormatW('ExcludeClipboardContentFromMonitorProcessing') as number, data: zero },
         { id: w.RegisterClipboardFormatW('CanIncludeInClipboardHistory') as number, data: zero }, // DWORD 0 = leave out of Win+V history
         { id: w.RegisterClipboardFormatW('CanUploadToCloudClipboard') as number, data: zero },
         { id: CF_UNICODETEXT, data: Buffer.from(text + '\0', 'utf16le') }
       ]
     })
-    if (!blocks || !install(blocks)) return null
-    during = clipboardSequence()
+    if (!blocks) return null
+    if (!install(blocks)) {
+      // Put the original back; if even that fails, install() has left it empty
+      const back = allocate(saved)
+      if (back) install(back)
+      return null
+    }
     result = { saved }
   } finally {
     w.CloseClipboard()
   }
   if (!result) return null
-  const after = clipboardSequence()
-  return { saved: result.saved, stamp: after === during + 1 ? [during, after] : [during] }
+  return { saved: result.saved, stamp: { token, sequence: clipboardSequence() } }
 }
 
 /**
@@ -255,7 +284,7 @@ export async function restoreWinClipboard(hwnd: bigint, saved: SavedWinClipboard
   if (!(await open(hwnd))) return false
   const w = bind()
   try {
-    if (stamp && !stamp.includes(clipboardSequence())) return false
+    if (stamp && !holdsToken(stamp.token)) return false
     const blocks = allocate(saved)
     return !!blocks && install(blocks)
   } finally {

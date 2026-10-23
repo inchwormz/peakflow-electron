@@ -93,3 +93,105 @@ assert.equal(saveMethod(14, set(3, 14)), 'emf')
 assert.equal(saveMethod(0x80, set(0x80)), 'refuse', 'owner-drawn')
 assert.equal(saveMethod(0x250, set(0x250)), 'refuse', 'private format')
 console.log('clipboard-privacy (Windows formats): ok')
+
+// ─── B4 Windows: round trips against a simulated Win32 clipboard ─────────────
+const win = await import('../../src/main/native/clipboard-win32.ts')
+function fakeWin32() {
+  // Handles are objects holding a Uint8Array; the clipboard maps format id -> handle
+  type H = { mem: Uint8Array; emf?: boolean }
+  let board = new Map<number, H>()
+  let pending: Map<number, H> | null = null
+  let seq = 100
+  let isOpen = false
+  const names = new Map<string, number>()
+  const fail = { setOnCall: -1, enumShort: false }
+  let setCalls = 0
+  const api = {
+    OpenClipboard: () => (isOpen ? false : (isOpen = true)),
+    CloseClipboard: () => { isOpen = false; if (pending) { board = pending; pending = null } return true },
+    EmptyClipboard: () => { pending = new Map(); seq++; return true },
+    CountClipboardFormats: () => (pending ?? board).size,
+    EnumClipboardFormats: (prev: number) => {
+      const ids = [...(pending ?? board).keys()]
+      if (fail.enumShort && prev !== 0) return 0
+      const i = prev === 0 ? 0 : ids.indexOf(prev) + 1
+      return ids[i] ?? 0
+    },
+    GetClipboardData: (id: number) => (pending ?? board).get(id) ?? null,
+    SetClipboardData: (id: number, h: H) => {
+      if (setCalls++ === fail.setOnCall) return null
+      ;(pending ??= new Map(board)).set(id, h)
+      seq++
+      return h
+    },
+    RegisterClipboardFormatW: (n: string) => { if (!names.has(n)) names.set(n, 0xc000 + names.size); return names.get(n)! },
+    GetClipboardSequenceNumber: () => seq,
+    GlobalAlloc: (_f: number, n: number) => ({ mem: new Uint8Array(n) }),
+    GlobalLock: (h: H) => h,
+    GlobalUnlock: () => true,
+    GlobalSize: (h: H) => h.mem.length,
+    GlobalFree: () => null,
+    GetEnhMetaFileBits: (h: H, size: number, out: Buffer | null) => { if (out) out.set(h.mem.subarray(0, size)); return h.mem.length },
+    SetEnhMetaFileBits: (n: number, data: Buffer) => ({ mem: Uint8Array.from(data.subarray(0, n)), emf: true }),
+    DeleteEnhMetaFile: () => true
+  }
+  const koffi = { view: (h: H, n: number) => h.mem.buffer.slice(h.mem.byteOffset, h.mem.byteOffset + n) }
+  // koffi.view must be writable for allocate(): return the live buffer instead
+  koffi.view = (h: H, n: number) => { if (h.mem.length === n && h.mem.byteOffset === 0) return h.mem.buffer; return h.mem.slice(0, n).buffer }
+  const put = (id: number, bytes: Uint8Array | string) => board.set(id, { mem: typeof bytes === 'string' ? new Uint8Array(Buffer.from(bytes + '\0', 'utf16le')) : bytes })
+  const userCopy = (text: string) => { board = new Map(); seq += 2; put(13, text) }
+  const text = () => { const h = board.get(13); return h ? Buffer.from(h.mem).toString('utf16le').replace(/\0+$/, '') : null }
+  return { api, koffi, board: () => board, put, userCopy, text, fail, id: (n: string) => api.RegisterClipboardFormatW(n), resetCalls: () => { setCalls = 0 } }
+}
+
+{ // A password with its marker, plus an image, comes back whole; our text is marked meanwhile
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(13, 'hunter2-password')
+  f.put(f.id('ExcludeClipboardContentFromMonitorProcessing'), new Uint8Array(4))
+  f.put(8, new Uint8Array([1, 2, 3, 4, 5]))
+  f.put(14, new Uint8Array([9, 9, 9]))
+  const before = [...f.board().entries()].map(([k, v]) => [k, Buffer.from(v.mem).toString('hex')])
+  const t = await win.saveAndWriteOwnText(0n, 'dictated words')
+  assert.ok(t, 'round trip allowed')
+  assert.equal(f.text(), 'dictated words')
+  assert.ok(f.board().has(f.id('PeakFlowOwnWrite')) && f.board().has(f.id('ExcludeClipboardContentFromMonitorProcessing')), 'our write is marked')
+  assert.equal(await win.restoreWinClipboard(0n, t!.saved, t!.stamp), true)
+  const after = [...f.board().entries()].map(([k, v]) => [k, Buffer.from(v.mem).toString('hex')])
+  assert.deepEqual(after, before, 'every format back, byte for byte, marker included')
+}
+{ // Someone copies during the paste: their copy is kept
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(13, 'original')
+  const t = await win.saveAndWriteOwnText(0n, 'dictated')
+  f.userCopy('copied meanwhile')
+  assert.equal(await win.restoreWinClipboard(0n, t!.saved, t!.stamp), false)
+  assert.equal(f.text(), 'copied meanwhile')
+}
+{ // A short format list (enumeration failed) refuses the round trip and leaves the clipboard alone
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(13, 'secret')
+  f.put(f.id('ExcludeClipboardContentFromMonitorProcessing'), new Uint8Array(4))
+  f.fail.enumShort = true
+  assert.equal(await win.saveAndWriteOwnText(0n, 'x'), null)
+  assert.equal(f.text(), 'secret')
+}
+{ // An owner-drawn format can't be saved: refused, clipboard untouched
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(0x80, new Uint8Array(1))
+  f.put(13, 'keep me')
+  assert.equal(await win.saveAndWriteOwnText(0n, 'x'), null)
+  assert.equal(f.text(), 'keep me')
+}
+{ // Writing our text fails part-way: the original goes back
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(13, 'original')
+  f.fail.setOnCall = 2
+  assert.equal(await win.saveAndWriteOwnText(0n, 'dictated'), null)
+  assert.equal(f.text(), 'original')
+}
+console.log('clipboard-privacy (Windows round trips, simulated): ok')

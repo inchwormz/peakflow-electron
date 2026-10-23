@@ -118,7 +118,7 @@ async function winSelection(stepAside: () => void, comeBack: () => void): Promis
     let text = ''
     for (let i = 0; i < 25 && !text; i++) {
       await sleep(20)
-      if (!t.stamp.includes(clipboardSequence())) text = clipboard.readText()
+      if (clipboardSequence() !== t.stamp.sequence) text = clipboard.readText()
     }
     // The app's copy replaced our write, so restore without the stamp check
     await restoreWinClipboard(hwnd, t.saved).catch(() => false)

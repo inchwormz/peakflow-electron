@@ -104,6 +104,31 @@ private func writeOwnText(_ text: String) {
     pb.writeObjects([item])
 }
 
+/// Cross-process lock around every pasteboard round trip (paste-text, the
+/// selection copy, snippet expansion in the keyword watcher). Two overlapping
+/// round trips would lose the person's clipboard: the second would save the
+/// first one's text and put that back. flock is released if a process dies.
+private let pasteboardLockPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("pro.getpeakflow.pasteboard.lock")
+
+/// Wait up to `timeout` seconds for the lock. Returns the descriptor to pass to
+/// `unlockPasteboard`, or nil (go ahead unlocked) if it couldn't be had.
+private func lockPasteboard(timeout: Double = 2.0) -> Int32? {
+    let fd = open(pasteboardLockPath, O_CREAT | O_RDWR, 0o600)
+    if fd < 0 { return nil }
+    let deadline = Date().addingTimeInterval(timeout)
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+        if Date() > deadline { close(fd); return nil }
+        usleep(20_000)
+    }
+    return fd
+}
+
+private func unlockPasteboard(_ fd: Int32?) {
+    guard let fd = fd else { return }
+    flock(fd, LOCK_UN)
+    close(fd)
+}
+
 /// `paste-text`: text arrives on stdin (never on the command line, where
 /// other processes could read it). Saves every pasteboard item and type,
 /// writes the text (marked as our own), sends Cmd+V, waits for the app to
@@ -116,6 +141,8 @@ func pasteTextRestoring() -> String {
     guard let text = String(data: input, encoding: .utf8), !text.isEmpty else {
         return jsonLine(["ok": false, "trusted": true, "error": "no text"])
     }
+    let lock = lockPasteboard()
+    defer { unlockPasteboard(lock) }
     let pb = NSPasteboard.general
     let saved = savePasteboard()
     writeOwnText(text)
@@ -170,6 +197,8 @@ func selectedText(axOnly: Bool = false) -> String {
     // Fallback: copy in the previous app, read, restore the clipboard
     app.activate(options: [])
     usleep(120_000)
+    let lock = lockPasteboard()
+    defer { unlockPasteboard(lock) }
     let pb = NSPasteboard.general
     let saved = savePasteboard()
     let before = pb.changeCount
@@ -317,6 +346,7 @@ private func expand(keyword: String, text: String) {
     // Runs after the keyword's last key event has been delivered
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
         for _ in 0..<keyword.count { postKey(51) } // kVK_Delete (backspace)
+        let lock = lockPasteboard(timeout: 1.5)
         let pb = NSPasteboard.general
         let saved = savePasteboard()
         let current = pb.string(forType: .string) ?? ""
@@ -327,6 +357,7 @@ private func expand(keyword: String, text: String) {
         // Give the app time to read the clipboard before putting the old one back
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             if pb.changeCount == ours { restorePasteboard(saved) }
+            unlockPasteboard(lock)
         }
         emit(["e": "expanded", "keyword": keyword])
     }
