@@ -12,7 +12,7 @@ import { BrowserWindow, clipboard } from 'electron'
 import type { SelectionResult } from '@shared/launcher/types'
 import { runMacHelper } from '../native/mac-helper'
 import { simulateCtrlV } from '../native/keyboard'
-import { clipboardSequence, restoreWinClipboard, saveWinClipboard, writeOwnWinText } from '../native/clipboard-win32'
+import { clipboardSequence, restoreWinClipboard, saveAndWriteOwnText } from '../native/clipboard-win32'
 import { withCapturePaused } from '../services/clipboard-own-writes'
 import { notifyAccessibilityNeeded } from '../services/permissions-darwin'
 
@@ -54,60 +54,60 @@ function ownerHwnd(): bigint {
 }
 
 /**
+ * One clipboard round trip at a time. Two overlapping ones would lose the
+ * person's clipboard: the second would save the first one's text and put
+ * that back instead of the original.
+ */
+let roundTrip: Promise<unknown> = Promise.resolve()
+function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const run = roundTrip.then(() => withCapturePaused(fn))
+  roundTrip = run.catch(() => {})
+  return run
+}
+
+/**
  * Paste `text` into the app in front, then put the clipboard back exactly as
  * it was: every format, so a password manager's "don't record this" marker
  * and copied images survive. The text is marked as PeakFlow's own, so
  * QuickBoard (and clipboard managers that honour the standard markers) never
  * record it, and QuickBoard doesn't poll during the round trip. If someone
  * copies something meanwhile, that copy is kept.
- * Resolves false if the paste couldn't be sent; the text is then left on the
- * clipboard for a manual paste.
+ * Resolves false if nothing was pasted. On a Mac without the Accessibility
+ * permission the (marked) text stays on the clipboard for a manual paste;
+ * in every other failure the clipboard is left alone, never replaced with
+ * unmarked text.
  */
 export function pasteAndRestore(text: string): Promise<boolean> {
-  return withCapturePaused(async () => {
+  return oneAtATime(async () => {
     if (process.platform === 'darwin') {
       const r = await runMacHelper(['paste-text'], 4000, text)
-      if (!r) {
-        clipboard.writeText(text)
-        return false
-      }
-      if (r.trusted === false) {
+      if (r?.trusted === false) {
         notifyAccessibilityNeeded('paste')
         return false
       }
-      return r.ok === true
+      return r?.ok === true
     }
     if (process.platform === 'win32') {
       const hwnd = ownerHwnd()
-      // If the clipboard can't be read we can't put it back: paste anyway and
-      // leave our text there, rather than restore plain text without its markers
-      const saved = await saveWinClipboard(hwnd).catch(() => null)
-      const seq = await writeOwnWinText(hwnd, text).catch(() => null)
-      if (seq === null) clipboard.writeText(text)
+      const t = await saveAndWriteOwnText(hwnd, text).catch(() => null)
+      if (!t) return false // couldn't save every format: leave the clipboard alone
       const ok = await simulateCtrlV()
-      if (ok && saved && seq !== null) {
-        await sleep(400) // give the app time to read the clipboard
-        if (clipboardSequence() === seq) await restoreWinClipboard(hwnd, saved).catch(() => false)
-      }
+      await sleep(400) // give the app time to read the clipboard
+      await restoreWinClipboard(hwnd, t.saved, t.stamp).catch(() => false)
       return ok
     }
-    clipboard.writeText(text)
-    return simulateCtrlV()
+    return false
   })
 }
 
 async function winSelection(stepAside: () => void, comeBack: () => void): Promise<SelectionResult> {
-  return withCapturePaused(async () => {
+  return oneAtATime(async () => {
     const hwnd = ownerHwnd()
-    const saved = await saveWinClipboard(hwnd).catch(() => null)
+    // Save everything and clear the text, so we can tell whether the copy happened
+    const t = await saveAndWriteOwnText(hwnd, '').catch(() => null)
+    if (!t) return { text: '', trusted: true } // couldn't save the clipboard: don't touch it
     stepAside()
     await sleep(150)
-    // Clear first so we can tell whether the copy happened
-    let seq = await writeOwnWinText(hwnd, '').catch(() => null)
-    if (seq === null) {
-      clipboard.writeText('')
-      seq = clipboardSequence()
-    }
     const VK_CONTROL = 0x11
     const VK_C = 0x43
     try {
@@ -118,9 +118,10 @@ async function winSelection(stepAside: () => void, comeBack: () => void): Promis
     let text = ''
     for (let i = 0; i < 25 && !text; i++) {
       await sleep(20)
-      if (clipboardSequence() !== seq) text = clipboard.readText()
+      if (!t.stamp.includes(clipboardSequence())) text = clipboard.readText()
     }
-    if (saved) await restoreWinClipboard(hwnd, saved).catch(() => false)
+    // The app's copy replaced our write, so restore without the stamp check
+    await restoreWinClipboard(hwnd, t.saved).catch(() => false)
     comeBack()
     return { text, trusted: true }
   })
@@ -139,7 +140,7 @@ export async function getSelectedText(stepAside: () => void, comeBack: () => voi
     try {
       await sleep(80)
       // The helper copies and then puts the whole pasteboard back; QuickBoard waits
-      const r = await withCapturePaused(() => runMacHelper(['selection'], 3000))
+      const r = await oneAtATime(() => runMacHelper(['selection'], 3000))
       return { text: typeof r?.text === 'string' ? r.text : '', trusted: r?.trusted !== false }
     } finally {
       holdOpen(false)

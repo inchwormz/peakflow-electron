@@ -68,3 +68,28 @@ assert.equal(stuck && isCapturePaused(), true)
 assert.equal(isCapturePaused(Date.now() + MAX_PAUSE_MS + 1), false, 'a stuck pause lifts itself')
 
 console.log('clipboard-privacy: ok')
+
+// ─── B4 Windows: which clipboard formats can be saved (pure logic; no Win32 here) ──
+// clipboard-win32.ts imports without a file extension, as the app bundler expects
+import { registerHooks } from 'node:module'
+registerHooks({
+  resolve(spec, ctx, next) {
+    try {
+      return next(spec, ctx)
+    } catch (e) {
+      if (spec.startsWith('.') && !/\.\w+$/.test(spec)) return next(spec + '.ts', ctx)
+      throw e
+    }
+  }
+})
+const { saveMethod } = await import('../../src/main/native/clipboard-win32.ts')
+const set = (...ids: number[]) => new Set(ids)
+assert.equal(saveMethod(13, set(13, 1, 7, 16)), 'copy', 'Unicode text')
+assert.equal(saveMethod(49300, set(13, 49300)), 'copy', 'a registered format such as a password manager marker')
+assert.equal(saveMethod(2, set(2, 8, 17)), 'skip', 'bitmap is rebuilt from the DIB')
+assert.equal(saveMethod(2, set(2)), 'refuse', 'bitmap with no DIB')
+assert.equal(saveMethod(3, set(3, 14)), 'skip', 'old metafile picture is rebuilt from the enhanced metafile')
+assert.equal(saveMethod(14, set(3, 14)), 'emf')
+assert.equal(saveMethod(0x80, set(0x80)), 'refuse', 'owner-drawn')
+assert.equal(saveMethod(0x250, set(0x250)), 'refuse', 'private format')
+console.log('clipboard-privacy (Windows formats): ok')

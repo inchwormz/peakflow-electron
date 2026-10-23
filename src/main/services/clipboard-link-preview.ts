@@ -49,13 +49,15 @@ function get(url: URL, signal: AbortSignal): Promise<IncomingMessage> {
 export async function fetchLinkPreview(raw: string): Promise<LinkPreview> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const opened: IncomingMessage[] = []
   try {
     let url = previewableUrl(raw)
     for (let hop = 0; url && hop <= MAX_REDIRECTS; hop++) {
       const res = await get(url, controller.signal)
+      opened.push(res)
       const status = res.statusCode ?? 0
       if (status >= 300 && status < 400 && res.headers.location) {
-        res.resume()
+        res.destroy() // don't read a redirect's body
         let next: URL | null = null
         try {
           next = previewableUrl(new URL(res.headers.location, url).href)
@@ -88,6 +90,9 @@ export async function fetchLinkPreview(raw: string): Promise<LinkPreview> {
     return { title: null }
   } finally {
     clearTimeout(timeout)
+    // Close every response and anything still in flight, whatever happened
+    for (const r of opened) r.destroy()
+    controller.abort()
   }
 }
 

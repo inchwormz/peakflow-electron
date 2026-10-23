@@ -4,6 +4,18 @@
  * a few generic formats, and each write replaces the whole clipboard, so a
  * password manager's "don't record this" formats and images were lost.
  *
+ * Rules that keep a password manager's clip private and the person's
+ * clipboard intact:
+ *   - Save and replace happen in one OpenClipboard session, so nothing can
+ *     change in between.
+ *   - If any format can't be saved, nothing is replaced (the round trip is
+ *     refused), so a restore can never come back without its privacy marker.
+ *   - Every memory block is allocated before the clipboard is emptied; if
+ *     putting any of them on the clipboard fails, the clipboard is emptied
+ *     rather than left holding text without its marker.
+ *   - The restore checks, while holding the clipboard, that nobody copied
+ *     anything since our write.
+ *
  * Win32 through koffi, bound on first use so this file loads on macOS too.
  * NOT RUN ON WINDOWS YET (written 24 Oct 2026 without a Windows test run).
  */
@@ -13,22 +25,36 @@
 import { OWN_WRITE_MARK_WIN } from '../services/clipboard-own-writes'
 
 export interface SavedWinClipboard {
+  /** Memory-block formats, copied byte for byte */
   formats: Array<{ id: number; data: Buffer }>
+  /** Enhanced metafile (vector pictures from Office and others), as its file bytes */
+  emf: Buffer | null
 }
 
+const CF_BITMAP = 2
+const CF_METAFILEPICT = 3
+const CF_PALETTE = 9
 const CF_UNICODETEXT = 13
+const CF_ENHMETAFILE = 14
+const CF_DIB = 8
+const CF_DIBV5 = 17
 
 /**
- * Formats whose data is a plain memory block we can copy byte for byte.
- * Bitmaps, palettes, metafiles, owner-drawn and private formats are handles
- * that would be meaningless once copied; Windows rebuilds the common ones
- * (CF_BITMAP from CF_DIB, for example) from what we do restore.
+ * How each format present on the clipboard is saved:
+ *   'copy'   a memory block, copied byte for byte
+ *   'emf'    an enhanced metafile, saved through its own API
+ *   'skip'   Windows rebuilds it from a format we do save (bitmap and palette
+ *            from a DIB, the old metafile picture from the enhanced metafile)
+ *   'refuse' can't be saved; the round trip is refused so nothing is lost
  */
-export function restorableFormat(id: number): boolean {
-  if (id === 2 || id === 3 || id === 9 || id === 14) return false // BITMAP, METAFILEPICT, PALETTE, ENHMETAFILE
-  if (id === 0x80 || id === 0x82 || id === 0x83 || id === 0x8e) return false // OWNERDISPLAY, DSP*
-  if (id >= 0x200 && id <= 0x3ff) return false // PRIVATEFIRST..LAST, GDIOBJFIRST..LAST
-  return id > 0
+export function saveMethod(id: number, present: ReadonlySet<number>): 'copy' | 'emf' | 'skip' | 'refuse' {
+  const hasDib = present.has(CF_DIB) || present.has(CF_DIBV5)
+  if (id === CF_BITMAP || id === CF_PALETTE) return hasDib ? 'skip' : 'refuse'
+  if (id === CF_METAFILEPICT) return present.has(CF_ENHMETAFILE) ? 'skip' : 'refuse'
+  if (id === CF_ENHMETAFILE) return 'emf'
+  if (id === 0x80 || id === 0x82 || id === 0x83 || id === 0x8e) return 'refuse' // owner-drawn display formats
+  if (id >= 0x200 && id <= 0x3ff) return 'refuse' // private and GDI-object formats
+  return id > 0 ? 'copy' : 'refuse'
 }
 
 let K: any = null
@@ -40,6 +66,7 @@ function bind(): any {
   K = require('koffi')
   const user32 = K.load('user32.dll')
   const kernel32 = K.load('kernel32.dll')
+  const gdi32 = K.load('gdi32.dll')
   api = {
     OpenClipboard: user32.func('bool __stdcall OpenClipboard(uintptr_t hWnd)'),
     CloseClipboard: user32.func('bool __stdcall CloseClipboard()'),
@@ -53,7 +80,10 @@ function bind(): any {
     GlobalLock: kernel32.func('void * __stdcall GlobalLock(void *hMem)'),
     GlobalUnlock: kernel32.func('bool __stdcall GlobalUnlock(void *hMem)'),
     GlobalSize: kernel32.func('size_t __stdcall GlobalSize(void *hMem)'),
-    GlobalFree: kernel32.func('void * __stdcall GlobalFree(void *hMem)')
+    GlobalFree: kernel32.func('void * __stdcall GlobalFree(void *hMem)'),
+    GetEnhMetaFileBits: gdi32.func('uint32_t __stdcall GetEnhMetaFileBits(void *hEmf, uint32_t size, _Out_ uint8_t *data)'),
+    SetEnhMetaFileBits: gdi32.func('void * __stdcall SetEnhMetaFileBits(uint32_t size, const uint8_t *data)'),
+    DeleteEnhMetaFile: gdi32.func('bool __stdcall DeleteEnhMetaFile(void *hEmf)')
   }
   return api
 }
@@ -75,88 +105,160 @@ export function clipboardSequence(): number {
   return bind().GetClipboardSequenceNumber() as number
 }
 
-/** Copy every restorable format off the clipboard. `null` if the clipboard couldn't be opened. */
-export async function saveWinClipboard(hwnd: bigint): Promise<SavedWinClipboard | null> {
-  if (!(await open(hwnd))) return null
+/** Copy everything off the (open) clipboard, or `null` if any of it can't be saved. */
+function snapshot(): SavedWinClipboard | null {
   const w = bind()
-  const formats: SavedWinClipboard['formats'] = []
-  try {
-    for (let id = w.EnumClipboardFormats(0) as number; id !== 0; id = w.EnumClipboardFormats(id) as number) {
-      if (!restorableFormat(id)) continue
-      const h = w.GetClipboardData(id)
-      if (!h) continue
-      const size = Number(w.GlobalSize(h))
-      if (!size) {
-        formats.push({ id, data: Buffer.alloc(0) })
-        continue
-      }
-      const p = w.GlobalLock(h)
-      if (!p) continue
-      try {
-        formats.push({ id, data: Buffer.from(new Uint8Array(K.view(p, size))) })
-      } finally {
-        w.GlobalUnlock(h)
-      }
+  const ids: number[] = []
+  for (let id = w.EnumClipboardFormats(0) as number; id !== 0; id = w.EnumClipboardFormats(id) as number) ids.push(id)
+  const present = new Set(ids)
+  const saved: SavedWinClipboard = { formats: [], emf: null }
+  for (const id of ids) {
+    const how = saveMethod(id, present)
+    if (how === 'skip') continue
+    if (how === 'refuse') return null
+    const h = w.GetClipboardData(id)
+    if (!h) return null
+    if (how === 'emf') {
+      const size = w.GetEnhMetaFileBits(h, 0, null) as number
+      if (!size) return null
+      const buf = Buffer.alloc(size)
+      if ((w.GetEnhMetaFileBits(h, size, buf) as number) !== size) return null
+      saved.emf = buf
+      continue
     }
-  } finally {
-    w.CloseClipboard()
+    const size = Number(w.GlobalSize(h))
+    if (!size) {
+      saved.formats.push({ id, data: Buffer.alloc(0) })
+      continue
+    }
+    const p = w.GlobalLock(h)
+    if (!p) return null
+    try {
+      saved.formats.push({ id, data: Buffer.from(new Uint8Array(K.view(p, size))) })
+    } finally {
+      w.GlobalUnlock(h)
+    }
   }
-  return { formats }
+  return saved
 }
 
-/** Put one block of memory on the (open) clipboard. */
-function put(id: number, data: Buffer): boolean {
+type Block = { id: number; h: unknown; emf?: boolean }
+
+function release(blocks: Block[]): void {
   const w = bind()
-  const h = w.GlobalAlloc(0x0002 /* GMEM_MOVEABLE */, Math.max(1, data.length))
-  if (!h) return false
-  const p = w.GlobalLock(h)
-  if (!p) {
-    w.GlobalFree(h)
+  for (const b of blocks) {
+    if (b.emf) w.DeleteEnhMetaFile(b.h)
+    else w.GlobalFree(b.h)
+  }
+}
+
+/** Allocate every block first; `null` (with everything freed) if any allocation fails. */
+function allocate(saved: SavedWinClipboard): Block[] | null {
+  const w = bind()
+  const blocks: Block[] = []
+  const free = (): null => {
+    release(blocks)
+    return null
+  }
+  for (const { id, data } of saved.formats) {
+    const n = Math.max(1, data.length)
+    const h = w.GlobalAlloc(0x0002 /* GMEM_MOVEABLE */, n)
+    if (!h) return free()
+    const p = w.GlobalLock(h)
+    if (!p) {
+      w.GlobalFree(h)
+      return free()
+    }
+    const view = new Uint8Array(K.view(p, n))
+    view.fill(0)
+    view.set(data)
+    w.GlobalUnlock(h)
+    blocks.push({ id, h })
+  }
+  if (saved.emf) {
+    const h = w.SetEnhMetaFileBits(saved.emf.length, saved.emf)
+    if (!h) return free()
+    blocks.push({ id: CF_ENHMETAFILE, h, emf: true })
+  }
+  return blocks
+}
+
+/**
+ * Empty the (open) clipboard and put `blocks` on it. If any block is refused,
+ * empty it again: better an empty clipboard than text without its marker.
+ */
+function install(blocks: Block[]): boolean {
+  const w = bind()
+  if (!w.EmptyClipboard()) {
+    release(blocks)
     return false
   }
-  const view = new Uint8Array(K.view(p, Math.max(1, data.length)))
-  view.fill(0)
-  view.set(data)
-  w.GlobalUnlock(h)
-  if (!w.SetClipboardData(id, h)) {
-    w.GlobalFree(h) // the clipboard didn't take ownership
-    return false
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i]
+    if (!w.SetClipboardData(b.id, b.h)) {
+      // The clipboard owns the blocks already set; free the rest and clear it
+      release(blocks.slice(i))
+      w.EmptyClipboard()
+      return false
+    }
   }
   return true
 }
 
-async function replace(hwnd: bigint, entries: Array<{ id: number; data: Buffer }>): Promise<boolean> {
-  if (!(await open(hwnd))) return false
+/** Change counters that mean "still our write": the value while we held the clipboard and, if closing bumped it by one, that too. */
+export type OwnWriteStamp = number[]
+
+/**
+ * In one clipboard session: save everything, then replace it with `text`
+ * marked as PeakFlow's own (and as "keep out of clipboard history" for
+ * Windows and other clipboard tools). `null` if anything couldn't be saved
+ * or written; the clipboard is then left as it was (or, if a write failed
+ * part-way, empty).
+ */
+export async function saveAndWriteOwnText(hwnd: bigint, text: string): Promise<{ saved: SavedWinClipboard; stamp: OwnWriteStamp } | null> {
+  if (!(await open(hwnd))) return null
   const w = bind()
+  let during = 0
+  let result: { saved: SavedWinClipboard } | null = null
   try {
-    if (!w.EmptyClipboard()) return false
-    let ok = true
-    for (const e of entries) ok = put(e.id, e.data) && ok
-    return ok
+    const saved = snapshot()
+    if (!saved) return null
+    const zero = Buffer.alloc(4)
+    const blocks = allocate({
+      emf: null,
+      formats: [
+        // Markers first, text last
+        { id: w.RegisterClipboardFormatW(OWN_WRITE_MARK_WIN) as number, data: zero },
+        { id: w.RegisterClipboardFormatW('ExcludeClipboardContentFromMonitorProcessing') as number, data: zero },
+        { id: w.RegisterClipboardFormatW('CanIncludeInClipboardHistory') as number, data: zero }, // DWORD 0 = leave out of Win+V history
+        { id: w.RegisterClipboardFormatW('CanUploadToCloudClipboard') as number, data: zero },
+        { id: CF_UNICODETEXT, data: Buffer.from(text + '\0', 'utf16le') }
+      ]
+    })
+    if (!blocks || !install(blocks)) return null
+    during = clipboardSequence()
+    result = { saved }
   } finally {
     w.CloseClipboard()
   }
+  if (!result) return null
+  const after = clipboardSequence()
+  return { saved: result.saved, stamp: after === during + 1 ? [during, after] : [during] }
 }
 
 /**
- * Write `text` marked as PeakFlow's own (and as "keep out of clipboard
- * history" for Windows and other clipboard tools). Returns the clipboard
- * change counter after the write, or `null` if it failed.
+ * Put back everything `saveAndWriteOwnText` saved. With `stamp`, only if the
+ * clipboard still holds our write, checked while holding the clipboard so a
+ * copy made meanwhile is never overwritten.
  */
-export async function writeOwnWinText(hwnd: bigint, text: string): Promise<number | null> {
+export async function restoreWinClipboard(hwnd: bigint, saved: SavedWinClipboard, stamp?: OwnWriteStamp): Promise<boolean> {
+  if (!(await open(hwnd))) return false
   const w = bind()
-  const zero = Buffer.alloc(4)
-  const ok = await replace(hwnd, [
-    { id: CF_UNICODETEXT, data: Buffer.from(text + '\0', 'utf16le') },
-    { id: w.RegisterClipboardFormatW(OWN_WRITE_MARK_WIN), data: zero },
-    { id: w.RegisterClipboardFormatW('ExcludeClipboardContentFromMonitorProcessing'), data: zero },
-    { id: w.RegisterClipboardFormatW('CanIncludeInClipboardHistory'), data: zero }, // DWORD 0 = leave out of Win+V history
-    { id: w.RegisterClipboardFormatW('CanUploadToCloudClipboard'), data: zero }
-  ])
-  return ok ? clipboardSequence() : null
-}
-
-/** Put back everything `saveWinClipboard` copied. */
-export function restoreWinClipboard(hwnd: bigint, saved: SavedWinClipboard): Promise<boolean> {
-  return replace(hwnd, saved.formats)
+  try {
+    if (stamp && !stamp.includes(clipboardSequence())) return false
+    const blocks = allocate(saved)
+    return !!blocks && install(blocks)
+  } finally {
+    w.CloseClipboard()
+  }
 }
