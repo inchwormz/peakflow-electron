@@ -96,5 +96,5 @@ export interface AiAccess {
 export function aiAccessNote(reason: AiAccess['reason']): string {
   return reason === 'not_licensed'
     ? 'AI actions are part of the paid plan.'
-    : 'AI uses your own ChatGPT or Claude. Install Codex or Claude Code and sign in once to turn it on.'
+    : 'AI runs on your own ChatGPT or Claude. Connect one to turn it on.'
 }

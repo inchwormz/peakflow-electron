@@ -25,6 +25,8 @@ export const LAUNCHER_INVOKE = {
   LAUNCHER_AI_ASK: 'launcher:ai-ask',
   LAUNCHER_AI_CANCEL: 'launcher:ai-cancel',
   LAUNCHER_AI_CONNECT: 'launcher:ai-connect',
+  /** Open the launcher on its Connect AI screen (QuickBoard's Connect button) */
+  LAUNCHER_AI_OPEN_SETUP: 'launcher:ai-open-setup',
   LAUNCHER_SELECTION: 'launcher:selection',
   // Dictation (hold a key, talk, let go)
   DICTATION_READY: 'dictation:ready',

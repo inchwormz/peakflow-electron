@@ -160,6 +160,8 @@ export function LauncherApp(): React.JSX.Element {
   }, [])
 
   const loadAiStatus = useCallback(() => invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS).then(setAiStatus), [])
+  // The Connect AI screen: look everywhere, and don't trust an earlier "signed out"
+  const checkAiStatus = useCallback(() => invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS, { deep: true, fresh: true }).then(setAiStatus), [])
 
   // ── open / close ──
   useEffect(() => {
@@ -175,7 +177,8 @@ export function LauncherApp(): React.JSX.Element {
       const info = raw as LauncherOpenInfo
       openAt.current = info.at
       searchTimed.current = false
-      setView('search')
+      // QuickBoard's Connect button opens straight on Connect AI
+      setView(info.view === 'ai-setup' ? 'ai-setup' : 'search')
       setQuery('')
       setSel(0)
       setConfirm(null)
@@ -304,7 +307,7 @@ export function LauncherApp(): React.JSX.Element {
   const startAi = useCallback(
     async (title: string, redo: AiRun['redo'], provider?: AiProviderId) => {
       // Main picks the saved choice when no provider is given, so a stale list here can't send it to the wrong AI
-      const status = await invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS)
+      const status = await invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS, { deep: true, fresh: true })
       setAiStatus(status)
       if (!(provider ?? status.selected)) {
         setView('ai-setup')
@@ -546,7 +549,7 @@ export function LauncherApp(): React.JSX.Element {
         {view === 'link-form' && <LinkForm editing={editing} onDone={(m) => { flash(m); back() }} />}
         {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} onWords={() => setView('words')} />}
         {view === 'words' && <WordsForm onDone={(m) => { flash(m); setView('settings') }} />}
-        {view === 'ai-setup' && <AiSetup status={aiStatus} reload={loadAiStatus} onPick={(s) => setAiStatus(s)} />}
+        {view === 'ai-setup' && <AiSetup status={aiStatus} reload={checkAiStatus} onPick={(s) => setAiStatus(s)} />}
       </div>
 
       <div className="lc-foot">
@@ -946,6 +949,7 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
 function AiSetup({ status, reload, onPick }: { status: AiStatus | null; reload: () => Promise<void>; onPick: (s: AiStatus) => void }): React.JSX.Element {
   // While this screen is open, check every few seconds so it turns to "Connected" after sign-in
   useEffect(() => {
+    void reload()
     const t = setInterval(() => void reload(), 3000)
     return () => clearInterval(t)
   }, [reload])

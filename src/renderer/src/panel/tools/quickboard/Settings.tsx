@@ -14,6 +14,7 @@ import { invoke, useInvoke, useToolConfig } from '../../hooks'
 import { Btn, Empty, Grp, IconBtn, Note, NumIn, Picker, Rec, Row, Toggle } from '../../kit'
 import { useNav } from '../../nav'
 import { aiAccessNote, type AiAccess } from './ai-run'
+import { ConnectAiBtn, needsConnect } from './ConnectAi'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, OPEN_KEY, QUEUE_CANCEL_KEY, QUEUE_NEXT_KEY, WIZARD_START, type Clip, type Pipeline, type TransformStep } from './store'
 
 type Transforms = { pipelines: Pipeline[]; available: TransformStep[] }
@@ -300,6 +301,11 @@ export function AiSettings(): React.JSX.Element {
         />
       </Grp>
       {access ? <Note style={{ marginTop: 10 }}>{access.allowed ? `AI runs on your own ${access.provider}. PeakFlow never sees it.` : aiAccessNote(access.reason)}</Note> : null}
+      {access && !access.allowed && needsConnect(access.reason) ? (
+        <div style={{ marginTop: 8 }}>
+          <ConnectAiBtn block />
+        </div>
+      ) : null}
     </>
   )
 }

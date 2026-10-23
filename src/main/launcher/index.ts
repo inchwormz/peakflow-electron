@@ -36,7 +36,8 @@ import {
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
 import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation } from '../dictation'
-import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier } from '../services/local-ai'
+import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier, type AiLookup } from '../services/local-ai'
+import { hidePanel } from '../panel'
 
 const isMac = process.platform === 'darwin'
 
@@ -256,6 +257,9 @@ const QUICK_ASK_SYSTEM = 'You answer quick questions inside a desktop launcher. 
 let aiSeq = 0
 const aiRuns = new Map<number, AbortController>()
 
+const MAX_AI_PROMPT = 20_000
+const MAX_AI_TEXT = 60_000
+
 const AI_ERRORS: Record<string, string> = {
   no_provider: 'No AI is connected yet. Choose “Connect ChatGPT or Claude”.',
   not_signed_in: 'You’re signed out of that AI. Choose “Connect ChatGPT or Claude” to sign in again.',
@@ -270,8 +274,16 @@ function askAi(p: AiAskPayload): number {
   const chunk = (c: Omit<AiChunk, 'reqId'>): void => sendToLauncher(IPC_SEND.LAUNCHER_AI_CHUNK, { reqId, ...c } satisfies AiChunk)
   const provider = p.provider && (['codex', 'claude', 'ollama'] as const).includes(p.provider) ? p.provider : undefined
   const action = p.action && p.action in ACTION_SYSTEM ? p.action : undefined
-  const prompt = String(p.prompt ?? '').slice(0, 20_000)
-  const text = String(p.text ?? '').slice(0, 60_000)
+  const prompt = String(p.prompt ?? '')
+  const text = String(p.text ?? '')
+  // Too long: say so. A shortened answer would replace the person's whole selection when pasted.
+  if (prompt.length > MAX_AI_PROMPT || text.length > MAX_AI_TEXT) {
+    aiRuns.delete(reqId)
+    const n = Math.max(prompt.length, text.length).toLocaleString('en')
+    const max = (prompt.length > MAX_AI_PROMPT ? MAX_AI_PROMPT : MAX_AI_TEXT).toLocaleString('en')
+    setTimeout(() => chunk({ text: '', done: true, error: `The selected text has ${n} characters. AI can take up to ${max}. Select a shorter part and try again.` }), 20)
+    return reqId
+  }
   const lang = String(p.language ?? 'English').replace(/[^\p{L} -]/gu, '').slice(0, 40) || 'English'
   const system = action ? ACTION_SYSTEM[action].replace('{lang}', lang) : QUICK_ASK_SYSTEM
   const fullPrompt = action ? `${prompt ? `Extra instruction: ${prompt}\n\n` : ''}Text:\n${text}` : prompt
@@ -295,12 +307,18 @@ function askAi(p: AiAskPayload): number {
   return reqId
 }
 
-async function aiStatus(): Promise<AiStatus> {
-  const [list, selected] = await Promise.all([listAiProviders(), getDefaultAiProvider()])
+async function aiStatus(look: AiLookup = {}): Promise<AiStatus> {
+  const [list, selected] = await Promise.all([listAiProviders(look), getDefaultAiProvider(look)])
   return {
     providers: list.map((p) => ({ id: p.id, name: p.id === 'ollama' ? 'Local model' : p.label, installed: p.installed, signedIn: p.signedIn ?? null, model: p.id === 'ollama' && p.installed ? p.label.replace(/^.*\((.*)\)$/, '$1') : undefined, tier: getAiTier(p.id) })),
     selected
   }
+}
+
+/** QuickBoard's Connect button: the launcher's Connect AI screen, in place of the panel. */
+function openAiSetup(): void {
+  showLauncher({ at: Date.now(), view: 'ai-setup' })
+  hidePanel(true)
 }
 
 /** Open a terminal that installs and signs in to ChatGPT (Codex) or Claude. */
@@ -447,7 +465,9 @@ function registerIpc(): void {
     }
     return settings()
   })
-  h(IPC_INVOKE.LAUNCHER_AI_STATUS, () => aiStatus())
+  // { deep, fresh } from the Connect AI screen and Ask: see AiLookup in local-ai.ts
+  h(IPC_INVOKE.LAUNCHER_AI_STATUS, (_e, look?: AiLookup) => aiStatus({ deep: look?.deep === true, fresh: look?.fresh === true }))
+  h(IPC_INVOKE.LAUNCHER_AI_OPEN_SETUP, () => openAiSetup())
   h(IPC_INVOKE.LAUNCHER_AI_SET_PROVIDER, (e, id: unknown) => {
     if (fromLauncher(e) && (id === 'codex' || id === 'claude' || id === 'ollama')) setDefaultAiProvider(id as AiProviderId)
     return aiStatus()

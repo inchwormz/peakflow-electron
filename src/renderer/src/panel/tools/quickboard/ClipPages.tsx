@@ -11,6 +11,7 @@ import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { Btn, Empty, Gap, Grp, Hero, Note, Row } from '../../kit'
 import { useNav } from '../../nav'
 import { aiAccessNote, createAiRun, type AiAccess, type AiResult } from './ai-run'
+import { ConnectAiBtn, needsConnect } from './ConnectAi'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, type Clip, type Pipeline, type TransformStep } from './store'
 
 function useClip(id: string): Clip | null | undefined {
@@ -140,6 +141,12 @@ export function PasteAs({ params }: { params: RouteParams }): React.JSX.Element 
         <Row icon="globe" label="Translate" tone={aiOk ? undefined : 'muted'} go={aiOk ? `quickboard/translate/${id}` : undefined} />
       </Grp>
       {access && !aiOk ? <Note style={{ marginTop: 10 }}>{aiAccessNote(access.reason)}</Note> : null}
+      {access && !aiOk && needsConnect(access.reason) ? (
+        <>
+          <Gap h={8} />
+          <ConnectAiBtn block />
+        </>
+      ) : null}
     </>
   )
 }
@@ -179,8 +186,9 @@ export function Translate({ params }: { params: RouteParams }): React.JSX.Elemen
 const ERRORS: Record<string, [string, string]> = {
   timeout: ['The AI took too long', 'Try again in a moment.'],
   not_licensed: ['AI needs a PeakFlow licence', 'AI actions are part of the paid plan.'],
-  no_provider: ['Connect ChatGPT or Claude', 'QuickBoard’s AI uses your own ChatGPT or Claude. Install Codex or Claude Code, sign in once, then try again.'],
-  not_signed_in: ['Sign in to ChatGPT or Claude', 'Open Codex or Claude Code once and sign in, then try again.']
+  no_provider: ['Connect ChatGPT or Claude', 'QuickBoard’s AI runs on your own ChatGPT or Claude. Connect one, then try again.'],
+  not_signed_in: ['Sign in to ChatGPT or Claude', 'You’re signed out of ChatGPT or Claude. Connect signs you back in, then try again.'],
+  too_long: ['Too long for AI', `This clip is longer than ${(10_000).toLocaleString('en')} characters, the limit for AI actions. Copy a shorter part and try again.`]
 }
 
 export function AiRun({ params }: { params: RouteParams }): React.JSX.Element {
@@ -221,7 +229,19 @@ export function AiRun({ params }: { params: RouteParams }): React.JSX.Element {
     <>
       <Hero icon="info" title={title}>{body}</Hero>
       <Gap h={12} />
-      {licence ? <Btn block onClick={() => nav.go('app/licence')}>See plans</Btn> : <Btn block onClick={() => setAttempt((n) => n + 1)}>Try again</Btn>}
+      {licence ? (
+        <Btn block onClick={() => nav.go('app/licence')}>See plans</Btn>
+      ) : state.error === 'too_long' ? (
+        <Btn block onClick={() => nav.go('quickboard')}>Back to clips</Btn>
+      ) : needsConnect(state.error) ? (
+        <>
+          <ConnectAiBtn primary block />
+          <Gap h={8} />
+          <Btn block onClick={() => setAttempt((n) => n + 1)}>Try again</Btn>
+        </>
+      ) : (
+        <Btn block onClick={() => setAttempt((n) => n + 1)}>Try again</Btn>
+      )}
     </>
   )
 }

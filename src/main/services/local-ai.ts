@@ -9,16 +9,18 @@
  * localhost:11434.
  *
  * Apps opened from Finder / the Start menu get a bare PATH, so the CLIs are
- * looked for in the login shell's PATH plus the usual install folders.
+ * looked for in the usual install folders, and (from the first time AI is
+ * actually used) in the login shell's PATH too.
  */
 
 import { spawn, execFile, type ChildProcess } from 'child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { app } from 'electron'
 import Store from 'electron-store'
-import { cliArgs, CODEX_BASE_INSTRUCTIONS } from './local-ai-args'
+import { cliArgs, codexMcpListArgs, codexMcpNames, CODEX_BASE_INSTRUCTIONS } from './local-ai-args'
+import { winCommand } from './local-ai-spawn'
 
 export type AiProviderId = 'codex' | 'claude' | 'ollama'
 
@@ -49,6 +51,18 @@ export interface RunLocalAiResult {
   ok: boolean
   text?: string
   error?: 'no_provider' | 'not_signed_in' | 'timeout' | 'failed'
+  /** Codex refused its config (internal: retried without the MCP switches) */
+  configError?: boolean
+}
+
+/**
+ * deep: the person is using AI now, so also search the login shell's PATH
+ * (read once, the first time). fresh: the setup screen is open, so don't
+ * trust an earlier "not installed" or "not signed in" answer.
+ */
+export interface AiLookup {
+  deep?: boolean
+  fresh?: boolean
 }
 
 const LABELS: Record<AiProviderId, string> = { codex: 'ChatGPT', claude: 'Claude', ollama: 'Local model' }
@@ -61,20 +75,40 @@ const isWin = process.platform === 'win32'
 // ─── finding the CLIs ────────────────────────────────────────────────────────
 
 let shellPath: Promise<string> | null = null
+let shellPathValue: string | null = null
 
-/** The PATH a terminal would have (login shell), read once. Empty on Windows / failure. */
+/**
+ * The PATH a terminal would have, read once, and only once AI is used (not at
+ * start-up). A login shell (-l) but not an interactive one (-i): an
+ * interactive shell runs the person's whole .zshrc, which can stall or set
+ * off macOS folder-access prompts that look like PeakFlow snooping. Empty on
+ * Windows / failure.
+ */
 function loginShellPath(): Promise<string> {
   if (isWin) return Promise.resolve('')
   if (!shellPath) {
     shellPath = new Promise((resolve) => {
       const shell = process.env.SHELL || '/bin/zsh'
-      execFile(shell, ['-ilc', 'printf "__PF_PATH__%s__PF_END__" "$PATH"'], { timeout: 4000 }, (err, stdout) => {
+      execFile(shell, ['-lc', 'printf "__PF_PATH__%s__PF_END__" "$PATH"'], { timeout: 4000 }, (err, stdout) => {
         const m = /__PF_PATH__(.*)__PF_END__/s.exec(stdout ?? '')
-        resolve(!err && m ? m[1] : '')
+        shellPathValue = !err && m ? m[1] : ''
+        resolve(shellPathValue)
       })
     })
   }
   return shellPath
+}
+
+/** nvm's Node folders, newest first (nvm sets PATH in .zshrc, which a login shell doesn't read). */
+function nvmDirs(home: string): string[] {
+  try {
+    const root = join(home, '.nvm', 'versions', 'node')
+    return readdirSync(root)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+      .map((v) => join(root, v, 'bin'))
+  } catch {
+    return []
+  }
 }
 
 function extraDirs(): string[] {
@@ -93,25 +127,28 @@ function extraDirs(): string[] {
     join(home, '.volta', 'bin'),
     join(home, '.bun', 'bin'),
     join(home, 'Library', 'pnpm'),
+    ...nvmDirs(home),
     '/usr/bin',
     '/bin'
   ]
 }
 
-async function searchPath(): Promise<string[]> {
-  const fromShell = (await loginShellPath()).split(delimiter)
+async function searchPath(deep = false): Promise<string[]> {
+  // The shell's PATH once it has been read; reading it waits for real AI use
+  const shell = deep ? await loginShellPath() : (shellPathValue ?? '')
   const fromEnv = (process.env.PATH ?? '').split(delimiter)
-  return [...new Set([...fromShell, ...fromEnv, ...extraDirs()].filter(Boolean))]
+  return [...new Set([...shell.split(delimiter), ...fromEnv, ...extraDirs()].filter(Boolean))]
 }
 
 const binCache = new Map<string, { at: number; path: string | null }>()
 
-async function findBinary(name: 'codex' | 'claude'): Promise<string | null> {
+async function findBinary(name: 'codex' | 'claude', look: AiLookup = {}): Promise<string | null> {
   const hit = binCache.get(name)
-  if (hit && Date.now() - hit.at < 60_000) return hit.path
+  // A deep or fresh look doesn't trust "not found" from a shallower one
+  if (hit && Date.now() - hit.at < 60_000 && (hit.path || !(look.deep || look.fresh))) return hit.path
   const exts = isWin ? ['.exe', '.cmd', ''] : ['']
   let found: string | null = null
-  for (const dir of await searchPath()) {
+  for (const dir of await searchPath(look.deep)) {
     for (const ext of exts) {
       const p = join(dir, name + ext)
       if (existsSync(p)) {
@@ -129,6 +166,7 @@ async function findBinary(name: 'codex' | 'claude'): Promise<string | null> {
 async function childEnv(bin: string): Promise<NodeJS.ProcessEnv> {
   const env = { ...process.env }
   env.PATH = [dirname(bin), ...(await searchPath())].join(delimiter)
+  if (isWin) delete env.Path // Windows env names ignore case: keep one PATH
   delete env.ELECTRON_RUN_AS_NODE
   return env
 }
@@ -151,10 +189,29 @@ function codexInstructionsFile(): string | null {
   }
 }
 
+/** Start a CLI with no shell. On Windows an npm .cmd shim runs its script with node.exe (local-ai-spawn.ts). */
+function launch(bin: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
+  const cwd = workDir()
+  if (!isWin) return spawn(bin, args, { env, cwd })
+  const c = winCommand(bin, args, {
+    readFile: (p) => readFileSync(p, 'utf8'),
+    exists: existsSync,
+    pathDirs: (env.PATH ?? '').split(delimiter).filter(Boolean),
+    comspec: process.env.ComSpec
+  })
+  return spawn(c.command, c.args, { env, cwd, windowsHide: true, windowsVerbatimArguments: c.verbatim })
+}
+
 function run(bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    // npm installs .cmd shims on Windows, which need a shell; our args are fixed flags only
-    const child = spawn(bin, args, { env, cwd: workDir(), shell: isWin && bin.endsWith('.cmd'), windowsHide: true })
+    let child: ChildProcess
+    try {
+      child = launch(bin, args, env)
+    } catch {
+      // e.g. our AI folder can't be made: a clean "no" instead of a throw
+      resolve({ code: -1, out: '' })
+      return
+    }
     let out = ''
     child.stdout?.on('data', (d) => (out += d))
     child.stderr?.on('data', (d) => (out += d))
@@ -173,10 +230,25 @@ function run(bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: num
 // ─── status ──────────────────────────────────────────────────────────────────
 
 const signInCache = new Map<AiProviderId, { at: number; v: boolean }>()
+const signInChecks = new Map<AiProviderId, Promise<boolean>>()
 
-async function signedIn(id: 'codex' | 'claude', bin: string): Promise<boolean> {
+/**
+ * Signed in: remembered for 5 minutes. Signed out: 30 seconds, and not at all
+ * while the setup screen is open (fresh), so it turns to Connected straight
+ * after the person signs in.
+ */
+function signedIn(id: 'codex' | 'claude', bin: string, fresh = false): Promise<boolean> {
   const hit = signInCache.get(id)
-  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.v
+  if (hit && Date.now() - hit.at < (hit.v ? 5 * 60_000 : fresh ? 0 : 30_000)) return Promise.resolve(hit.v)
+  // One check at a time per CLI (the setup screen asks every few seconds)
+  const pending = signInChecks.get(id)
+  if (pending) return pending
+  const p = checkSignedIn(id, bin).finally(() => signInChecks.delete(id))
+  signInChecks.set(id, p)
+  return p
+}
+
+async function checkSignedIn(id: 'codex' | 'claude', bin: string): Promise<boolean> {
   const env = await childEnv(bin)
   // The CLIs report their own login state; we only read that yes/no answer
   const r = await run(bin, id === 'claude' ? ['auth', 'status'] : ['login', 'status'], env, 8000)
@@ -211,11 +283,11 @@ async function ollamaModel(tier: AiTier = 'light'): Promise<string | null> {
   }
 }
 
-export async function listAiProviders(): Promise<AiProviderInfo[]> {
-  const [codex, claude, model] = await Promise.all([findBinary('codex'), findBinary('claude'), ollamaModel()])
+export async function listAiProviders(look: AiLookup = {}): Promise<AiProviderInfo[]> {
+  const [codex, claude, model] = await Promise.all([findBinary('codex', look), findBinary('claude', look), ollamaModel()])
   const [codexIn, claudeIn] = await Promise.all([
-    codex ? signedIn('codex', codex) : Promise.resolve(false),
-    claude ? signedIn('claude', claude) : Promise.resolve(false)
+    codex ? signedIn('codex', codex, look.fresh) : Promise.resolve(false),
+    claude ? signedIn('claude', claude, look.fresh) : Promise.resolve(false)
   ])
   return [
     { id: 'codex', label: LABELS.codex, installed: !!codex, signedIn: codex ? codexIn : false },
@@ -236,8 +308,8 @@ export function setDefaultAiProvider(id: AiProviderId | null): void {
 }
 
 /** The person's chosen provider if it's usable, else the first one that is (ChatGPT, Claude, local). Null when none. */
-export async function getDefaultAiProvider(): Promise<AiProviderId | null> {
-  const list = await listAiProviders()
+export async function getDefaultAiProvider(look: AiLookup = {}): Promise<AiProviderId | null> {
+  const list = await listAiProviders(look)
   const usable = (p: AiProviderInfo): boolean => p.installed && p.signedIn !== false
   const chosen = prefs().get('provider') as AiProviderId | undefined
   const pick = list.find((p) => p.id === chosen && usable(p)) ?? ORDER.map((id) => list.find((p) => p.id === id)!).find(usable)
@@ -271,6 +343,18 @@ async function codexLightModel(bin: string): Promise<string | null> {
   return model
 }
 
+// The person's MCP servers, by name, so our calls can switch each one off (local-ai-args.ts)
+let codexMcp: { bin: string; names: string[] } | null = null
+
+async function codexMcpServers(bin: string): Promise<string[]> {
+  if (codexMcp?.bin === bin) return codexMcp.names
+  const r = await run(bin, codexMcpListArgs(), await childEnv(bin), 8000)
+  const names = codexMcpNames(r.out)
+  // A failed list isn't remembered, so the next call asks again
+  if (r.code === 0) codexMcp = { bin, names }
+  return names
+}
+
 /** Forget cached sign-in answers (after the person signs in from the setup screen). */
 export function refreshAiProviders(): void {
   signInCache.clear()
@@ -300,16 +384,15 @@ function runCli(
   system: string,
   signal: AbortSignal | undefined,
   onChunk: ((t: string) => void) | undefined,
-  model: string | null
+  model: string | null,
+  mcp: string[] = []
 ): Promise<RunLocalAiResult> {
   return new Promise((resolve) => {
     void childEnv(bin).then((env) => {
-      const viaShell = isWin && bin.endsWith('.cmd')
       let child: ChildProcess
       try {
-        // A shell would split a path with spaces, so .cmd installs keep Codex's own instructions
-        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' && !viaShell ? codexInstructionsFile() : null })
-        child = spawn(bin, args, { env, cwd: workDir(), shell: viaShell, windowsHide: true })
+        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' ? codexInstructionsFile() : null, codexMcpServers: mcp })
+        child = launch(bin, args, env)
       } catch {
         resolve({ ok: false, error: 'failed' })
         return
@@ -389,7 +472,7 @@ function runCli(
         }
         if (answer) return finish({ ok: true, text: answer })
         console.warn(`[LocalAI] ${id} exited ${code}: ${errText.slice(0, 400)}`)
-        finish({ ok: false, error: 'failed' })
+        finish({ ok: false, error: 'failed', configError: /error loading config/i.test(errText) })
       })
       // Prompt goes in on stdin: no length limit, nothing in the process list
       const input = id === 'codex' ? `${system}\n\n${prompt}` : prompt
@@ -449,7 +532,7 @@ async function runOllama(prompt: string, system: string, json: boolean, signal: 
 
 /** Ask the person's own AI. Streams through onChunk when the provider supports it. */
 export async function runLocalAi(opts: RunLocalAiOptions): Promise<RunLocalAiResult> {
-  const provider = opts.provider ?? (await getDefaultAiProvider())
+  const provider = opts.provider ?? (await getDefaultAiProvider({ deep: true }))
   if (!provider) return { ok: false, error: 'no_provider' }
   const system = [opts.system?.trim() || DEFAULT_SYSTEM, opts.json ? JSON_RULE : ''].filter(Boolean).join('\n\n')
   let result: RunLocalAiResult
@@ -457,30 +540,49 @@ export async function runLocalAi(opts: RunLocalAiOptions): Promise<RunLocalAiRes
   if (provider === 'ollama') {
     result = await runOllama(opts.prompt, system, !!opts.json, opts.signal, opts.onChunk, tier)
   } else {
-    const bin = await findBinary(provider)
+    const bin = await findBinary(provider, { deep: true })
     if (!bin) return { ok: false, error: 'no_provider' }
     // Light: Claude's Haiku tier; Codex's smallest listed model. Best: the CLI's own default.
-    const model = tier === 'best' ? null : provider === 'claude' ? 'haiku' : await codexLightModel(bin)
-    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model)
+    let [model, mcp] = await Promise.all([
+      tier === 'best' ? null : provider === 'claude' ? 'haiku' : codexLightModel(bin),
+      provider === 'codex' ? codexMcpServers(bin) : []
+    ])
+    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model, mcp)
+    // Codex wouldn't load a config with those MCP switches: run without them (code mode is still off, which keeps MCP tools out)
+    if (result.configError && mcp.length && !opts.signal?.aborted) {
+      console.warn('[LocalAI] codex refused the MCP switches; running without them')
+      codexMcp = { bin, names: [] }
+      mcp = []
+      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model, mcp)
+    }
     // The plan doesn't offer that model (or this CLI doesn't know it): use the default instead
     if (!result.ok && model && result.error === 'failed' && !opts.signal?.aborted) {
       console.warn(`[LocalAI] ${provider} light model ${model} failed; using the default model`)
       if (provider === 'codex') codexLight = { bin, model: null }
-      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null)
+      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null, mcp)
     }
   }
+  delete result.configError
   if (result.ok && opts.json && result.text) result = { ...result, text: extractJson(result.text) }
   return result
 }
 
-/** The terminal command that installs and signs in to a provider (shown in plain words first). */
+/**
+ * The terminal command that installs and signs in to a provider (shown in plain words first).
+ * Sign-in calls the program by its full path: the terminal that just installed
+ * it hasn't loaded the new PATH yet. Codex needs npm, so that is checked first.
+ */
 export function aiSetupCommand(id: 'codex' | 'claude'): string {
   if (isWin) {
     return id === 'claude'
-      ? 'irm https://claude.ai/install.ps1 | iex; claude auth login'
-      : 'npm install -g @openai/codex; codex login'
+      ? 'irm https://claude.ai/install.ps1 | iex; & "$env:USERPROFILE\\.local\\bin\\claude.exe" auth login'
+      : "if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Write-Host 'Codex needs Node.js. Opening nodejs.org: install Node.js, then choose Connect in PeakFlow again.'; Start-Process 'https://nodejs.org/en/download'; return }; " +
+          "npm install -g @openai/codex; if ($LASTEXITCODE -eq 0) { & (Join-Path (npm prefix -g) 'codex.cmd') login }"
   }
   return id === 'claude'
     ? 'curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude auth login'
-    : '(command -v npm >/dev/null || { echo "Codex needs Node.js first: opening nodejs.org"; open https://nodejs.org/en/download; exit 1; }) && npm install -g @openai/codex && codex login'
+    : // Node from nodejs.org keeps npm's global folder in /usr/local, which needs an admin password: install into ~/.npm-global instead
+      'command -v npm >/dev/null || { echo "Codex needs Node.js. Opening nodejs.org: install Node.js, then choose Connect in PeakFlow again."; open https://nodejs.org/en/download; exit 1; }\n' +
+        'P="$(npm prefix -g)"; [ -w "$P/lib/node_modules" ] || P="$HOME/.npm-global"\n' +
+        'npm install -g --prefix "$P" @openai/codex && "$P/bin/codex" login'
 }

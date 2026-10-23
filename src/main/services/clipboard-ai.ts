@@ -8,7 +8,7 @@
 import { checkAccess } from '../security/access-check'
 import { redactPersonalInfo } from '../security/secret-detection'
 import { ToolId } from '@shared/tool-ids'
-import { getDefaultAiProvider, listAiProviders, runLocalAi } from './local-ai'
+import { getDefaultAiProvider, listAiProviders, runLocalAi, type AiLookup } from './local-ai'
 import {
   TRANSFORM_PROMPTS,
   getTranslatePrompt,
@@ -18,8 +18,8 @@ import {
   parseJsonReply
 } from './clipboard-ai-prompts'
 
-/** Longest clip sent for a transform */
-const MAX_TEXT_LENGTH = 10000
+/** Longest clip sent for a transform. Longer clips are refused, not cut: the answer replaces the whole clip when pasted. */
+export const MAX_TEXT_LENGTH = 10000
 
 export type AiError =
   | 'not_licensed'
@@ -29,6 +29,7 @@ export type AiError =
   | 'failed'
   | 'parse_error'
   | 'unknown_transform_type'
+  | 'too_long'
 
 // ─── Access check ────────────────────────────────────────────────────────────
 
@@ -39,12 +40,13 @@ export interface AiAccess {
   provider?: string
 }
 
-export async function checkAiAccess(): Promise<AiAccess> {
+/** deep: an AI action is starting, so look in the login shell's PATH too (see local-ai.ts). */
+export async function checkAiAccess(look: AiLookup = {}): Promise<AiAccess> {
   const status = await checkAccess(ToolId.QuickBoard)
   if (!status.isToolLicensed) return { allowed: false, reason: 'not_licensed' }
-  const id = await getDefaultAiProvider()
+  const id = await getDefaultAiProvider(look)
   if (!id) return { allowed: false, reason: 'no_provider' }
-  const provider = (await listAiProviders()).find((p) => p.id === id)
+  const provider = (await listAiProviders(look)).find((p) => p.id === id)
   return { allowed: true, provider: provider?.label ?? 'AI' }
 }
 
@@ -52,10 +54,12 @@ async function run(
   system: string,
   prompt: string,
   timeoutMs: number,
-  json = false
+  json = false,
+  maxLength = Infinity
 ): Promise<{ ok: true; text: string } | { ok: false; error: AiError }> {
-  const access = await checkAiAccess()
+  const access = await checkAiAccess({ deep: true })
   if (!access.allowed) return { ok: false, error: access.reason ?? 'no_provider' }
+  if (prompt.length > maxLength) return { ok: false, error: 'too_long' }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -86,7 +90,7 @@ export async function aiTransform(
 ): Promise<AiTransformResult> {
   const system = type === 'translate' ? (targetLang ? getTranslatePrompt(targetLang) : '') : TRANSFORM_PROMPTS[type]
   if (!system) return { ok: false, error: 'unknown_transform_type' }
-  const res = await run(system, text.slice(0, MAX_TEXT_LENGTH), 60000)
+  const res = await run(system, text, 60000, false, MAX_TEXT_LENGTH)
   return res.ok ? { ok: true, result: res.text } : { ok: false, error: res.error }
 }
 
