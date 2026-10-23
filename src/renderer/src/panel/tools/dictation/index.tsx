@@ -172,7 +172,7 @@ function Paying({ view, ownKey }: { view: PayView; ownKey: boolean }): React.JSX
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
           {amounts.length > 1 ? (
             <div style={{ flex: 1 }} aria-label="Top-up amount" role="group">
-              <Seg value={String(amount)} options={amounts.map((a) => [String(a), `$${a}`] as [string, string])} onChange={(v) => setChosen(Number(v) as TopupAmount)} />
+              <Seg value={String(amount)} options={amounts.map((a) => [String(a), `US$${a}`] as [string, string])} onChange={(v) => setChosen(Number(v) as TopupAmount)} />
             </div>
           ) : null}
           <Btn primary disabled={opening} style={amounts.length > 1 ? { flex: 'none' } : { flex: 1 }} onClick={() => void buy()}>

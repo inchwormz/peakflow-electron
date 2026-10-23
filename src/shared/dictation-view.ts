@@ -16,7 +16,7 @@ import type { DictationHoldKey, DictationSettings } from './launcher/types'
 // ─── copy (checked with style-corpus-writer) ─────────────────────────────────
 
 export const COPY = {
-  offer: '$5 buys about 15 hours of talking. Unused time never expires.',
+  offer: 'US$5 buys about 15 hours of talking. Unused time never expires.',
   paused: 'Dictation is paused. Top up to keep going.',
   disabled: 'Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.',
   dailyLimit: 'You’ve used today’s 3 hours. Dictation is back within 24 hours.',
@@ -24,8 +24,8 @@ export const COPY = {
   getDictation: 'Get dictation'
 } as const
 
-export const getDictationFor = (amount: number): string => `Get dictation for $${amount}`
-export const addAmount = (amount: number): string => `Add $${amount}`
+export const getDictationFor = (amount: number): string => `Get dictation for US$${amount}`
+export const addAmount = (amount: number): string => `Add US$${amount}`
 
 // ─── hold key ────────────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ export type PayView =
   | { kind: 'devices' }
   | {
       kind: 'balance'
-      /** "$4.07 left · about 15 hours", or null when it would mislead (paused, switched off) */
+      /** "US$4.07 left · about 15 hours", or null when it would mislead (paused, switched off) */
       line: string | null
       notice: string | null
       /** Amounts that can be bought now (empty: no Add button) */
@@ -82,13 +82,13 @@ export type PayView =
       paused: boolean
     }
 
-/** "$4.07 left · about 15 hours" (or about 1 hour / 30 minutes / 1 minute) */
+/** "US$4.07 left · about 15 hours" (or about 1 hour / 30 minutes / 1 minute) */
 export function balanceLine(balanceMicros: number, minutesLeft: number): string {
   const dollars = (balanceMicros / 1_000_000).toFixed(2)
   const hours = Math.round(minutesLeft / 60)
   const minutes = Math.round(minutesLeft)
   const time = hours >= 1 ? `${hours} ${hours === 1 ? 'hour' : 'hours'}` : `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
-  return `$${dollars} left · about ${time}`
+  return `US$${dollars} left · about ${time}`
 }
 
 export function payView(account: DictationAccount | undefined | null): PayView {

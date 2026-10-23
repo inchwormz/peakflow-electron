@@ -32,7 +32,7 @@ test('before the first purchase: Get dictation with the amount choice', () => {
 })
 
 test('[AM1 kept] one amount and no choice: Get dictation names the price', () => {
-  for (const a of [5, 10, 20] as const) assert.equal(v.buyLabel(v.payView({ state: 'no_addon', amounts: [a] }), a), `Get dictation for $${a}`)
+  for (const a of [5, 10, 20] as const) assert.equal(v.buyLabel(v.payView({ state: 'no_addon', amounts: [a] }), a), `Get dictation for US$${a}`)
 })
 
 test('[AM2 kept] a chosen amount no longer offered falls back to the smallest offered one', () => {
@@ -46,18 +46,18 @@ test('with a balance: the line shows dollars and about how long it lasts, and Ad
   const view = v.payView(bal)
   assert.equal(view.kind, 'balance')
   if (view.kind !== 'balance') return
-  assert.equal(view.line, '$4.07 left · about 15 hours')
+  assert.equal(view.line, 'US$4.07 left · about 15 hours')
   assert.equal(view.notice, null)
   assert.deepEqual(view.amounts, [5, 10, 15, 20])
   assert.equal(view.paused, false)
-  assert.equal(v.buyLabel(view, 15), 'Add $15')
+  assert.equal(v.buyLabel(view, 15), 'Add US$15')
 })
 
 test('low balance: same Add choice, the line counts minutes under an hour', () => {
   const view = v.payView({ ...bal, state: 'low', balanceMicros: 120_000, minutesLeft: 26.4 })
-  assert.equal(view.kind === 'balance' && view.line, '$0.12 left · about 26 minutes')
-  assert.equal(v.balanceLine(270_000, 60), '$0.27 left · about 1 hour')
-  assert.equal(v.balanceLine(5_000, 1), '$0.01 left · about 1 minute')
+  assert.equal(view.kind === 'balance' && view.line, 'US$0.12 left · about 26 minutes')
+  assert.equal(v.balanceLine(270_000, 60), 'US$0.27 left · about 1 hour')
+  assert.equal(v.balanceLine(5_000, 1), 'US$0.01 left · about 1 minute')
 })
 
 test('only amounts with a buy link are offered', () => {
@@ -89,7 +89,7 @@ test('[A1 kept] a disabled account (chargeback) is never offered a top-up', () =
 test('daily limit: notice plus the balance still shown', () => {
   const view = v.payView({ ...bal, blocked: 'daily_limit' })
   assert.equal(view.kind === 'balance' && view.notice, v.COPY.dailyLimit)
-  assert.equal(view.kind === 'balance' && view.line, '$4.07 left · about 15 hours')
+  assert.equal(view.kind === 'balance' && view.line, 'US$4.07 left · about 15 hours')
 })
 
 test('a third computer: devices notice, nothing to buy', () => {

@@ -80,7 +80,7 @@ test('daily limit keeps balance, adds the message, and offers Add', () => {
     const body = { ...reply, state, blocked: 'daily_limit' }
     assert.deepEqual(mapBalanceReply(200, body), body)
     const v = view({ ...body, amounts: [5] })
-    assert.ok(v.line.includes('$4.07 left'))
+    assert.ok(v.line.includes('US$4.07 left'))
     assert.equal(v.notice, COPY.dailyLimit)
     assert.deepEqual(v.amounts, [5])
   }
@@ -91,7 +91,7 @@ test('negative safe integer balance stays empty with paused message and an Add b
     assert.deepEqual(mapBalanceReply(200, body), body)
     const v = view({ ...mapBalanceReply(200, body), amounts: [5] })
     assert.equal(v.notice, 'Dictation is paused. Top up to keep going.')
-    assert.equal(buyLabel(v, 5), 'Add $5')
+    assert.equal(buyLabel(v, 5), 'Add US$5')
     assert.deepEqual(v.amounts, [5])
     assert.equal(v.line, null)
   }
@@ -148,16 +148,16 @@ test('failed balance is hidden and does not leave a stuck in-flight request', as
 test('the tool page shows each balance state and purchase action', () => {
   assert.deepEqual(view({ state: 'hidden' }), { kind: 'own-key' })
   const offer = view({ state: 'no_addon', amounts: [5] })
-  assert.equal(COPY.offer, '$5 buys about 15 hours of talking. Unused time never expires.')
-  assert.equal(buyLabel(offer, 5), 'Get dictation for $5')
+  assert.equal(COPY.offer, 'US$5 buys about 15 hours of talking. Unused time never expires.')
+  assert.equal(buyLabel(offer, 5), 'Get dictation for US$5')
   const ok = view({ ...reply, amounts: [5] })
-  assert.equal(ok.line, '$4.07 left · about 15 hours')
-  assert.equal(buyLabel(ok, 5), 'Add $5')
+  assert.equal(ok.line, 'US$4.07 left · about 15 hours')
+  assert.equal(buyLabel(ok, 5), 'Add US$5')
   assert.deepEqual(view(reply).amounts, [], 'no buy link, no button')
   for (const body of [{ ...reply, state: 'empty', amounts: [5] }, { ...reply, balanceMicros: -1, amounts: [5] }]) {
     const v = view(body)
     assert.equal(v.notice, 'Dictation is paused. Top up to keep going.')
-    assert.equal(buyLabel(v, 5), 'Add $5')
+    assert.equal(buyLabel(v, 5), 'Add US$5')
     assert.equal(v.line, null)
   }
   assert.deepEqual(view({ state: 'devices' }), { kind: 'devices' })
