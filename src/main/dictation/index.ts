@@ -9,6 +9,7 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { getDictationAccount, openDictationCheckout } from './account'
 import { execFile } from 'child_process'
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
@@ -382,6 +383,8 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
+  h(IPC_INVOKE.DICTATION_ACCOUNT, (e) => fromLauncher(e) ? getDictationAccount() : { state: 'hidden' })
+  h(IPC_INVOKE.DICTATION_CHECKOUT, (e) => fromLauncher(e) ? openDictationCheckout() : false)
   h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromLauncher(e)) return settings()

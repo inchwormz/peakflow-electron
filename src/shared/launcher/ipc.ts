@@ -32,6 +32,8 @@ export const LAUNCHER_INVOKE = {
   DICTATION_AUDIO: 'dictation:audio',
   /** The pill couldn't open the microphone ('denied' | 'none' | 'failed') */
   DICTATION_MIC_ERROR: 'dictation:mic-error',
+  DICTATION_ACCOUNT: 'dictation:account',
+  DICTATION_CHECKOUT: 'dictation:checkout',
   DICTATION_SETTINGS: 'dictation:settings',
   DICTATION_SET: 'dictation:set',
   DICTATION_SAVE_KEY: 'dictation:save-key',
