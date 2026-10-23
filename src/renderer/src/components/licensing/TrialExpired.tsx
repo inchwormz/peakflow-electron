@@ -191,7 +191,7 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
             e.currentTarget.style.background = 'var(--accent)'
           }}
         >
-          All tools &mdash; $2.99/month
+          All tools &mdash; US$2.99/month
         </button>
 
         {/* One-time purchase hint */}
@@ -199,7 +199,7 @@ export function TrialExpired({ toolName, deniedTool, reason, onActivated }: Tria
           className="text-xs mt-3 text-center"
           style={{ color: 'var(--text-tertiary)' }}
         >
-          Or buy individual tools forever from $9.99 at{' '}
+          Or buy individual tools forever from US$9.99 at{' '}
           <span
             className="cursor-pointer"
             style={{ color: 'var(--accent)', textDecoration: 'underline' }}

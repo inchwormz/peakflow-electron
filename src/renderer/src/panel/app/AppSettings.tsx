@@ -50,8 +50,8 @@ function planText(a: AccessStatus | undefined): string {
 const Ext = (): React.JSX.Element => <Icon name="ext" className="go" />
 
 /**
- * Plan choices: John's v2 prices (19 Oct 2026): Pro $2.99 a month, own one
- * tool $9.99, all four $29.99. No annual price yet (still open), so none shown.
+ * Plan choices: John's v2 prices (19 Oct 2026): Pro US$2.99 a month, own one
+ * tool US$9.99, all four US$29.99 (labelled US$, John 24 Oct 2026). No annual price yet (still open), so none shown.
  *
  * TODO(pricing): the Lemon Squeezy products for these v2 prices don't exist
  * yet. Until they do, every option opens the existing pricing page
@@ -65,18 +65,18 @@ export function PlanOptions({ toolName }: { toolName?: string }): React.JSX.Elem
       <div className="plans">
         <button className="plan-opt" onClick={open}>
           <span className="pt">Pro</span>
-          <span className="pp">$2.99<small> / month</small></span>
+          <span className="pp">US$2.99<small> / month</small></span>
           <span className="pd">{isMac() ? 'Every tool, on two Macs' : 'Every tool, on two PCs'}</span>
         </button>
         <button className="plan-opt" onClick={open}>
           <span className="pt">Own it</span>
-          <span className="pp">$9.99<small> once</small></span>
+          <span className="pp">US$9.99<small> once</small></span>
           <span className="pd">{toolName ? `${toolName}, yours to keep` : 'One tool, yours to keep'}</span>
         </button>
       </div>
       <button className="plan-more" onClick={open}>
         <span>Own every tool</span>
-        <span className="pp">$29.99 once</span>
+        <span className="pp">US$29.99 once</span>
       </button>
     </>
   )
