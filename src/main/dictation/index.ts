@@ -11,7 +11,7 @@
 
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { app, BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -84,7 +84,32 @@ let context: Promise<DictationContext> = Promise.resolve({})
 let last: { raw: string; typed: string; at: number } | null = null
 /** A clip that couldn't be turned into text, kept so it can be tried again (S11) */
 interface Clip { buf: ArrayBuffer; mime: string; durationMs: number; ctx: DictationContext; at: number }
-let keptClip: Clip | null = null
+let keptClip: (Clip & { owner: string }) | null = null
+let keptTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Who would pay for a clip: a one-way fingerprint of their own key and licence
+ * (kept only in memory, never logged). '' when there is neither.
+ */
+function clipOwner(): string {
+  const key = getCredential(CRED_TOOL, CRED_TYPE) ?? ''
+  const licence = getCredential('license', 'key') ?? ''
+  return key || licence ? createHash('sha256').update(`${key}\n${licence}`).digest('hex') : ''
+}
+
+/**
+ * Keep a clip (or drop it with null). It is deleted from memory 30 minutes
+ * after it was recorded, even if PeakFlow sits untouched (Sol review R4); a
+ * failed retry doesn't restart that clock.
+ */
+function keepClip(clip: Clip | null): void {
+  if (keptTimer) clearTimeout(keptTimer)
+  keptTimer = null
+  const had = !!keptClip
+  keptClip = clip && Date.now() - clip.at < KEEP_CLIP_MS ? { ...clip, owner: keptClip && keptClip.at === clip.at ? keptClip.owner : clipOwner() } : null
+  if (keptClip) keptTimer = setTimeout(() => keepClip(null), KEEP_CLIP_MS - (Date.now() - keptClip.at))
+  if (had || keptClip) settingsChanged()
+}
 /** Keep recording this long after the key comes up, so the last word isn't clipped */
 const RELEASE_PAD_MS = 150
 
@@ -386,6 +411,17 @@ async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
 
 /** Speech to text, clean-up and typing for one clip (a new recording, or a kept one tried again). */
 async function runClip(clip: Clip): Promise<void> {
+  try {
+    await runClipSteps(clip)
+  } catch (err) {
+    // A connection that drops mid-stream rejects instead of answering: keep the clip and free dictation (Sol review R2)
+    console.warn(`[Dictation] clip failed: ${(err as Error)?.name ?? 'error'}`)
+    keepClip(clip)
+    fail('network', true)
+  }
+}
+
+async function runClipSteps(clip: Clip): Promise<void> {
   const { buf, mime, durationMs, ctx } = clip
   const key = getCredential(CRED_TOOL, CRED_TYPE)
   const words = parseMyWords(store.get('words'))
@@ -413,14 +449,10 @@ async function runClip(clip: Clip): Promise<void> {
     if (r.detail) console.warn(`[Dictation] ${r.error}: ${r.detail}`)
     // Keep the audio so nothing said is lost; it can be tried again for 30 minutes
     const kept = keepsClip(r.error)
-    keptClip = kept ? { ...clip, at: Date.now() } : null
-    settingsChanged()
+    keepClip(kept ? clip : null)
     return fail(r.error ?? 'failed', kept)
   }
-  if (keptClip) {
-    keptClip = null
-    settingsChanged()
-  }
+  if (keptClip) keepClip(null)
   let text = r.text
   let tidyNote = 'off'
   // With the add-on the clean-up goes through PeakFlow's server too (and is metered there)
@@ -445,8 +477,11 @@ async function runClip(clip: Clip): Promise<void> {
 
 /** A kept clip that can still be tried again: how long it was, in seconds. */
 export function getKeptDictation(): { seconds: number } | null {
-  if (!keptClip || Date.now() - keptClip.at > KEEP_CLIP_MS) {
-    keptClip = null
+  if (!keptClip) return null
+  // Too old, or the key or licence changed since: never send it under someone else's account (Sol review R3)
+  // A clip recorded with no key and no licence ("Add your OpenAI key") may go to the first one added
+  if (Date.now() - keptClip.at >= KEEP_CLIP_MS || (keptClip.owner !== '' && keptClip.owner !== clipOwner())) {
+    keepClip(null)
     return null
   }
   return { seconds: Math.max(1, Math.round(keptClip.durationMs / 1000)) }
@@ -630,7 +665,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
 export function initDictation(getLauncherContents: () => Electron.WebContents | undefined): void {
   if (!app.isPackaged) allowServerOverride()
   // Development screenshots only: a tiny kept clip (too short to send anywhere, so trying it again ends as "Didn't hear anything")
-  if (!app.isPackaged && process.env['PEAKFLOW_DICTATION_KEPT_DEMO'] === '1') keptClip = { buf: new ArrayBuffer(10), mime: 'audio/webm', durationMs: 12_000, ctx: {}, at: Date.now() }
+  if (!app.isPackaged && process.env['PEAKFLOW_DICTATION_KEPT_DEMO'] === '1') keepClip({ buf: new ArrayBuffer(10), mime: 'audio/webm', durationMs: 12_000, ctx: {}, at: Date.now() })
   registerIpc(getLauncherContents)
   onHoldKey((e) => {
     if (e === 'down') onDown()

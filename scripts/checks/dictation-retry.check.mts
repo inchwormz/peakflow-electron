@@ -38,8 +38,8 @@ test('Ctrl+V on Windows, ⌘V on a Mac', () => {
 
 test('wiring: failures keep the clip, every transcription call gets the scaled limit, and both places can try again', () => {
   const main = src('src/main/dictation/index.ts')
-  assert.ok(main.includes('keptClip = kept ? { ...clip, at: Date.now() } : null'))
-  assert.ok(main.includes('keptClip = null\n'), 'a success clears it')
+  assert.ok(main.includes('keepClip(kept ? clip : null)'))
+  assert.ok(main.includes('if (keptClip) keepClip(null)'), 'a success clears it')
   const calls = main.slice(main.indexOf('async function runClip'), main.indexOf('const sttMs'))
   assert.equal((calls.match(/await transcribe\(/g) ?? []).length, 3)
   assert.equal((calls.match(/stream: true, timeoutMs \}/g) ?? []).length, 3)
@@ -47,4 +47,30 @@ test('wiring: failures keep the clip, every transcription call gets the scaled l
   assert.ok(/IPC_INVOKE\.DICTATION_RETRY, async \(e\) => \{\s*if \(!fromUi\(e\)/.test(main), 'only the panel or launcher can retry')
   assert.ok(src('src/main/launcher/index.ts').includes("id === 'dictation:retry'"))
   assert.ok(src('src/renderer/src/panel/tools/dictation/index.tsx').includes('IPC_INVOKE.DICTATION_RETRY'))
+})
+
+test('[R2] a connection that drops mid-stream keeps the clip and frees dictation', () => {
+  const main = src('src/main/dictation/index.ts')
+  const run = main.slice(main.indexOf('async function runClip('), main.indexOf('async function runClipSteps'))
+  assert.ok(/try \{\s*await runClipSteps\(clip\)\s*\} catch/.test(run))
+  assert.ok(run.includes('keepClip(clip)') && run.includes("fail('network', true)"), 'fail() also clears busy')
+  assert.ok(/function fail[^]*?busy = false/.test(main))
+})
+
+test('[R3] a kept clip is never sent after the key or licence changed (unless it was recorded with neither)', () => {
+  const main = src('src/main/dictation/index.ts')
+  assert.ok(main.includes("return key || licence ? createHash('sha256')"))
+  assert.ok(main.includes("(keptClip.owner !== '' && keptClip.owner !== clipOwner())"))
+  const at = main.indexOf('export async function retryDictation')
+  const retry = main.slice(at, main.indexOf('/** The last dictation, for', at))
+  assert.ok(retry.includes('getKeptDictation() ? keptClip : null'), 'retry goes through the owner check')
+})
+
+test('[R4] the audio is dropped 30 minutes after recording even if PeakFlow sits untouched', () => {
+  const main = src('src/main/dictation/index.ts')
+  const keep = main.slice(main.indexOf('function keepClip'), main.indexOf('/** Keep recording this long'))
+  assert.ok(keep.includes('keptTimer = setTimeout(() => keepClip(null), KEEP_CLIP_MS - (Date.now() - keptClip.at))'))
+  assert.ok(keep.includes('if (keptTimer) clearTimeout(keptTimer)'))
+  assert.ok(keep.includes('keptClip.at === clip.at ? keptClip.owner'), 'a retry keeps the original clock and owner')
+  assert.ok(!main.includes('{ ...clip, at: Date.now() }'), 'a failed retry no longer restarts the clock')
 })
