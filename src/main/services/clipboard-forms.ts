@@ -7,6 +7,7 @@
 import Store from 'electron-store'
 import { simulateCtrlV } from '../native/keyboard'
 import { getClipboardService } from './clipboard'
+import { pasteRunChanged } from './paste-run'
 
 export interface FormField {
   label: string
@@ -99,6 +100,7 @@ export function startFormFill(
     return { active: false, current: 0, total: 0, label: '' }
   }
   activeFill = { profile, currentIndex: 0 }
+  pasteRunChanged()
   getClipboardService().writeText(profile.fields[0].value)
   return {
     active: true,
@@ -129,6 +131,7 @@ export function formPasteNext(): {
   if (activeFill.currentIndex >= fields.length) {
     const total = fields.length
     activeFill = null
+    pasteRunChanged()
     return { active: false, current: total, total, label: '' }
   }
 
@@ -142,7 +145,9 @@ export function formPasteNext(): {
 }
 
 export function cancelFormFill(): void {
+  const was = activeFill !== null
   activeFill = null
+  if (was) pasteRunChanged()
 }
 
 export function getFormFillStatus(): {

@@ -11,14 +11,14 @@ import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import { SNAP_LAYOUTS, ARRANGE_LAYOUTS, SNAP_UNDO_ACCEL } from '@shared/snapgrid-layouts'
 import type { FracRect, SnapGridState, SnapLayout } from '@shared/snapgrid-layouts'
 import type { PanelToolModule } from '../../types'
-import { invoke, useIpcEvent, useInvoke, formatAccelerator, isMac } from '../../hooks'
+import { invoke, useIpcEvent, useInvoke, formatAccelerator, isMac, builtInKey, ALTGR_NOTE } from '../../hooks'
 import { AppIcon, Banner, Btn, Grp, Note, Rec, Row, Toggle } from '../../kit'
 import { useNav } from '../../nav'
 import './snapgrid.css'
 
-/** formatAccelerator leaves Enter and Backspace as words; macOS menus use symbols. */
+/** formatAccelerator leaves Enter and Backspace as words; macOS menus use symbols. '' when the layout has no key here. */
 function keys(accel: string): string {
-  const s = formatAccelerator(accel)
+  const s = formatAccelerator(builtInKey(accel))
   return isMac() ? s.replace('Enter', '↩').replace('Backspace', '⌫') : s
 }
 
@@ -134,7 +134,7 @@ function Main(): React.JSX.Element {
           <button
             key={l.key}
             className="sg-tile"
-            aria-label={`${l.name} (${keys(l.accel)})`}
+            aria-label={keys(l.accel) ? `${l.name} (${keys(l.accel)})` : l.name}
             onMouseEnter={() => { setHover(l); preview('layout', l.key) }}
             onFocus={() => { setHover(l); preview('layout', l.key) }}
             onBlur={leavePreview}
@@ -146,7 +146,7 @@ function Main(): React.JSX.Element {
       </div>
       <div className="sg-hint">
         <span>{hover ? hover.name : 'Hover a layout to see where it goes'}</span>
-        {hover ? <kbd>{keys(hover.accel)}</kbd> : null}
+        {hover && keys(hover.accel) ? <kbd>{keys(hover.accel)}</kbd> : null}
       </div>
 
       <div className="sg-cap" style={{ marginTop: 14 }}>Arrange all windows</div>
@@ -269,11 +269,18 @@ function Shortcuts(): React.JSX.Element {
     <>
       <Grp>
         {SNAP_LAYOUTS.map((l) => (
-          <Row key={l.key} label={l.name} sub={sub(`snapgrid:${l.key}`)} right={<Rec value={l.accel} />} />
+          builtInKey(l.accel) ? (
+            <Row key={l.key} label={l.name} sub={sub(`snapgrid:${l.key}`)} right={<Rec value={l.accel} />} />
+          ) : (
+            <Row key={l.key} label={l.name} value="No shortcut" />
+          )
         ))}
         <Row label="Put it back" sub={sub('snapgrid:undo')} right={<Rec value={SNAP_UNDO_ACCEL} />} />
       </Grp>
-      <Note style={{ marginTop: 10 }}>These are fixed for now. Top and bottom halves use ⇧ because ⌃⌥↑ and ⌃⌥↓ change FocusDim’s brightness.</Note>
+      <Note style={{ marginTop: 10 }}>
+        These are fixed for now. Top and bottom halves use {isMac() ? '⇧' : 'Shift'} because {isMac() ? '⌃⌥↑ and ⌃⌥↓' : 'Ctrl+Alt+Up and Ctrl+Alt+Down'} change FocusDim’s brightness.
+        {isMac() ? null : <> {ALTGR_NOTE}</>}
+      </Note>
     </>
   )
 }

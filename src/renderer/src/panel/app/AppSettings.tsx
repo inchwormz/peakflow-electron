@@ -16,7 +16,8 @@ import { EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { AccessStatus, LicenseActivationResult } from '@shared/ipc-types'
 import type { LauncherSettings } from '@shared/launcher/types'
 import type { PanelToolId, RouteTable } from '../types'
-import { invoke, isMac, useInvoke, formatAccelerator } from '../hooks'
+import { invoke, isMac, useInvoke, formatAccelerator, builtInKey, ALTGR_NOTE } from '../hooks'
+import { SWITCH_ACCELS as SWITCH } from '@shared/global-keys'
 import { Btn, Grp, Hero, Gap, Note, Primary, Rec, Row, Toggle, V, openExternal } from '../kit'
 import { Icon } from '../icons'
 import { useNav } from '../nav'
@@ -255,8 +256,6 @@ function Tools(): React.JSX.Element {
 
 /* ─── keyboard shortcuts ─────────────────────────────────────────────────── */
 
-const SWITCH = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4', 'Alt+CommandOrControl+5']
-
 function Hotkeys(): React.JSX.Element {
   const [registered] = useInvoke<Array<{ accelerator: string; label: string }>>(IPC_INVOKE.HOTKEY_GET_REGISTERED)
   const has = (accel: string): boolean => !registered || registered.some((r) => r.accelerator.toLowerCase() === accel.toLowerCase())
@@ -268,7 +267,11 @@ function Hotkeys(): React.JSX.Element {
       <Note style={{ marginBottom: 2 }}>PeakFlow</Note>
       <Grp>
         {TOOL_MODULES.map((m, i) => (
-          <Row key={m.id} label={`Open ${m.name}`} sub={taken(SWITCH[i])} right={<Rec value={SWITCH[i]} />} />
+          builtInKey(SWITCH[i]) ? (
+            <Row key={m.id} label={`Open ${m.name}`} sub={taken(SWITCH[i])} right={<Rec value={SWITCH[i]} />} />
+          ) : (
+            <Row key={m.id} label={`Open ${m.name}`} value="No shortcut" />
+          )
         ))}
         {launcher && (
           <Row
@@ -282,12 +285,19 @@ function Hotkeys(): React.JSX.Element {
       <Grp>
         <Row label="FocusDim on or off" go="focusdim/shortcuts" />
         <Row label="FocusDim brighter / darker" value={`${formatAccelerator('Control+Alt+Up')} ${formatAccelerator('Control+Alt+Down')}`} />
-        <Row label="FocusDim peek" right={<Rec value="Control+Alt+`" />} />
+        {builtInKey('Control+Alt+`') ? <Row label="FocusDim peek" right={<Rec value="Control+Alt+`" />} /> : null}
         <Row label="Open QuickBoard" right={<Rec value="CommandOrControl+Shift+V" />} />
-        <Row label="Paste next / cancel" value={`${formatAccelerator('CommandOrControl+Shift+N')} ${formatAccelerator('CommandOrControl+Shift+Q')}`} />
+        <Row
+          label="Paste next / cancel"
+          sub="Only while you paste a list, so other apps keep these keys"
+          value={`${formatAccelerator('CommandOrControl+Shift+N')} ${formatAccelerator('CommandOrControl+Shift+Q')}`}
+        />
         <Row label="SnapGrid layouts" go="snapgrid/shortcuts" />
       </Grp>
-      <Note style={{ marginTop: 10 }}>FocusDim’s on/off shortcut can be changed in its settings. The others are fixed for now.</Note>
+      <Note style={{ marginTop: 10 }}>
+        FocusDim’s on/off shortcut can be changed in its settings. The others are fixed for now.
+        {isMac() ? null : <> {ALTGR_NOTE}</>}
+      </Note>
     </>
   )
 }

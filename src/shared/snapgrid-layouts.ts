@@ -4,9 +4,15 @@
  *
  * Keys follow Rectangle's defaults so Mac users' muscle memory works, with
  * one change: ⌃⌥↑/↓ already change FocusDim's intensity, so the top and
- * bottom halves (and moving between screens) add ⇧. Windows uses the same
- * Ctrl+Alt keys.
+ * bottom halves (and moving between screens) add ⇧.
+ *
+ * Windows keeps only the Ctrl+Alt keys that type nothing (arrows, Enter,
+ * Backspace). Ctrl+Alt+letter is AltGr+letter there (€, @, [ ]), so the
+ * letter layouts ship without a shortcut and are used from the panel
+ * (review B5; see shared/global-keys.ts).
  */
+
+import { builtInAccel } from './global-keys'
 
 export interface FracRect {
   x: number
@@ -53,6 +59,11 @@ export const SNAP_LAYOUTS: readonly SnapLayout[] = [
 ]
 
 export const SNAP_UNDO_ACCEL = 'Control+Alt+Backspace'
+
+/** A layout's shortcut on this platform, or null when it has none (letters on Windows). */
+export function snapAccel(layout: SnapLayout, platform: string): string | null {
+  return builtInAccel(layout.accel, platform)
+}
 
 export const SNAP_LAYOUT_BY_KEY = Object.fromEntries(SNAP_LAYOUTS.map((l) => [l.key, l])) as Record<SnapLayoutKey, SnapLayout>
 

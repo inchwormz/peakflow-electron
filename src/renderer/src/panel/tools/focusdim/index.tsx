@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { PanelToolModule } from '../../types'
-import { invoke, useIpcEvent, useInvoke, formatAccelerator, isMac } from '../../hooks'
+import { invoke, useIpcEvent, useInvoke, formatAccelerator, isMac, builtInKey } from '../../hooks'
 import { AppIcon, Banner, Btn, Empty, Grp, IconBtn, Note, Rec, Row, Seg, SliderRow, TextTabs, Toggle } from '../../kit'
 import { useNav } from '../../nav'
 
@@ -166,7 +166,8 @@ function Main(): React.JSX.Element {
       </Grp>
       <TextTabs style={{ margin: 0, padding: 0 }} value={PRESETS.find(([n]) => n === pct)?.[0] ?? -1} options={PRESETS} onChange={setPct} />
       <Note style={{ marginTop: 16 }}>
-        Turn on or off with <b>{formatAccelerator(configToAccel(s.hotkey))}</b>. Press <b>{formatAccelerator(FIXED_KEYS.peek)}</b> to peek.
+        Turn on or off with <b>{formatAccelerator(configToAccel(s.hotkey))}</b>.
+        {builtInKey(FIXED_KEYS.peek) ? <> Press <b>{formatAccelerator(FIXED_KEYS.peek)}</b> to peek.</> : null}
       </Note>
     </>
   )
@@ -384,7 +385,7 @@ function Shortcuts(): React.JSX.Element {
         />
         <Row label="Increase intensity" right={<Rec value={FIXED_KEYS.up} />} />
         <Row label="Decrease intensity" right={<Rec value={FIXED_KEYS.down} />} />
-        <Row label="Peek (show everything)" right={<Rec value={FIXED_KEYS.peek} />} />
+        {builtInKey(FIXED_KEYS.peek) ? <Row label="Peek (show everything)" right={<Rec value={FIXED_KEYS.peek} />} /> : null}
       </Grp>
       <Note style={{ marginTop: 10 }}>Click a shortcut, then press the new keys. It needs ⌘, ⌥, ⌃ or ⇧. Press Esc to cancel. The intensity and peek keys are fixed for now.</Note>
     </>
