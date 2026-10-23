@@ -245,6 +245,17 @@ for (let i = 0; i < 10; i++) {
 assert.equal(await pro(), true, '10 forward/back cycles with restarts: still licensed')
 assert.ok((store().get('offline_ms') as number) < 5 * DAY, 'still at most one 3-day step')
 
+// 6b4. Sol round 4: many 30-second runs with the clock rolled back each time still count
+customer(0)
+reply = 'network'
+for (let i = 0; i < 14 * 24 * 60 + 10; i++) {
+  lic.simulateRestartForChecks()
+  lic.getLicenceState()
+  mono += 30_000
+  lic.getLicenceState()
+}
+assert.equal(lic.getLicenceState(), 'lapsed', '20,000 short runs with rollbacks: locked')
+
 // 6c. Clock moved forward a year while online: the check passes, still licensed
 customer(HOUR)
 now += 365 * DAY

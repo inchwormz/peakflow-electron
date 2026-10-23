@@ -273,7 +273,7 @@ let lastLook: { mono: number; wall: number } | null = null
  *   app closed, clock moved forward) counts, but at most MAX_STEP_DAYS per
  *   step. Steps back count nothing, and going forward again to a time already
  *   seen counts nothing, so clock corrections can't pile up offline days.
- * Writes at most once a minute.
+ * Writes at most once a minute; each run is charged at least a minute.
  */
 function tallyOffline(now: number): number {
   const total = offlineMs()
@@ -282,7 +282,9 @@ function tallyOffline(now: number): number {
   const running = lastLook ? Math.max(0, m - lastLook.mono) : 0
   const expected = lastLook ? lastLook.wall + running : -Infinity
   const extra = high === null ? 0 : now - Math.max(high, expected)
-  const add = running + Math.min(Math.max(0, extra), MAX_STEP_DAYS * DAY_MS)
+  // The first look of each run charges at least a minute: running time under
+  // a minute isn't written, so this stops many short runs from adding nothing.
+  const add = running + Math.min(Math.max(0, extra), MAX_STEP_DAYS * DAY_MS) + (lastLook ? 0 : 60 * 1000)
   if (lastLook && add < 60 * 1000 && now >= lastLook.wall - CLOCK_SKEW_MS) return total
   lastLook = { mono: m, wall: now }
   const next = total + add
