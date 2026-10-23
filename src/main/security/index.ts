@@ -39,7 +39,8 @@ export { TRIAL_DAYS, getInstallDate, getTrialDaysRemaining, isTrialActive } from
 
 // License validation
 export {
-  LICENSE_CACHE_DAYS,
+  RECHECK_HOURS,
+  OFFLINE_GRACE_DAYS,
   CHECKOUT_URL,
   isLicensed,
   validateLicenseOnline,

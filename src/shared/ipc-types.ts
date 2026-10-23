@@ -20,6 +20,10 @@ export interface AccessStatus {
   isToolLicensed: boolean
   /** True when the license covers the full suite (subscription / bundle / legacy key) */
   isSuiteLicense?: boolean
+  /** A saved key that isn't unlocking anything: Lemon Squeezy ended it, or it couldn't be checked for 14 days */
+  licence?: 'ended' | 'offline'
+  /** A licence key is saved on this computer (so it can be removed) */
+  hasLicenceKey?: boolean
 }
 
 export interface LicenseActivationResult {
@@ -53,6 +57,7 @@ export const IPC_INVOKE = {
   SECURITY_CHECK_ACCESS: 'security:check-access',
   SECURITY_CHECK_TOOL_ACCESS: 'security:check-tool-access',
   SECURITY_ACTIVATE_LICENSE: 'security:activate-license',
+  SECURITY_DEACTIVATE_LICENSE: 'security:deactivate-license',
   SECURITY_GET_TRIAL_STATUS: 'security:get-trial-status',
 
   // Tool install (storefront)

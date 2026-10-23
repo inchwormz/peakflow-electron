@@ -4,9 +4,19 @@
  * PeakFlow uses LemonSqueezy's public license API endpoints which require
  * no API key — only the license_key in the request body.
  *
- * The license key is stored encrypted via the credentials module. A cached
- * validation timestamp avoids hitting the network on every app launch;
- * re-validation happens after LICENSE_CACHE_DAYS (30).
+ * The license key is stored encrypted via the credentials module.
+ *
+ * Re-checks (B3/S6, 24 Oct 2026):
+ * - A good check is trusted for RECHECK_HOURS; after that the app re-checks in
+ *   the background (at most once an hour) and keeps the current answer while
+ *   it waits, so key presses and panels never wait on the network.
+ * - When Lemon Squeezy really answers expired, disabled or not found, that
+ *   status is saved and the tools lock.
+ * - Network errors, timeouts and server errors never lock by themselves: a
+ *   licence stays good for OFFLINE_GRACE_DAYS after the last good check. Past
+ *   that, each access check asks the server again (at most once a minute) and
+ *   unlocks the moment it answers "valid".
+ * - Every request has a 10 s timeout and only one check runs at a time.
  *
  * Port of the Python `license.py` module.
  */
@@ -21,8 +31,20 @@ import { installTool } from './trial'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-/** Number of days a successful online validation is cached locally. */
-export const LICENSE_CACHE_DAYS = 30
+/** A good check is trusted this long before a background re-check. */
+export const RECHECK_HOURS = 24
+/** Network trouble never locks a licence within this many days of the last good check. */
+export const OFFLINE_GRACE_DAYS = 14
+const HOUR_MS = 60 * 60 * 1000
+const DAY_MS = 24 * HOUR_MS
+/** Background re-checks: at most one attempt per hour. */
+const RETRY_MS = HOUR_MS
+/** When the answer would be "locked": ask again at most once a minute. */
+const LOCKED_RETRY_MS = 60 * 1000
+/** Every Lemon Squeezy request gives up after this long. */
+const REQUEST_TIMEOUT_MS = 10_000
+/** Times this far in the future count as "the clock moved back". */
+const CLOCK_SKEW_MS = 5 * 60 * 1000
 
 /**
  * Baseline map of LemonSqueezy product_id → which tool(s) the license covers.
@@ -70,11 +92,27 @@ export const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
 /** LemonSqueezy public license endpoints (no API key required). */
 const LS_VALIDATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/validate'
 const LS_ACTIVATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/activate'
+const LS_DEACTIVATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/deactivate'
+
+const mainListeners = new Set<() => void>()
+
+/** Main-process services (SnapGrid drag watch) that react to licence changes. */
+export function onLicenceChanged(cb: () => void): () => void {
+  mainListeners.add(cb)
+  return () => mainListeners.delete(cb)
+}
 
 function broadcastLicenseStatusChanged(): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send(IPC_SEND.LICENSE_STATUS_CHANGED)
+    }
+  }
+  for (const cb of mainListeners) {
+    try {
+      cb()
+    } catch (err) {
+      console.warn('[PeakFlow:License] listener failed:', err)
     }
   }
 }
@@ -197,41 +235,78 @@ function getInstanceName(): string {
   return `PeakFlow-${os.hostname()}`
 }
 
-/**
- * Check whether the cached validation is still fresh (< LICENSE_CACHE_DAYS old).
- */
-function isCacheValid(): boolean {
-  try {
-    const cached = licenseStore.get('validation_timestamp') as string | undefined
-    if (!cached) return false
+const computerWord = (): string => (process.platform === 'darwin' ? 'Mac' : 'PC')
 
-    const cachedDate = new Date(cached)
-    if (isNaN(cachedDate.getTime())) return false
-
-    const now = new Date()
-    const elapsedMs = now.getTime() - cachedDate.getTime()
-    const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24)
-
-    return elapsedDays < LICENSE_CACHE_DAYS
-  } catch {
-    return false
-  }
+/** A stored ISO time as epoch ms, or null when missing or unreadable. */
+function readTime(key: string): number | null {
+  const v = licenseStore.get(key)
+  if (typeof v !== 'string') return null
+  const t = Date.parse(v)
+  return Number.isFinite(t) ? t : null
 }
 
+const nowIso = (): string => new Date(Date.now()).toISOString()
+
+/** Statuses only a real Lemon Squeezy answer can set; they lock the tools. */
+const REVOKED_STATUSES = ['expired', 'disabled', 'not_found'] as const
+type RevokedStatus = (typeof REVOKED_STATUSES)[number]
+const isRevokedStatus = (s: unknown): s is RevokedStatus => (REVOKED_STATUSES as readonly unknown[]).includes(s)
+
 /**
- * Persist a successful validation timestamp and status.
+ * none: no key. licensed: good check within the grace period. revoked: Lemon
+ * Squeezy said expired, disabled or not found. lapsed: no good check for
+ * OFFLINE_GRACE_DAYS (offline). unvalidated: saved while offline, never checked.
  */
-function cacheValidation(status: string): void {
-  licenseStore.set('validation_timestamp', new Date().toISOString())
-  licenseStore.set('license_status', status)
+export type LicenceState = 'none' | 'licensed' | 'revoked' | 'lapsed' | 'unvalidated'
+
+/**
+ * Licences activated before 2.1 get a fresh grace period from the first 2.1
+ * launch, so nobody offline on update day is locked by an old timestamp.
+ */
+function migrateGrace(now: number): void {
+  if (licenseStore.has('grace_from') || licenseStore.has('last_check_attempt')) return
+  licenseStore.set('grace_from', new Date(now).toISOString())
 }
 
-/** Sync check: user has a locally stored license marked active/valid. */
-function hasActiveLicenseRecord(): boolean {
+function withinGrace(now: number): boolean {
+  const lastGood = readTime('validation_timestamp')
+  const graceFrom = readTime('grace_from')
+  const anchor = Math.max(lastGood ?? -Infinity, graceFrom ?? -Infinity)
+  if (!Number.isFinite(anchor)) return false
+  // A last good check "in the future" means the clock moved back: benefit of the doubt
+  return now - anchor < OFFLINE_GRACE_DAYS * DAY_MS
+}
+
+/** Sync licence state from what is stored (no network). */
+export function getLicenceState(now = Date.now()): LicenceState {
   const key = getCredential('license', 'key')
-  if (!key) return false
+  if (!key) return 'none'
   const status = licenseStore.get('license_status') as string | undefined
-  return status === 'active' || status === 'valid'
+  if (status === 'active' || status === 'valid') {
+    migrateGrace(now)
+    return withinGrace(now) ? 'licensed' : 'lapsed'
+  }
+  if (isRevokedStatus(status)) return 'revoked'
+  return 'unvalidated'
+}
+
+/** Sync check: user has a stored licence that is good right now. */
+function hasActiveLicenseRecord(): boolean {
+  return getLicenceState() === 'licensed'
+}
+
+/** Is a background re-check due? Clock jumps either way just make it due. */
+function backgroundCheckDue(state: LicenceState, now: number): boolean {
+  const fresh = (t: number | null, ms: number): boolean => t !== null && t <= now + CLOCK_SKEW_MS && now - t < ms
+  if (state === 'licensed' && fresh(readTime('validation_timestamp'), RECHECK_HOURS * HOUR_MS)) return false
+  return !fresh(readTime('last_check_attempt'), RETRY_MS)
+}
+
+/** Monotonic time of the last locked-state attempt this run (immune to clock changes). */
+let lastLockedAttemptMono: number | null = null
+
+function lockedRetryDue(): boolean {
+  return lastLockedAttemptMono === null || performance.now() - lastLockedAttemptMono >= LOCKED_RETRY_MS
 }
 
 /**
@@ -278,86 +353,164 @@ function extractProductId(result: Record<string, unknown>): number | null {
   return null
 }
 
-// ─── Public API ─────────────────────────────────────────────────────────────
-
-/**
- * Check whether the user has a valid (or recently-validated) license key.
- *
- * 1. Retrieve the stored key from the credential store.
- * 2. If a cached validation exists and is < 30 days old, return `true`.
- * 3. Otherwise, validate online.
- * 4. On network failure, trust the local key if one is stored.
- */
-export async function isLicensed(): Promise<boolean> {
+async function readJson(response: Response): Promise<Record<string, unknown> | null> {
   try {
-    const key = getCredential('license', 'key')
-    if (!key) return false
-
-    // Check cached validation
-    if (isCacheValid()) {
-      const status = licenseStore.get('license_status') as string | undefined
-      return status === 'active' || status === 'valid'
-    }
-
-    // Attempt online validation
-    const valid = await validateLicenseOnline(key)
-    if (valid) return true
-
-    // Offline / transient API failure — trust last successful activation
-    return hasActiveLicenseRecord()
-  } catch (error) {
-    console.warn('[PeakFlow:License] isLicensed check failed:', error)
-    // If we have a stored key, give the user the benefit of the doubt
-    return getCredential('license', 'key') !== null
+    const body: unknown = await response.json()
+    return body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : null
+  } catch {
+    return null
   }
 }
 
-/**
- * Validate a license key against the LemonSqueezy API.
- *
- * POST https://api.lemonsqueezy.com/v1/licenses/validate
- * Body: { license_key: string }
- *
- * This is a PUBLIC endpoint — no API key header required.
- *
- * @param licenseKey - The license key to validate
- * @returns `true` if the server confirms the key is valid/active
- */
-export async function validateLicenseOnline(licenseKey: string): Promise<boolean> {
-  try {
-    const response = await fetch(LS_VALIDATE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ license_key: licenseKey })
-    })
+function postJson(url: string, body: Record<string, string>): Promise<Response> {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  })
+}
 
-    if (!response.ok) {
-      console.warn(`[PeakFlow:License] Validation HTTP ${response.status}`)
+// ─── Online validation ──────────────────────────────────────────────────────
+
+export type ValidationOutcome =
+  | { kind: 'valid'; productId: number | null }
+  | { kind: RevokedStatus }
+  | { kind: 'transient'; reason: string }
+
+/**
+ * Classify a validate response. Only a real Lemon Squeezy answer can lock:
+ * a JSON body saying the key is expired or disabled, or a 404 JSON body with
+ * valid:false and no key ("license_key not found"). 5xx, 429, captive-portal
+ * HTML, odd bodies and network errors are all 'transient'.
+ */
+export function classifyValidation(httpStatus: number, body: Record<string, unknown> | null): ValidationOutcome {
+  if (!body || httpStatus >= 500 || httpStatus === 429) return { kind: 'transient', reason: `HTTP ${httpStatus}` }
+  const lk = body.license_key as Record<string, unknown> | null | undefined
+  const status = lk && typeof lk === 'object' ? lk.status : undefined
+  // Never lock a key the server calls valid (same rule as before 2.1)
+  if (httpStatus < 300 && (body.valid === true || status === 'active')) {
+    return { kind: 'valid', productId: extractProductId(body) }
+  }
+  if (status === 'expired') return { kind: 'expired' }
+  if (status === 'disabled') return { kind: 'disabled' }
+  if (httpStatus === 404 && body.valid === false && (lk === null || lk === undefined)) return { kind: 'not_found' }
+  return { kind: 'transient', reason: `HTTP ${httpStatus}, status ${String(status)}` }
+}
+
+/**
+ * Ask Lemon Squeezy about a key. No side effects; 10 s timeout.
+ *
+ * POST https://api.lemonsqueezy.com/v1/licenses/validate  { license_key }
+ */
+export async function validateLicenseOnline(licenseKey: string): Promise<ValidationOutcome> {
+  try {
+    const response = await postJson(LS_VALIDATE_URL, { license_key: licenseKey })
+    const outcome = classifyValidation(response.status, await readJson(response))
+    if (outcome.kind !== 'valid') console.warn(`[PeakFlow:License] Validation: ${outcome.kind} (HTTP ${response.status})`)
+    return outcome
+  } catch (error) {
+    console.warn('[PeakFlow:License] Online validation failed (network or timeout):', error)
+    return { kind: 'transient', reason: 'network' }
+  }
+}
+
+let inFlight: Promise<void> | null = null
+
+/**
+ * Run one licence check and save the answer. Concurrent callers share the
+ * same request. A key changed or removed meanwhile discards the answer.
+ */
+export function refreshLicence(): Promise<void> {
+  if (inFlight) return inFlight
+  inFlight = (async () => {
+    const key = getCredential('license', 'key')
+    if (!key) return
+    licenseStore.set('last_check_attempt', nowIso())
+    const before = getLicenceState()
+    const outcome = await validateLicenseOnline(key)
+    if (getCredential('license', 'key') !== key) return
+    if (outcome.kind === 'valid') {
+      licenseStore.set('validation_timestamp', nowIso())
+      licenseStore.set('license_status', 'active')
+      if (outcome.productId !== null) storeProductId(outcome.productId)
+    } else if (outcome.kind !== 'transient') {
+      licenseStore.set('license_status', outcome.kind)
+      console.warn(`[PeakFlow:License] Licence ${outcome.kind}: tools locked`)
+    }
+    if (outcome.kind === 'valid') syncLicensedToolInstalls()
+    if (getLicenceState() !== before) broadcastLicenseStatusChanged()
+  })()
+    .catch((err) => console.warn('[PeakFlow:License] refresh failed:', err))
+    .finally(() => {
+      inFlight = null
+    })
+  return inFlight
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Is the user licensed right now?
+ * - Good licence: yes at once; a due re-check runs in the background.
+ * - Revoked: no; a due re-check runs in the background (a renewed key recovers).
+ * - Lapsed (offline past grace) or never checked: ask the server now (shared,
+ *   10 s cap, at most once a minute), then answer from what it said.
+ */
+export async function isLicensed(): Promise<boolean> {
+  try {
+    const state = getLicenceState()
+    if (state === 'none') return false
+    const now = Date.now()
+    if (state === 'licensed' || state === 'revoked') {
+      if (backgroundCheckDue(state, now)) void refreshLicence()
+      return state === 'licensed'
+    }
+    if (inFlight) {
+      await inFlight // join the check already running
+    } else if (lockedRetryDue()) {
+      lastLockedAttemptMono = performance.now()
+      await refreshLicence()
+    }
+    return getLicenceState() === 'licensed'
+  } catch (error) {
+    console.warn('[PeakFlow:License] isLicensed check failed:', error)
+    // Storage trouble: trust a saved good status within the grace period only
+    try {
+      const status = licenseStore.get('license_status')
+      return (status === 'active' || status === 'valid') && withinGrace(Date.now())
+    } catch {
       return false
     }
+  }
+}
 
-    const result = (await response.json()) as Record<string, unknown>
+/** Why a stored licence isn't unlocking anything (for the Plan screen). */
+export function licenceProblem(): 'ended' | 'offline' | undefined {
+  try {
+    const state = getLicenceState()
+    if (state === 'revoked') return 'ended'
+    if (state === 'lapsed') return 'offline'
+  } catch {
+    /* no answer */
+  }
+  return undefined
+}
 
-    // LemonSqueezy returns { valid: true/false, license_key: { status: 'active' | ... } }
-    const isValid =
-      result.valid === true ||
-      (result.license_key as Record<string, unknown> | undefined)?.status === 'active'
-
-    if (isValid) {
-      cacheValidation('active')
-      // Store product_id for per-tool gating
-      const productId = extractProductId(result)
-      if (productId !== null) {
-        storeProductId(productId)
-      }
-      syncLicensedToolInstalls()
-    }
-
-    return isValid
-  } catch (error) {
-    console.warn('[PeakFlow:License] Online validation failed (network?):', error)
+/** Is a licence key saved on this computer (good or not)? */
+export function hasLicenceKey(): boolean {
+  try {
+    return getCredential('license', 'key') !== null
+  } catch {
     return false
   }
+}
+
+function sentence(text: string): string {
+  const t = text.trim()
+  if (!t) return t
+  const s = t[0].toUpperCase() + t.slice(1)
+  return /[.!?]$/.test(s) ? s : `${s}.`
 }
 
 /**
@@ -366,71 +519,57 @@ export async function validateLicenseOnline(licenseKey: string): Promise<boolean
  * POST https://api.lemonsqueezy.com/v1/licenses/activate
  * Body: { license_key: string, instance_name: string }
  *
- * On network errors the key is stored locally with an "unvalidated" flag
- * so the user isn't blocked. It will be validated on next online check.
- *
- * @param licenseKey - The license key to activate
- * @returns An object with `success` flag and human-readable `message`
+ * Shows Lemon Squeezy's own error text (e.g. the activation limit) and stores
+ * the instance ID so "Remove licence from this computer" can free it. On a
+ * network error the key is saved unchecked; it unlocks once a check succeeds.
  */
 export async function activateLicense(
   licenseKey: string
 ): Promise<{ success: boolean; message: string }> {
+  let response: Response
   try {
-    const response = await fetch(LS_ACTIVATE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        license_key: licenseKey,
-        instance_name: getInstanceName()
-      })
-    })
-
-    if (!response.ok) {
-      const errorBody = await response.text()
-      console.warn(`[PeakFlow:License] Activation HTTP ${response.status}: ${errorBody}`)
-      return {
-        success: false,
-        message: `Activation failed (HTTP ${response.status}). Please check your license key.`
-      }
-    }
-
-    const result = (await response.json()) as Record<string, unknown>
-
-    const activated =
-      result.activated === true ||
-      (result.license_key as Record<string, unknown> | undefined)?.status === 'active'
-
-    if (activated) {
-      // Store key + cache validation
-      storeCredential('license', 'key', licenseKey)
-      cacheValidation('active')
-      // Store product_id for per-tool gating
-      const productId = extractProductId(result)
-      if (productId !== null) {
-        storeProductId(productId)
-      }
-      syncLicensedToolInstalls()
-      broadcastLicenseStatusChanged()
-      return { success: true, message: 'License activated successfully!' }
-    }
-
-    // Server responded but didn't confirm activation
-    const errorMsg =
-      (result.error as string) ||
-      (result.message as string) ||
-      'Unknown activation error'
-    return { success: false, message: errorMsg }
+    response = await postJson(LS_ACTIVATE_URL, { license_key: licenseKey, instance_name: getInstanceName() })
   } catch (error) {
-    // Network error — store key locally for later validation
     console.warn('[PeakFlow:License] Activation network error, storing locally:', error)
     storeCredential('license', 'key', licenseKey)
+    deleteCredential('license', 'instance_id')
+    deleteCredential('license', 'product_id')
     licenseStore.set('license_status', 'unvalidated')
-    syncLicensedToolInstalls()
+    licenseStore.delete('validation_timestamp')
+    licenseStore.delete('grace_from')
     broadcastLicenseStatusChanged()
     return {
-      success: true,
-      message: 'License saved. Will verify when online.'
+      success: false,
+      message: 'Couldn’t reach the licence server. Your key is saved, and PeakFlow will check it when you’re back online.'
     }
+  }
+
+  const result = await readJson(response)
+  if (response.ok && result?.activated === true) {
+    storeCredential('license', 'key', licenseKey)
+    const instance = result.instance as Record<string, unknown> | null | undefined
+    const instanceId = instance && typeof instance.id === 'string' ? instance.id : null
+    if (instanceId) storeCredential('license', 'instance_id', instanceId)
+    else deleteCredential('license', 'instance_id')
+    licenseStore.set('validation_timestamp', nowIso())
+    licenseStore.set('last_check_attempt', nowIso())
+    licenseStore.set('license_status', 'active')
+    const productId = extractProductId(result)
+    if (productId !== null) storeProductId(productId)
+    else deleteCredential('license', 'product_id')
+    syncLicensedToolInstalls()
+    broadcastLicenseStatusChanged()
+    return { success: true, message: 'License activated successfully!' }
+  }
+
+  console.warn(`[PeakFlow:License] Activation HTTP ${response.status}: ${JSON.stringify(result)}`)
+  if (response.status >= 500 || response.status === 429 || !result) {
+    return { success: false, message: 'The licence server didn’t answer. Try again in a few minutes.' }
+  }
+  const lsText = typeof result.error === 'string' ? result.error : typeof result.message === 'string' ? result.message : ''
+  return {
+    success: false,
+    message: lsText.trim() ? sentence(lsText) : 'That key wasn’t accepted. Check for typos, or find it in your receipt email.'
   }
 }
 
@@ -462,22 +601,47 @@ export function isToolLicensed(toolId: string): boolean {
   return covers === toolId
 }
 
+function clearLocalLicence(): void {
+  deleteCredential('license', 'key')
+  deleteCredential('license', 'product_id')
+  deleteCredential('license', 'instance_id')
+  for (const k of ['validation_timestamp', 'license_status', 'last_check_attempt', 'grace_from']) licenseStore.delete(k)
+}
+
 /**
- * Deactivate the current license and clear stored credentials.
+ * "Remove licence from this computer": free this computer's activation with
+ * Lemon Squeezy, then clear the key here. Nothing is removed when the server
+ * can't be reached, so the activation is never silently left in use.
  *
- * @returns `true` if credentials were cleared (does NOT call the deactivate API).
+ * POST https://api.lemonsqueezy.com/v1/licenses/deactivate { license_key, instance_id }
  */
-export function deactivateLicense(): boolean {
-  try {
-    deleteCredential('license', 'key')
-    deleteCredential('license', 'product_id')
-    licenseStore.delete('validation_timestamp')
-    licenseStore.delete('license_status')
-    console.log('[PeakFlow:License] License deactivated locally')
-    broadcastLicenseStatusChanged()
-    return true
-  } catch (error) {
-    console.warn('[PeakFlow:License] deactivateLicense failed:', error)
-    return false
+export async function deactivateLicense(): Promise<{ success: boolean; message: string }> {
+  const key = getCredential('license', 'key')
+  const instanceId = getCredential('license', 'instance_id')
+  const pc = computerWord()
+  if (key && instanceId) {
+    let response: Response
+    try {
+      response = await postJson(LS_DEACTIVATE_URL, { license_key: key, instance_id: instanceId })
+    } catch (error) {
+      console.warn('[PeakFlow:License] Deactivate network error:', error)
+      return { success: false, message: 'Couldn’t reach the licence server, so nothing was removed. Try again when you’re online.' }
+    }
+    if (response.status >= 500 || response.status === 429) {
+      return { success: false, message: 'The licence server didn’t answer. Try again in a few minutes.' }
+    }
+    const body = await readJson(response)
+    // 2xx, or a 4xx saying the key or instance is already gone/ended: clear it here
+    console.log(`[PeakFlow:License] Deactivate HTTP ${response.status}: ${JSON.stringify(body)}`)
   }
+  clearLocalLicence()
+  console.log('[PeakFlow:License] License removed from this computer')
+  broadcastLicenseStatusChanged()
+  if (key && !instanceId) {
+    return {
+      success: true,
+      message: `Removed from this ${pc}. Keys added before PeakFlow 2.1 can’t free their activation from the app, so it still counts toward your limit. Email contact@getpeakflow.pro and we’ll free it.`
+    }
+  }
+  return { success: true, message: 'Licence removed' }
 }

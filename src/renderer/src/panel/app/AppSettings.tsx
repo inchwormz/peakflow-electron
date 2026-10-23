@@ -125,10 +125,49 @@ function Home(): React.JSX.Element {
 
 /* ─── plan and licence ───────────────────────────────────────────────────── */
 
+/** "Remove licence from this Mac": frees this computer's activation (S5). */
+function RemoveLicenceRow({ onDone }: { onDone: () => void }): React.JSX.Element {
+  const nav = useNav()
+  const [busy, setBusy] = useState(false)
+  const pc = isMac() ? 'Mac' : 'PC'
+  const remove = async (): Promise<void> => {
+    if (busy) return
+    const v = await nav.confirm({
+      icon: 'key',
+      title: `Remove your licence from this ${pc}?`,
+      body: `Your key still works. You can enter it again on this ${pc} or another one.`,
+      buttons: [
+        { label: 'Remove', value: 'remove', primary: true },
+        { label: 'Cancel', value: 'cancel' }
+      ]
+    })
+    if (v !== 'remove') return
+    setBusy(true)
+    try {
+      const r = await invoke<LicenseActivationResult>(IPC_INVOKE.SECURITY_DEACTIVATE_LICENSE)
+      if (r.success && r.message === 'Licence removed') nav.toast('Licence removed')
+      else
+        await nav.confirm({
+          icon: 'key',
+          title: r.success ? 'Licence removed' : 'Nothing was removed',
+          body: r.message,
+          buttons: [{ label: 'OK', value: 'ok', primary: true }]
+        })
+    } catch {
+      nav.toast('Couldn’t remove the licence')
+    } finally {
+      setBusy(false)
+      onDone()
+    }
+  }
+  return <Row label={`Remove licence from this ${pc}`} sub={busy ? 'Removing…' : undefined} onClick={() => void remove()} />
+}
+
 function Licence(): React.JSX.Element {
-  const [access] = useInvoke<AccessStatus>(IPC_INVOKE.SECURITY_CHECK_ACCESS)
+  const [access, reloadAccess] = useInvoke<AccessStatus>(IPC_INVOKE.SECURITY_CHECK_ACCESS)
   const [trial] = useInvoke<{ daysRemaining: number; trialDays: number }>(IPC_INVOKE.SECURITY_GET_TRIAL_STATUS)
   if (!access || !trial) return <div style={{ height: 160 }} />
+  const removeRow = access.hasLicenceKey ? <RemoveLicenceRow onDone={reloadAccess} /> : null
   if (access.isLicensed) {
     return (
       <>
@@ -139,6 +178,7 @@ function Licence(): React.JSX.Element {
         <Grp>
           <Row label="Manage your purchase" right={<Ext />} onClick={() => openExternal(SITE_URL)} />
           <Row label="Enter another licence key" go="app/licence-key" />
+          {removeRow}
         </Grp>
       </>
     )
@@ -146,11 +186,20 @@ function Licence(): React.JSX.Element {
   if (!access.allowed) {
     return (
       <>
-        <Hero icon="clock" title="Your trial has ended">Your settings are safe. Pick a plan to keep using PeakFlow.</Hero>
+        {access.licence === 'offline' ? (
+          <Hero icon="clock" title="PeakFlow can’t check your licence">
+            PeakFlow hasn’t reached the licence server for 14 days. Connect to the internet and your tools unlock again.
+          </Hero>
+        ) : (
+          <Hero icon="clock" title={access.licence === 'ended' ? 'Your licence has ended' : 'Your trial has ended'}>
+            Your settings are safe. Pick a plan to keep using PeakFlow.
+          </Hero>
+        )}
         <Gap />
         <PlanOptions />
         <Grp style={{ marginTop: 14 }}>
           <Row label="Enter a licence key" go="app/licence-key" />
+          {removeRow}
         </Grp>
       </>
     )
@@ -169,6 +218,7 @@ function Licence(): React.JSX.Element {
       <PlanOptions />
       <Grp style={{ marginTop: 14 }}>
         <Row label="Enter a licence key" go="app/licence-key" />
+        {removeRow}
       </Grp>
     </>
   )
