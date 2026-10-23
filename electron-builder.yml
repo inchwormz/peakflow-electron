@@ -24,6 +24,7 @@ files:
   - '!**/*.tsbuildinfo'
   - '!release/**'
   - '!**/*.log'
+  - '!build/**'
 mac:
   category: public.app-category.productivity
   # 512px source for the .icns (Windows keeps its own icon.png/icon.ico)
@@ -59,6 +60,7 @@ mac:
     NSCameraUsageDescription: PeakFlow needs camera access for meeting prep and focus tools.
     NSMicrophoneUsageDescription: PeakFlow needs microphone access for meeting prep and mic mute controls.
     LSUIElement: true
+    NSAppleEventsUsageDescription: PeakFlow's launcher asks Finder to empty the Bin and the system to restart or shut down when you choose those commands.
   extraResources:
     - from: resources/darwin/peakflow-helper
       to: peakflow-helper
@@ -83,6 +85,9 @@ nsis:
   installerIcon: resources/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # Silent install + restart when launched by an in-app updater (--updated),
+  # including v1.6.5 apps that pass only --updated. See the file for details.
+  include: build/installer.nsh
 extraResources:
   - from: resources/soundsplit-bridge.ps1
     to: soundsplit-bridge.ps1

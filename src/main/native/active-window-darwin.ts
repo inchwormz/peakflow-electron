@@ -51,6 +51,8 @@ function sendCommand(command: string): Promise<string> {
 }
 
 let cachedActiveWindow: ActiveWindowInfo | null = null
+/** The last app other than PeakFlow seen in front, to hand focus back to. */
+let lastOtherAppPid = 0
 
 // Background polling loop: keeps cachedActiveWindow fresh. At most one
 // active-window request is in flight, so a slow Accessibility call can never
@@ -68,6 +70,7 @@ function startPolling(): void {
         cachedActiveWindow = null
       } else {
         const data = JSON.parse(raw)
+        if (data.pid !== process.pid) lastOtherAppPid = data.pid
         cachedActiveWindow = {
           hwnd: null,
           pid: data.pid,
@@ -189,6 +192,32 @@ export function getProcessExeName(pid: number): string | null {
 
 export function clearPidExeCache(): void {
   pidBundleCache.clear()
+}
+
+/** Bring every open window of the app with this PID to the front (fire and forget). */
+export function raiseAppWindows(pid: number, _hwnd?: unknown): void {
+  if (!isValidPid(pid)) return
+  sendCommand(`raise-app ${pid}`).catch(() => {})
+}
+
+/**
+ * Hiding the panel leaves PeakFlow as the frontmost app with no window, so
+ * nothing gets focus until the user clicks. Give focus back to the app that
+ * was in front before the panel opened.
+ */
+export function restorePreviousApp(): boolean {
+  if (!isValidPid(lastOtherAppPid)) return false
+  sendCommand(`activate ${lastOtherAppPid}`).catch(() => {})
+  return true
+}
+
+/** Note which app is in front before PeakFlow takes focus (the panel opening). */
+export function rememberFrontApp(): void {
+  sendCommand('active-window').then((raw) => {
+    if (raw === 'null' || raw.startsWith('{"error"')) return
+    const pid = (JSON.parse(raw) as { pid?: number }).pid
+    if (typeof pid === 'number' && pid !== process.pid) lastOtherAppPid = pid
+  }).catch(() => {})
 }
 
 export function getVisibleAppList(_skipSet?: Set<string>): Array<{ exe: string; name: string }> {

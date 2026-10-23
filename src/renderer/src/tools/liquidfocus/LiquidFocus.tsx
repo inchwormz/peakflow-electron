@@ -59,6 +59,8 @@ export interface TimerState {
   pomodorosCompleted: number
   sessionsBeforeLong: number
   activeTaskIndex: number
+  /** Focus detection reset the session; the mini shows "Looked away" until Start again / Close */
+  awayReset?: boolean
 }
 
 export interface LiquidFocusTask {

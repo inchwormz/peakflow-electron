@@ -10,3 +10,10 @@ declare global {
     peakflow: PeakflowAPI
   }
 }
+
+// Electron frameless windows use -webkit-app-region for drag areas
+declare module 'react' {
+  interface CSSProperties {
+    WebkitAppRegion?: string
+  }
+}

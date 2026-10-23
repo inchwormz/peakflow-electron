@@ -1,12 +1,13 @@
 {
   "name": "peakflow-electron",
-  "version": "1.6.5",
+  "version": "2.1.0",
   "description": "PeakFlow — Mac-level productivity tools for Windows",
   "main": "./out/main/index.js",
   "author": "PeakFlow",
   "homepage": "https://getpeakflow.pro",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:v2": "PEAKFLOW_USER_DATA=\"$HOME/Library/Application Support/PeakFlow v2 (test)\" electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",

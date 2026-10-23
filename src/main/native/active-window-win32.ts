@@ -19,6 +19,7 @@ let _GetWindowTextW: any, _GetClassNameW: any
 let _DwmGetWindowAttribute: any, _DwmGetWindowAttributeDword: any
 let _OpenProcess: any, _QueryFullProcessImageNameW: any, _CloseHandle: any
 let _EnumWindowsCallback: any, _EnumWindows: any, _GetWindowThreadProcessId: any, _IsIconic: any
+let _SetWindowPos: any
 let _bindingsReady = false
 
 function initBindings(): void {
@@ -66,6 +67,7 @@ function initBindings(): void {
     'void *', K.out(K.pointer('uint32'))
   ])
   _IsIconic = _user32.func('IsIconic', 'bool', ['void *'])
+  _SetWindowPos = _user32.func('SetWindowPos', 'bool', ['void *', 'void *', 'int', 'int', 'int', 'int', 'uint32'])
 
   _bindingsReady = true
 }
@@ -280,6 +282,45 @@ export function getAllVisibleWindows(filterPid?: number, displayBounds?: Display
   return results
 }
 
+/**
+ * Bring every open window of a process to the front, directly beneath the
+ * active window, keeping their order. Minimised, cloaked and system windows
+ * are left alone, and nothing is activated, so focus stays where the user put it.
+ */
+export function raiseAppWindows(pid: number, activeHwnd?: unknown): void {
+  initBindings()
+  if (!activeHwnd) return
+  const SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_NOOWNERZORDER = 0x0200
+  const hwnds: unknown[] = []
+  const callback = K.register((hwnd: unknown, _lParam: number): boolean => {
+    if (hwnds.length >= 50) return false
+    try {
+      if (!_IsWindowVisible(hwnd) || _IsIconic(hwnd) || getProcessId(hwnd) !== pid) return true
+      if (K.address(hwnd) === K.address(activeHwnd)) return true
+      const classNameBuf = Buffer.alloc(512)
+      const classLen = _GetClassNameW(hwnd, classNameBuf, 256)
+      const className = classLen > 0 ? classNameBuf.toString('utf16le', 0, classLen * 2).replace(/\0/g, '') : ''
+      if (ENUM_IGNORED_CLASSES.has(className)) return true
+      const cloaked = [0]
+      if (_DwmGetWindowAttributeDword(hwnd, 14, cloaked, 4) === 0 && cloaked[0] !== 0) return true
+      hwnds.push(hwnd)
+    } catch { /* skip this window */ }
+    return true
+  }, K.pointer(_EnumWindowsCallback))
+  try {
+    _EnumWindows(callback, 0)
+  } finally {
+    K.unregister(callback)
+  }
+  // EnumWindows runs front to back. Inserting each window directly beneath the
+  // active one, starting from the back, keeps their original order.
+  for (let i = hwnds.length - 1; i >= 0; i--) {
+    try {
+      _SetWindowPos(hwnds[i], activeHwnd, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+    } catch { /* window closed meanwhile */ }
+  }
+}
+
 // ─── PID → exe name resolution ─────────────────────────────────────────────
 
 /** Cache of PID → lowercase exe filename. Cleared when FocusDim enables/disables. */
@@ -454,3 +495,10 @@ export function getVisibleAppList(skipSet?: Set<string>): Array<{ exe: string; n
     .map(([exe, name]) => ({ exe, name }))
     .sort((a, b) => a.name.localeCompare(b.name))
 }
+
+/** Windows gives focus back to the previous window itself when the panel hides. */
+export function restorePreviousApp(): boolean {
+  return false
+}
+
+export function rememberFrontApp(): void {}

@@ -1119,7 +1119,7 @@ const styles: Record<string, CSSProperties> = {
     color: DS.white,
     outline: 'none',
     cursor: 'pointer',
-    WebkitAppearance: 'none' as unknown as string
+    WebkitAppearance: 'none'
   },
 
   toggleWrap: {

@@ -17,6 +17,9 @@ const LiquidFocus = lazy(() => import('./tools/liquidfocus/LiquidFocus').then((m
 const LiquidFocusMini = lazy(() =>
   import('./tools/liquidfocus/LiquidFocusMini').then((m) => ({ default: m.LiquidFocusMini }))
 )
+const PanelApp = lazy(() => import('./panel/PanelApp').then((m) => ({ default: m.PanelApp })))
+const LauncherApp = lazy(() => import('./launcher/LauncherApp').then((m) => ({ default: m.LauncherApp })))
+const DictationPill = lazy(() => import('./launcher/DictationPill').then((m) => ({ default: m.DictationPill })))
 const SoundSplit = lazy(() => import('./tools/soundsplit/SoundSplit').then((m) => ({ default: m.SoundSplit })))
 
 function ToolSuspense({ children }: { children: ReactNode }): React.JSX.Element {
@@ -45,7 +48,8 @@ function ToolPlaceholder({ toolId }: { toolId: ToolId }): React.JSX.Element {
     [ToolId.ScreenSlap]: '#ffe17c',
     [ToolId.MeetReady]: '#ffe17c',
     [ToolId.LiquidFocus]: '#ffe17c',
-    [ToolId.SoundSplit]: '#ffe17c'
+    [ToolId.SoundSplit]: '#ffe17c',
+    [ToolId.SnapGrid]: '#ffe17c'
   }
 
   const accent = accentColors[toolId]
@@ -157,6 +161,33 @@ export default function App(): React.JSX.Element {
 
   // Route to the correct tool component, falling back to placeholder
   const renderTool = (): React.JSX.Element => {
+    // v2 one-app panel (menu-bar dropdown)
+    if (systemId === SystemWindowId.Panel) {
+      return (
+        <Suspense fallback={null}>
+          <PanelApp />
+        </Suspense>
+      )
+    }
+
+    // ⌥Space launcher (free command bar)
+    if (systemId === SystemWindowId.Launcher) {
+      return (
+        <Suspense fallback={null}>
+          <LauncherApp />
+        </Suspense>
+      )
+    }
+
+    // Dictation's recording pill
+    if (systemId === SystemWindowId.Dictation) {
+      return (
+        <Suspense fallback={null}>
+          <DictationPill />
+        </Suspense>
+      )
+    }
+
     // System windows (no app shell chrome)
     if (systemId === SystemWindowId.ScreenSlapAlert) {
       return <AlertOverlay />
@@ -238,7 +269,7 @@ export default function App(): React.JSX.Element {
   }
 
   // System windows render without AppShell (no title bar, no chrome)
-  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini) {
+  if (systemId === SystemWindowId.ScreenSlapAlert || systemId === SystemWindowId.LiquidFocusMini || systemId === SystemWindowId.Panel || systemId === SystemWindowId.Launcher || systemId === SystemWindowId.Dictation) {
     return renderTool()
   }
 

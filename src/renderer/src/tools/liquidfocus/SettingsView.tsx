@@ -60,6 +60,7 @@ export function SettingsView({ onBack, onShowTasks }: SettingsViewProps): React.
   const [activeTab, setActiveTab] = useState<SettingsTab>('duration')
   const [config, setConfig] = useState<LiquidFocusConfig>({
     work_duration: 25,
+    todoist_project_filter: '',
     break_duration: 5,
     long_break_duration: 15,
     sessions_before_long: 4,

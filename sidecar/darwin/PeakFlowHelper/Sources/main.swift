@@ -10,6 +10,8 @@
  *   all-windows           → all visible windows (JSON array)
  *   all-windows <pid>     → windows filtered by PID
  *   app-windows <bid>     → windows filtered by bundle ID
+ *   raise-app <pid>       → bring every open window of that app to the front
+ *   activate <pid>        → make that app the frontmost app
  *   visible-apps          → deduplicated list of visible apps
  *   process-name <pid>    → app name + bundle ID for a PID
  *   accessibility-check   → {"trusted": true/false}
@@ -24,6 +26,8 @@
  * One-shot mode: `peakflow-helper <command> [arg]` runs one command, prints
  * its JSON result and exits (used for paste and OCR so a slow OCR never
  * blocks the 60fps window polling on the persistent process).
+ *   sg-front / sg-windows / sg-set / sg-raise / sg-tiling → SnapGrid (SnapGrid.swift)
+ *   drag-watch            → (one-shot mode only) long-running window-drag watcher
  *   ping                  → "pong"
  *   exit                  → terminates
  */
@@ -58,13 +62,30 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
         return recognizeText(path: path)
     case "accessibility-check":
         return jsonString(["trusted": checkAccessibility()])
+    // Launcher (Launcher.swift)
+    case "activate-previous":
+        return activatePrevious()
+    case "selection":
+        return selectedText(axOnly: arg == "ax")
+    case "running-apps":
+        return runningApps()
+    case "quit-app", "force-quit-app":
+        guard let pid = arg.flatMap({ Int32($0) }) else { return jsonLine(["ok": false, "error": "pid required"]) }
+        return quitApp(pid: pid, force: command == "force-quit-app")
+    case "lock":
+        return lockScreen()
+    case "context":
+        return dictationContext()
     default:
         return nil
     }
 }
 
 let cliArgs = CommandLine.arguments
+// Launcher snippet expansion: long-running keyword watcher (Launcher.swift)
+if cliArgs.count > 1 && cliArgs[1] == "keywatch" { runKeyWatch() }
 if cliArgs.count > 1 {
+    if cliArgs[1] == "drag-watch" { runDragWatch() }
     let arg = cliArgs.count > 2 ? cliArgs[2...].joined(separator: " ") : nil
     if let result = runOneShot(cliArgs[1], arg) {
         respond(result)
@@ -106,6 +127,20 @@ while let line = readLine(strippingNewline: true) {
         let pid = arg.flatMap { Int32($0) }
         respond(jsonString(getAllVisibleWindows(filterPid: pid).map { $0.jsonObject }))
 
+    case "raise-app":
+        guard let pidStr = arg, let pid = Int32(pidStr), pid > 0 else {
+            respondError("raise-app requires a PID argument")
+            continue
+        }
+        respond(jsonString(["raised": raiseAppWindows(pid: pid)]))
+
+    case "activate":
+        guard let pidStr = arg, let pid = Int32(pidStr), pid > 0 else {
+            respondError("activate requires a PID argument")
+            continue
+        }
+        respond(jsonString(["ok": activateApp(pid: pid)]))
+
     case "app-windows":
         guard let bundleId = arg else {
             respondError("app-windows requires a bundle ID argument")
@@ -135,6 +170,21 @@ while let line = readLine(strippingNewline: true) {
 
     case "ocr":
         respond(runOneShot("ocr", arg) ?? "{}")
+
+    case "sg-front":
+        respond(sgFront())
+
+    case "sg-windows":
+        respond(sgWindows())
+
+    case "sg-set":
+        respond(sgSet(arg))
+
+    case "sg-raise":
+        respond(sgRaise(arg))
+
+    case "sg-tiling":
+        respond(sgTiling())
 
     case "ping":
         respond("\"pong\"")

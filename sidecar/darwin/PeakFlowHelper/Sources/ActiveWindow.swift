@@ -242,6 +242,44 @@ func getAllVisibleWindows(filterPid: Int32? = nil) -> [WindowRect] {
     return results
 }
 
+// MARK: - Raise an app's windows
+
+/// Bring every open (not minimised) window of an app to the front, keeping
+/// their order and leaving the focused window on top. Returns how many
+/// windows were raised. Needs Accessibility.
+func raiseAppWindows(pid: Int32) -> Int {
+    let appElement = AXUIElementCreateApplication(pid)
+    var windowsRef: AnyObject?
+    guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+          let windows = windowsRef as? [AXUIElement], windows.count > 1 else { return 0 }
+
+    var focusedRef: AnyObject?
+    AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedRef)
+    let focused = focusedRef.map { $0 as! AXUIElement }
+
+    var raised = 0
+    // kAXWindows lists front to back, so raise from the back first.
+    for window in windows.reversed() {
+        if let f = focused, CFEqual(f, window) { continue }
+        var minimized: AnyObject?
+        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
+        if (minimized as? Bool) == true { continue }
+        if AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success { raised += 1 }
+    }
+    if let f = focused { AXUIElementPerformAction(f, kAXRaiseAction as CFString) }
+    return raised
+}
+
+/// Make the app with this PID frontmost. Uses Accessibility, because macOS 14
+/// can refuse a plain activate() request from a background helper.
+func activateApp(pid: Int32) -> Bool {
+    let appElement = AXUIElementCreateApplication(pid)
+    if AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue) == .success {
+        return true
+    }
+    return NSRunningApplication(processIdentifier: pid)?.activate(options: []) ?? false
+}
+
 // MARK: - Windows for bundle ID
 
 func getWindowsForBundleId(_ targetBundleId: String) -> [WindowRect] {

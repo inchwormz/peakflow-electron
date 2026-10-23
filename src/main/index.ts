@@ -8,6 +8,7 @@
  *   - Individual tool windows spawned on demand
  */
 
+import './dev-profile'
 import { app, BrowserWindow, protocol, net, session } from 'electron'
 import { join, sep, normalize } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -15,22 +16,28 @@ import { createTray, destroyTray } from './tray'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 import { registerIpcHandlers } from './ipc-handlers'
 import { initFocusDim, destroyFocusDim } from './services/focus-dim'
+import { initSnapGrid, destroySnapGrid } from './services/snapgrid'
 import { initClipboard, destroyClipboard } from './services/clipboard'
 import { initCalendar, destroyCalendar } from './services/google-calendar'
 import { initScreenSlap, destroyScreenSlap } from './services/screenslap'
 import { initLiquidFocus, destroyLiquidFocus } from './services/liquidfocus'
-import { initSoundSplit, destroySoundSplit } from './sidecar/soundsplit-bridge'
+import { destroySoundSplit } from './sidecar/soundsplit-bridge'
 import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
-import { migrateExistingInstalls, isToolInstalled, installTool } from './security/trial'
+import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools, ensureTrialExpiry } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
-import { setAppQuitting, createToolWindow } from './windows'
+import { setAppQuitting } from './windows'
+import { initPanel, showPanel, setPanelQuitting } from './panel'
+import { runDevShots } from './dev-shots'
+import { initLauncher, destroyLauncher } from './launcher'
+import { setTrayTitle } from './tray'
+import { getLiquidFocusService } from './services/liquidfocus'
 import { runMacFirstRunPermissions } from './services/permissions-darwin'
 import { destroyActiveWindowHelper } from './native/active-window'
-import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { ToolId, PANEL_TOOLS, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 
 // ─── Crash Prevention ───────────────────────────────────────────────────────
@@ -102,14 +109,11 @@ if (!gotLock) {
   console.log('[PeakFlow] Another instance is running. Quitting.')
   app.quit()
 } else {
-  // When a second instance tries to launch, focus an existing window (if any)
+  // Launching PeakFlow again opens the panel (the first window in the list could
+  // be a dim overlay or the mini timer, which can't take focus usefully)
   app.on('second-instance', () => {
-    const windows = BrowserWindow.getAllWindows()
-    if (windows.length > 0) {
-      const win = windows[0]
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
+    if (app.isReady()) showPanel()
+    else app.whenReady().then(() => showPanel())
   })
 
   // ─── App Ready ───────────────────────────────────────────────────────────────
@@ -156,7 +160,9 @@ if (!gotLock) {
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
       window.webContents.on('render-process-gone', (_event, details) => {
-        crashWrite('FATAL', `Renderer crashed: ${window.getTitle()} — reason=${details.reason}, exitCode=${details.exitCode}`)
+        // During quit the window can already be destroyed; getTitle() would throw
+        const title = window.isDestroyed() ? '(closed window)' : window.getTitle()
+        crashWrite('FATAL', `Renderer crashed: ${title} — reason=${details.reason}, exitCode=${details.exitCode}`)
       })
     })
 
@@ -203,6 +209,11 @@ if (!gotLock) {
     if (!isToolInstalled('PeakFlow')) {
       installTool('PeakFlow')
     }
+    // v2: the 30-day trial starts by itself and covers every tool, so every
+    // tool is on from first launch (no "Turn on" / "Start trial" step)
+    // (the trial end is fixed first, from the tools' existing records)
+    ensureTrialExpiry()
+    autoInstallTools(PANEL_TOOLS)
 
     // Initialize core systems
     createTray()
@@ -211,19 +222,35 @@ if (!gotLock) {
 
     // Only start services for tools the user has installed via the Dashboard
     if (isToolInstalled(ToolId.FocusDim))    initFocusDim()
+    if (isToolInstalled(ToolId.SnapGrid))    initSnapGrid()
     if (isToolInstalled(ToolId.QuickBoard))  initClipboard()
-    if (isToolInstalled(ToolId.ScreenSlap) || isToolInstalled(ToolId.MeetReady)) initCalendar()
+    if (isToolInstalled(ToolId.ScreenSlap))  initCalendar()
     if (isToolInstalled(ToolId.ScreenSlap))  initScreenSlap()
-    if (isToolInstalled(ToolId.LiquidFocus)) initLiquidFocus()
-    if (isToolInstalled(ToolId.SoundSplit))  initSoundSplit()
+    if (isToolInstalled(ToolId.LiquidFocus)) {
+      initLiquidFocus()
+      // Menu-bar countdown while a focus session runs (macOS)
+      getLiquidFocusService().onStateChange((t) => {
+        if (t.status === 'idle') return setTrayTitle('')
+        const mm = String(Math.floor(t.remaining / 60)).padStart(2, '0')
+        const ss = String(t.remaining % 60).padStart(2, '0')
+        setTrayTitle(` ${mm}:${ss}`)
+      })
+    }
+    // v2: MeetReady and SoundSplit are hidden for now (John, 19 Oct 2026), so their
+    // services (calendar auto-popup, audio sidecar) don't start. Code is kept.
 
     // Lightweight / system-level — always safe to init
-    initTodoist()
-    initExtensionServer()
+    if (TODOIST_ENABLED) initTodoist()
+    if (EXTENSION_ENABLED) initExtensionServer()
     initAutoUpdater()
 
-    // Open Dashboard on startup so new users aren't left hunting the tray icon
-    createToolWindow(SystemWindowId.Dashboard)
+    // v2: open the one-app panel on startup so new users aren't left hunting
+    // the menu-bar icon (replaces the old Dashboard hub window)
+    initPanel()
+    setTimeout(() => showPanel(), 600)
+    // Free ⌥Space / Alt+Space launcher (hidden window kept ready)
+    initLauncher()
+    void runDevShots() // development screenshots only (env-gated, never in packaged builds)
 
     // macOS: one-time plain-English explainer for the Accessibility permission
     if (process.platform === 'darwin') {
@@ -244,15 +271,18 @@ if (!gotLock) {
   app.on('before-quit', () => {
     destroyWatchdog() // FIRST — stop watchdog before teardown to prevent false positives
     setAppQuitting(true)
+    setPanelQuitting(true)
+    destroyLauncher()
     console.log('[PeakFlow] Shutting down...')
-    destroyExtensionServer()
-    destroyTodoist()
+    if (EXTENSION_ENABLED) destroyExtensionServer()
+    if (TODOIST_ENABLED) destroyTodoist()
     destroySoundSplit()
     destroyLiquidFocus()
     destroyScreenSlap()
     destroyCalendar()
     destroyClipboard()
     destroyFocusDim()
+    destroySnapGrid()
     destroyActiveWindowHelper() // after FocusDim, so its polling can't restart the helper
     unregisterHotkeys()
     destroyTray()

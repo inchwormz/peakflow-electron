@@ -48,7 +48,10 @@ const PRODUCT_TOOL_MAP: Record<number, ToolId | 'all'> = {
   822965: 'all', // PeakFlow Pro monthly — linked from getpeakflow.pro pricing
   841306: 'all', // PeakFlow Subscription monthly — storefront
   863806: 'all', // PeakFlow Suite perpetual
-  875766: 'all' // PeakFlow Annual subscription
+  875766: 'all', // PeakFlow Annual subscription
+  // v2 offer (created 22 Oct 2026)
+  1461019: 'all', // PeakFlow Pro monthly
+  1461021: 'all' // PeakFlow, all four tools (one-time)
 }
 
 /**

@@ -34,6 +34,8 @@ export interface TimerState {
   sessionsBeforeLong: number
   /** Active task index (-1 = none) */
   activeTaskIndex: number
+  /** Focus detection reset the session; the mini shows "Looked away" until Start again / Close */
+  awayReset?: boolean
 }
 
 export interface LiquidFocusTask {
@@ -81,6 +83,8 @@ class LiquidFocusService {
   private total = 25 * 60
   private pomodorosCompleted = 0
   private activeTaskIndex = -1
+  /** Kept here (not only pushed) so a mini that opens or loads late still shows the notice */
+  private awayReset = false
 
   constructor() {
     this.store = new Store({ name: 'liquidfocus-data', clearInvalidConfig: true })
@@ -117,7 +121,11 @@ class LiquidFocusService {
         focus_detection_enabled: false,
         focus_away_threshold_secs: 5,
         todoist_project_filter: '',
-        distraction_sites: []
+        distraction_sites: [],
+        focus_away_action: 'reset',
+        mini_size: 1.4,
+        mini_theme: 'dark',
+        mini_position: null
       }
     }
   }
@@ -143,13 +151,15 @@ class LiquidFocusService {
       total: this.total,
       pomodorosCompleted: this.pomodorosCompleted,
       sessionsBeforeLong: cfg.sessions_before_long,
-      activeTaskIndex: this.activeTaskIndex
+      activeTaskIndex: this.activeTaskIndex,
+      awayReset: this.awayReset
     }
   }
 
   start(): TimerState {
     if (this.status === 'running') return this.getTimerState()
 
+    this.awayReset = false
     this.status = 'running'
     this.tickInterval = setInterval(() => this.tick(), 1000)
     this.broadcastState()
@@ -169,6 +179,7 @@ class LiquidFocusService {
   }
 
   reset(): TimerState {
+    this.awayReset = false
     this.stopTicking()
     this.status = 'idle'
     this.mode = 'work'
@@ -182,8 +193,17 @@ class LiquidFocusService {
   }
 
   skip(): TimerState {
+    this.awayReset = false
     this.stopTicking()
     this.finishPhase()
+    return this.getTimerState()
+  }
+
+  // v2 liquidfocus: restart the current phase from its full length (the panel's "Reset"),
+  // keeping the mode, the cycle count and whether it is running.
+  restartPhase(): TimerState {
+    this.remaining = this.total
+    this.broadcastState()
     return this.getTimerState()
   }
 
@@ -432,9 +452,50 @@ class LiquidFocusService {
     this.broadcastState()
   }
 
+  /** True when a focus (work) session is counting down. */
+  isFocusRunning(): boolean {
+    return this.mode === 'work' && this.status === 'running'
+  }
+
+  /**
+   * v2: looking away during focus stops the session and puts the focus timer
+   * back to its full length (like Stop), keeping the cycle count so earlier
+   * finished sessions still count toward the long break.
+   */
+  resetFocusAfterAway(): TimerState {
+    if (!this.isFocusRunning()) return this.getTimerState()
+    this.stopTicking()
+    this.status = 'idle'
+    this.total = this.getConfigSafe().work_duration * 60
+    this.remaining = this.total
+    this.awayReset = true
+    console.log('[LiquidFocus] Looked away during focus: timer reset')
+    this.broadcastState()
+    return this.getTimerState()
+  }
+
+  /** The mini's Close on the "Looked away" card. */
+  dismissAwayNotice(): TimerState {
+    if (this.awayReset) {
+      this.awayReset = false
+      this.broadcastState()
+    }
+    return this.getTimerState()
+  }
+
   // ─── Broadcasting ───────────────────────────────────────────────────────
 
+  private stateListeners: Array<(t: TimerState) => void> = []
+
+  /** Main-process listeners (e.g. the menu-bar countdown). */
+  onStateChange(cb: (t: TimerState) => void): void {
+    this.stateListeners.push(cb)
+  }
+
   private broadcastState(): void {
+    for (const cb of this.stateListeners) {
+      try { cb(this.getTimerState()) } catch { /* listener errors never break the timer */ }
+    }
     this.broadcast(IPC_SEND.LIQUIDFOCUS_STATE_CHANGED, {
       timer: this.getTimerState(),
       tasks: this.getTasks(),

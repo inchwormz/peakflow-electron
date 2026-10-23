@@ -48,22 +48,20 @@ export function pasteNext(): boolean {
   console.log(`[QuickBoard] Queue paste ${queue.currentIndex + 1}/${queue.items.length}: ${item.id}`)
 
   const svc = getClipboardService()
-  // Write directly to clipboard (bypass simulatePaste's 500ms window-close delay)
-  const text = item.editedText ?? item.text ?? ''
-  if (item.type === 'text' && text) {
-    svc.writeText(text)
-  } else if (item.type === 'image' && item.imagePath) {
-    svc.writeImage(item.imagePath)
+  // Write directly to clipboard (bypass simulatePaste's 500ms window-close delay).
+  // Text, images and files all work; a clip that can't be written is skipped
+  // without pasting, so the previous clipboard is never pasted in its place.
+  if (svc.writeItem(item)) {
+    svc.recordItemUse(item.id)
+    // Short delay for clipboard to settle, then paste (user is already in target app)
+    setTimeout(() => {
+      void simulateCtrlV().then((ok) => {
+        console.log(`[QuickBoard] Queue Ctrl+V ${ok ? 'sent' : 'FAILED'}`)
+      })
+    }, 80)
+  } else {
+    console.warn(`[QuickBoard] Queue skipped ${item.id}: nothing to paste`)
   }
-
-  svc.recordItemUse(item.id)
-
-  // Short delay for clipboard to settle, then paste (user is already in target app)
-  setTimeout(() => {
-    void simulateCtrlV().then((ok) => {
-      console.log(`[QuickBoard] Queue Ctrl+V ${ok ? 'sent' : 'FAILED'}`)
-    })
-  }, 80)
 
   queue.currentIndex++
   updateTrayTooltip()

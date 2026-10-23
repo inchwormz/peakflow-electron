@@ -193,6 +193,10 @@ class CalendarService {
     const data = await ical.async.fromURL(fetchUrl)
 
     const now = new Date()
+    // v2 screenslap: keep today's earlier events too, so "All of today" can
+    // show them dimmed. Alerts still need now < end, so nothing re-alerts.
+    const startOfToday = new Date(now)
+    startOfToday.setHours(0, 0, 0, 0)
     const tomorrow = new Date(now)
     tomorrow.setDate(tomorrow.getDate() + 1)
     tomorrow.setHours(23, 59, 59, 999)
@@ -208,7 +212,7 @@ class CalendarService {
       // Handle recurring events — expand into the date range
       if (event.rrule) {
         const instances = ical.expandRecurringEvent(event, {
-          from: now,
+          from: startOfToday,
           to: tomorrow
         })
         for (const inst of instances) {
@@ -223,8 +227,8 @@ class CalendarService {
 
       if (!startDate) continue
 
-      // Skip events that ended before now
-      if (endDate && endDate.getTime() < now.getTime()) continue
+      // Skip events that ended before today
+      if (endDate && endDate.getTime() < startOfToday.getTime()) continue
       // Skip events that start after tomorrow
       if (startDate.getTime() > tomorrow.getTime()) continue
 
@@ -355,26 +359,24 @@ class CalendarService {
   }
 
   /**
-   * Start periodic polling for calendar events.
+   * Start periodic polling for calendar events. `allowed` (ScreenSlap's access
+   * check) runs before every fetch; a false answer skips that fetch.
    */
-  startPolling(intervalMinutes: number = 10): void {
+  startPolling(intervalMinutes: number = 10, allowed?: () => Promise<boolean>): void {
     this.stopPolling()
 
-    // Initial fetch if connected
-    if (this.status.connected) {
-      this.fetchEvents().catch((err) => {
-        console.error('[Calendar] Initial fetch error:', err)
+    const poll = async (label: string): Promise<void> => {
+      if (!this.status.connected) return
+      if (allowed && !(await allowed())) return
+      await this.fetchEvents().catch((err) => {
+        console.error(`[Calendar] ${label} error:`, err)
       })
     }
 
+    // Initial fetch, then every interval
+    void poll('Initial fetch')
     const intervalMs = intervalMinutes * 60_000
-    this.fetchInterval = setInterval(() => {
-      if (this.status.connected) {
-        this.fetchEvents().catch((err) => {
-          console.error('[Calendar] Polling fetch error:', err)
-        })
-      }
-    }, intervalMs)
+    this.fetchInterval = setInterval(() => void poll('Polling fetch'), intervalMs)
 
     console.log(`[Calendar] Polling started (every ${intervalMinutes} min)`)
   }

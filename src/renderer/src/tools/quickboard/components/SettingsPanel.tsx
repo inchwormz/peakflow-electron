@@ -71,7 +71,6 @@ export function SettingsPanel({
     >
       {/* Nav bar */}
       <div style={navBarStyle}>
-        {/* @ts-expect-error -- Electron-specific CSS */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, WebkitAppRegion: 'no-drag' }}>
           <NavButton icon={<ChevronLeft size={15} />} onClick={onBack} />
           <span style={{ fontSize: 13, fontWeight: 400, color: DS.textPrimary, fontFamily: "'Silkscreen', cursive" }}>
@@ -170,7 +169,7 @@ export function SettingsPanel({
           <>
             <SectionLabel>AI Features</SectionLabel>
             <div style={{ fontSize: 10, color: DS.textDim, marginBottom: 12 }}>
-              AI transforms, onboarding, and smart suggestions require a Pro license.
+              AI runs on your own ChatGPT or Claude (Codex or Claude Code) and needs a Pro license.
             </div>
             {onRerunOnboarding && (
               <button

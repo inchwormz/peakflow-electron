@@ -71,6 +71,8 @@ let systemSuspended = false;
 let lastTick = Date.now();
 let missedChecks = 0;
 let modalDepth = 0;
+let modalOpenedAt = 0;
+let modalMaxMs = 600000;
 
 const CHECK_INTERVAL_MS = 5000;
 // A tick arriving this late means the worker itself was frozen — i.e. the
@@ -84,6 +86,7 @@ parentPort.on('message', (msg) => {
     freezeThreshold = msg.freezeThreshold;
     sleepGapMs = msg.sleepGapMs;
     mainPid = msg.pid;
+    if (msg.modalMaxMs) modalMaxMs = msg.modalMaxMs;
     lastHeartbeat = Date.now();
     lastTick = Date.now();
     systemSuspended = false;
@@ -98,7 +101,9 @@ parentPort.on('message', (msg) => {
 
       // A native dialog is open (macOS runs it modally on the main thread,
       // which pauses heartbeats). Waiting on the user is not a freeze.
-      if (modalDepth > 0) {
+      // The pause is a lease: a native call that never returns must not
+      // switch freeze recovery off for good.
+      if (modalDepth > 0 && now - modalOpenedAt < modalMaxMs) {
         lastHeartbeat = now;
         missedChecks = 0;
         return;
@@ -162,6 +167,7 @@ parentPort.on('message', (msg) => {
   }
 
   if (msg.type === 'modal-open') {
+    if (modalDepth === 0) modalOpenedAt = Date.now();
     modalDepth++;
     lastHeartbeat = Date.now();
     missedChecks = 0;
@@ -219,7 +225,8 @@ export function initWatchdog(): void {
       logPath: getLogPath(),
       freezeThreshold: FREEZE_THRESHOLD_MS,
       sleepGapMs: SLEEP_GAP_MS,
-      pid: process.pid
+      pid: process.pid,
+      modalMaxMs: MODAL_MAX_OPEN_MS
     })
 
     // Send heartbeats on a regular interval
@@ -240,6 +247,22 @@ export function initWatchdog(): void {
     console.log('[Watchdog] Main process heartbeat monitor started')
   } catch (err) {
     console.error('[Watchdog] Failed to start:', err)
+  }
+}
+
+/**
+ * Run a synchronous call that can block on a system prompt, without the
+ * watchdog counting the wait as a freeze. On macOS the first Keychain read
+ * (safeStorage) can show a password prompt that holds the main thread until
+ * the user answers; the watchdog used to kill PeakFlow after 30 s of it.
+ */
+export function withWatchdogPaused<T>(fn: () => T): T {
+  if (!worker || process.platform !== 'darwin') return fn()
+  worker.postMessage({ type: 'modal-open' })
+  try {
+    return fn()
+  } finally {
+    worker?.postMessage({ type: 'modal-close' })
   }
 }
 

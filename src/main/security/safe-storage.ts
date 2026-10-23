@@ -10,6 +10,7 @@
  */
 
 import { safeStorage } from 'electron'
+import { withWatchdogPaused } from '../services/watchdog'
 
 /**
  * Check whether the OS credential backend is available.
@@ -17,7 +18,7 @@ import { safeStorage } from 'electron'
  */
 export function isAvailable(): boolean {
   try {
-    return safeStorage.isEncryptionAvailable()
+    return withWatchdogPaused(() => safeStorage.isEncryptionAvailable())
   } catch {
     console.warn('[PeakFlow:SafeStorage] Failed to check availability')
     return false
@@ -34,7 +35,7 @@ export function encryptString(data: string): string | null {
       console.warn('[PeakFlow:SafeStorage] Encryption not available')
       return null
     }
-    const encrypted = safeStorage.encryptString(data)
+    const encrypted = withWatchdogPaused(() => safeStorage.encryptString(data))
     return encrypted.toString('base64')
   } catch (error) {
     console.warn('[PeakFlow:SafeStorage] encryptString failed:', error)
@@ -53,7 +54,7 @@ export function decryptString(encrypted: string): string | null {
       return null
     }
     const buffer = Buffer.from(encrypted, 'base64')
-    return safeStorage.decryptString(buffer)
+    return withWatchdogPaused(() => safeStorage.decryptString(buffer))
   } catch (error) {
     console.warn('[PeakFlow:SafeStorage] decryptString failed:', error)
     return null
