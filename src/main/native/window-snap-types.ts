@@ -17,6 +17,9 @@ export interface SnapWindow {
   appName: string
   icon: AppIconQuery
   frame: SnapRect
+  /** false for windows that aren't ordinary app windows (panels, dialogs,
+   *  minimised or invisible helper windows); undefined when not known */
+  normal?: boolean
   /** OS-specific handle; only the module that made it reads it. */
   handle: unknown
 }

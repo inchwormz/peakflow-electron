@@ -23,6 +23,7 @@ import { getConfig, setConfig } from './config-store'
 import { checkAccess } from '../security/access-check'
 import { withToolAccess } from '../security/access-guard'
 import { windowSnap } from '../native/window-snap'
+import { arrangeCandidates, fillSlots } from './snapgrid-arrange'
 import { hidePanel } from '../panel'
 import { getFocusDimService } from './focus-dim'
 import { setWindowCommandHandler } from '../launcher/window-commands'
@@ -48,6 +49,18 @@ function place(f: FracRect, d: Display): SnapRect {
   const x1 = Math.round(wa.x + (f.x + f.w) * wa.width)
   const y1 = Math.round(wa.y + (f.y + f.h) * wa.height)
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/** A move counts when the window now fills the slot, or at least moved its
+ *  top-left corner there (an app may keep a fixed or minimum size). A window
+ *  that didn't change at all refused the move. */
+function landedIn(after: SnapRect, slot: SnapRect, before: SnapRect): boolean {
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= 40
+  const atOrigin = near(after.x, slot.x) && near(after.y, slot.y)
+  if (!atOrigin) return false
+  if (near(after.w, slot.w) && near(after.h, slot.h)) return true
+  const unchanged = [after.x - before.x, after.y - before.y, after.w - before.w, after.h - before.h].every((d) => Math.abs(d) < 2)
+  return !unchanged
 }
 
 class SnapGridService {
@@ -113,14 +126,10 @@ class SnapGridService {
     return this.target
   }
 
-  /** Windows on the target's screen, target first, then front to back. */
+  /** Normal windows on the target's screen, target first, then front to back, each once. */
   private async windowsOnTargetScreen(target: SnapWindow | null): Promise<SnapWindow[]> {
     const all = (await windowSnap.listWindows()).filter((w) => !ownPid(w))
-    if (!target) return all
-    const d = displayOf(target.frame)
-    const same = all.filter((w) => w.id !== target.id && displayOf(w.frame).id === d.id)
-    const self = all.find((w) => w.id === target.id) ?? target
-    return [self, ...same]
+    return arrangeCandidates(target, all, (a, b) => displayOf(a.frame).id === displayOf(b.frame).id)
   }
 
   private remember(w: SnapWindow): void {
@@ -187,19 +196,33 @@ class SnapGridService {
     return withToolAccess(checkAccess, ToolId.SnapGrid, async () => {
       this.hidePreview()
       const target = await this.currentTarget()
-      const wins = (await this.windowsOnTargetScreen(target)).slice(0, ARRANGE_BY_KEY[key].max)
+      const wins = await this.windowsOnTargetScreen(target)
       if (!wins.length) return 'No windows to arrange'
       const d = displayOf(wins[0].frame)
-      const rects = ARRANGE_BY_KEY[key].rects(wins.length).map((f) => place(f, d))
-      let moved = 0
-      // Back to front, so the front window is moved (and raised) last
-      for (let i = rects.length - 1; i >= 0; i--) {
-        this.remember(wins[i])
-        if (await windowSnap.setWindowFrame(wins[i], rects[i])) moved++
-        else this.history.get(wins[i].id)?.pop()
+      const rects = ARRANGE_BY_KEY[key].rects(Math.min(wins.length, ARRANGE_BY_KEY[key].max)).map((f) => place(f, d))
+      // Slot by slot from the main one; a window that won't move passes its slot on
+      const placed = await fillSlots(rects, wins, async (w, r) => {
+        const before = { ...w.frame }
+        this.remember(w)
+        const after = await windowSnap.setWindowFrame(w, r)
+        // The helper reports the frame it reads back; a window that refused
+        // the move is still where it was, so its slot goes to the next one
+        if (after && landedIn(after, r, before)) return true
+        this.history.get(w.id)?.pop()
+        return false
+      })
+      const moved = placed.length
+      if (placed.length) {
+        // Bring the main window's app forward first. On a Mac that also brings
+        // every other window of that app forward (a second Chrome window, say),
+        // which covered the other slots. Then lift the arranged windows above
+        // them, back to front, so the main one ends on top.
+        await windowSnap.raiseWindow(placed[0])
+        for (let i = placed.length - 1; i >= 0; i--) await windowSnap.raiseWindow(placed[i], { activate: false })
       }
-      for (let i = rects.length - 1; i >= 0; i--) await windowSnap.raiseWindow(wins[i])
-      this.hidePanelSoon()
+      // Hide without handing focus back: that would activate the app again and
+      // bring its other windows back over the slots
+      hidePanel(true)
       this.broadcast()
       return moved === 1 ? '1 window arranged' : `${moved} windows arranged`
     }, () => 'Your trial has ended')
