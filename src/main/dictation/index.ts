@@ -28,7 +28,7 @@ import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../lau
 import { saveClipboard, restoreClipboard } from '../launcher/selection'
 import { simulateCtrlV } from '../native/keyboard'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
-import { KEEP_CLIP_MS, keepsClip, pasteKeys, sayTryAgain, transcribeTimeoutMs } from './retry'
+import { KEEP_CLIP_MS, keepsClip, mayRetry, ownerForSend, pasteKeys, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
@@ -83,7 +83,7 @@ let context: Promise<DictationContext> = Promise.resolve({})
 /** The last dictation as spoken and as typed, for "Paste last dictation as spoken" */
 let last: { raw: string; typed: string; at: number } | null = null
 /** A clip that couldn't be turned into text, kept so it can be tried again (S11) */
-interface Clip { buf: ArrayBuffer; mime: string; durationMs: number; ctx: DictationContext; at: number }
+interface Clip { buf: ArrayBuffer; mime: string; durationMs: number; ctx: DictationContext; at: number; owner?: string }
 let keptClip: (Clip & { owner: string }) | null = null
 let keptTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -106,7 +106,8 @@ function keepClip(clip: Clip | null): void {
   if (keptTimer) clearTimeout(keptTimer)
   keptTimer = null
   const had = !!keptClip
-  keptClip = clip && Date.now() - clip.at < KEEP_CLIP_MS ? { ...clip, owner: keptClip && keptClip.at === clip.at ? keptClip.owner : clipOwner() } : null
+  // The owner was fixed before the request went out (runClip), so a key changed mid-request can't adopt it
+  keptClip = clip && Date.now() - clip.at < KEEP_CLIP_MS ? { ...clip, owner: clip.owner ?? '' } : null
   if (keptClip) keptTimer = setTimeout(() => keepClip(null), KEEP_CLIP_MS - (Date.now() - keptClip.at))
   if (had || keptClip) settingsChanged()
 }
@@ -410,7 +411,9 @@ async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
 }
 
 /** Speech to text, clean-up and typing for one clip (a new recording, or a kept one tried again). */
-async function runClip(clip: Clip): Promise<void> {
+async function runClip(sent: Clip): Promise<void> {
+  // Whose account pays is decided now, before anything is sent (Sol review R3)
+  const clip = { ...sent, owner: ownerForSend(sent.owner, clipOwner()) }
   try {
     await runClipSteps(clip)
   } catch (err) {
@@ -480,7 +483,7 @@ export function getKeptDictation(): { seconds: number } | null {
   if (!keptClip) return null
   // Too old, or the key or licence changed since: never send it under someone else's account (Sol review R3)
   // A clip recorded with no key and no licence ("Add your OpenAI key") may go to the first one added
-  if (Date.now() - keptClip.at >= KEEP_CLIP_MS || (keptClip.owner !== '' && keptClip.owner !== clipOwner())) {
+  if (Date.now() - keptClip.at >= KEEP_CLIP_MS || !mayRetry(keptClip.owner, clipOwner())) {
     keepClip(null)
     return null
   }

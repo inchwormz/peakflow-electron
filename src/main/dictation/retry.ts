@@ -34,3 +34,17 @@ export function sayTryAgain(error: TranscribeError | 'mic_denied' | 'mic_none' |
 export function pasteKeys(mac: boolean): string {
   return mac ? '⌘V' : 'Ctrl+V'
 }
+
+/**
+ * Which account a clip belongs to (a fingerprint of the key and licence, '' for
+ * neither). Fixed before the first request is sent, never after a failure; a
+ * clip recorded with neither belongs to the credentials it is first sent with.
+ */
+export function ownerForSend(clipOwner: string | undefined, current: string): string {
+  return clipOwner ? clipOwner : current
+}
+
+/** A kept clip may be tried again only by the account it belongs to (or by anyone, while it belongs to no one). */
+export function mayRetry(clipOwner: string, current: string): boolean {
+  return clipOwner === '' || clipOwner === current
+}

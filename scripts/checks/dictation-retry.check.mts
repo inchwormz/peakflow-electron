@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { transcribeTimeoutMs, keepsClip, sayTryAgain, pasteKeys, KEEP_CLIP_MS } from '../../src/main/dictation/retry.ts'
+import { transcribeTimeoutMs, keepsClip, sayTryAgain, pasteKeys, KEEP_CLIP_MS, ownerForSend, mayRetry } from '../../src/main/dictation/retry.ts'
 
 const src = (p: string): string => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8')
 
@@ -57,13 +57,29 @@ test('[R2] a connection that drops mid-stream keeps the clip and frees dictation
   assert.ok(/function fail[^]*?busy = false/.test(main))
 })
 
-test('[R3] a kept clip is never sent after the key or licence changed (unless it was recorded with neither)', () => {
+test('[R3] a kept clip stays with the account it was first sent under', () => {
+  // Recorded under A, the key changes to B while the request is out, the request fails: still A's
+  const sentUnder = ownerForSend(undefined, 'A')
+  assert.equal(sentUnder, 'A')
+  assert.equal(mayRetry(sentUnder, 'B'), false, 'B is never billed for A')
+  assert.equal(mayRetry(sentUnder, 'A'), true)
+  // Recorded with no key and no licence: the first account it is sent with owns it from then on
+  const first = ownerForSend('', 'A')
+  assert.equal(first, 'A')
+  assert.equal(mayRetry(first, 'B'), false, 'after a try under A it never goes to B')
+  assert.equal(mayRetry('', 'A'), true, 'before any try, adding a key can send it')
+  assert.equal(ownerForSend('A', 'B'), 'A', 'a retry never changes the owner')
+})
+
+test('[R3] wiring: the owner is fixed before the first request and checked before every retry', () => {
   const main = src('src/main/dictation/index.ts')
+  const run = main.slice(main.indexOf('async function runClip('), main.indexOf('async function runClipSteps'))
+  assert.ok(run.indexOf('ownerForSend(sent.owner, clipOwner())') < run.indexOf('await runClipSteps(clip)'))
+  assert.ok(main.includes("owner: clip.owner ?? ''"), 'keepClip never takes the current credentials')
+  assert.ok(main.includes('!mayRetry(keptClip.owner, clipOwner())'))
   assert.ok(main.includes("return key || licence ? createHash('sha256')"))
-  assert.ok(main.includes("(keptClip.owner !== '' && keptClip.owner !== clipOwner())"))
   const at = main.indexOf('export async function retryDictation')
-  const retry = main.slice(at, main.indexOf('/** The last dictation, for', at))
-  assert.ok(retry.includes('getKeptDictation() ? keptClip : null'), 'retry goes through the owner check')
+  assert.ok(main.slice(at, main.indexOf('/** The last dictation, for', at)).includes('getKeptDictation() ? keptClip : null'))
 })
 
 test('[R4] the audio is dropped 30 minutes after recording even if PeakFlow sits untouched', () => {
@@ -71,6 +87,5 @@ test('[R4] the audio is dropped 30 minutes after recording even if PeakFlow sits
   const keep = main.slice(main.indexOf('function keepClip'), main.indexOf('/** Keep recording this long'))
   assert.ok(keep.includes('keptTimer = setTimeout(() => keepClip(null), KEEP_CLIP_MS - (Date.now() - keptClip.at))'))
   assert.ok(keep.includes('if (keptTimer) clearTimeout(keptTimer)'))
-  assert.ok(keep.includes('keptClip.at === clip.at ? keptClip.owner'), 'a retry keeps the original clock and owner')
   assert.ok(!main.includes('{ ...clip, at: Date.now() }'), 'a failed retry no longer restarts the clock')
 })
