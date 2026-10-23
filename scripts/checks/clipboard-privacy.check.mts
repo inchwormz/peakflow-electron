@@ -195,6 +195,14 @@ function fakeWin32() {
   assert.equal(await win.saveAndWriteOwnText(0n, 'dictated'), null)
   assert.equal(f.text(), 'original')
 }
+{ // A block that reports zero size (unreadable or discarded) refuses the round trip
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(13, 'secret')
+  f.put(f.id('ExcludeClipboardContentFromMonitorProcessing'), new Uint8Array(0))
+  assert.equal(await win.saveAndWriteOwnText(0n, 'x'), null)
+  assert.equal(f.text(), 'secret')
+}
 { // Not enough memory to prepare the way back: nothing is touched
   const f = fakeWin32()
   win._useFakeWin32ForChecks(f.api, f.koffi)

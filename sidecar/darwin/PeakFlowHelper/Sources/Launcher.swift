@@ -68,8 +68,9 @@ func activatePrevious() -> String {
 /// hand the password to clipboard managers.
 private func savePasteboard() -> [[NSPasteboard.PasteboardType: Data]]? {
     let pb = NSPasteboard.general
+    guard let items = pb.pasteboardItems else { return nil } // nil means the read failed, not "empty"
     var saved: [[NSPasteboard.PasteboardType: Data]] = []
-    for item in pb.pasteboardItems ?? [] {
+    for item in items {
         var types: [NSPasteboard.PasteboardType: Data] = [:]
         for t in item.types {
             guard let d = item.data(forType: t) else { return nil }
@@ -372,24 +373,20 @@ private func expand(keyword: String, text: String) {
         let previous = pb.string(forType: .string) ?? ""
         writeOwnText(fill(text, clipboard: previous))
         let ours = pb.changeCount
-        // Typed, clicked or switched app since the keyword: deleting or pasting now would hit the
-        // wrong text. Checked on the main thread, where real input is counted, right before each
-        // keystroke we send, so no real event can slip in between check and keystroke.
-        let unchanged = { inputGeneration == generation && NSWorkspace.shared.frontmostApplication?.processIdentifier == app }
-        let deleted = DispatchQueue.main.sync { () -> Bool in
-            guard unchanged() else { return false }
+        // Typed, clicked or switched app since the keyword (for example while waiting for the lock):
+        // deleting and pasting now would hit the wrong text, so leave the keyword as typed. Checked on
+        // the main thread, where real input is counted. Input arriving in the ~30 ms between the
+        // backspaces and the paste can still race them, as it always could.
+        let pasted = DispatchQueue.main.sync { () -> Bool in
+            guard inputGeneration == generation,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == app else { return false }
             for _ in 0..<keyword.count { postKey(51) } // kVK_Delete (backspace)
             return true
         }
-        var pasted = false
-        if deleted {
+        if pasted {
             usleep(30_000)
-            pasted = DispatchQueue.main.sync { () -> Bool in
-                guard unchanged() else { return false }
-                postKey(9, flags: .maskCommand) // kVK_ANSI_V
-                return true
-            }
-            if pasted { usleep(400_000) } // give the app time to read the clipboard before putting the old one back
+            postKey(9, flags: .maskCommand) // kVK_ANSI_V: once the keyword is gone, always replace it
+            usleep(400_000) // give the app time to read the clipboard before putting the old one back
         }
         if pb.changeCount == ours { restorePasteboard(saved) }
         if pasted { DispatchQueue.main.async { emit(["e": "expanded", "keyword": keyword]) } }
