@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { transformSync } from 'esbuild'
 import * as core from '../../src/main/dictation/account-core.ts'
 import { accountHash, checkoutUrl, accountFromStatus } from '../../src/main/dictation/account-core.ts'
+import { payView, buyLabel, COPY } from '../../src/shared/dictation-view.ts'
 
 import { mapBalanceReply as parseBalanceReply } from '../../src/main/dictation/addon.ts'
 const mapBalanceReply = (status: number, body: unknown) => accountFromStatus(parseBalanceReply(status, body))
@@ -38,22 +38,9 @@ for (const body of [null, {}, { state: 'ok', balanceMicros: -1, minutesLeft: 3 }
 
 const reply = { state: 'ok', balanceMicros: 4070000, minutesLeft: 900, disabled: false, blocked: null }
 const buyLink = 'https://shop.lemonsqueezy.com/buy/topup'
-const require = createRequire(import.meta.url)
-const React = require('react')
-const { renderToStaticMarkup } = require('react-dom/server')
-const rowCode = transformSync(readFileSync(new URL('../../src/renderer/src/launcher/DictationAccountRow.tsx', import.meta.url), 'utf8'), { loader: 'tsx', format: 'cjs', jsx: 'automatic' }).code
-function render(account: unknown): string {
-  const mod = { exports: {} as any }
-  let reads = 0
-  const rowRequire = (id: string): unknown => {
-    if (id === 'react') return { ...React, useState: (initial: unknown) => [reads++ === 0 ? account : initial, () => {}], useEffect: () => {} }
-    if (id === '@shared/ipc-types') return { IPC_INVOKE: {}, IPC_SEND: {} }
-    if (id === '../panel/hooks') return { invoke: () => { throw new Error('unexpected IPC') } }
-    return require(id)
-  }
-  new Function('require', 'module', 'exports', rowCode)(rowRequire, mod, mod.exports)
-  return renderToStaticMarkup(mod.exports.DictationAccountRow()).replaceAll('&#x27;', "'")
-}
+// The balance and buy buttons moved from the launcher row to the Dictation tool
+// page (24 Oct 2026); these checks now run against its rules (dictation-view.ts).
+const view = (account: any) => payView(account) as any
 function fixture(body: unknown = reply) {
   let key = 'abc'
   let device = 'device-a'
@@ -78,32 +65,35 @@ for (const disabled of [{ disabled: true, blocked: null }, { disabled: false, bl
   test(`disabled via ${disabled.disabled ? 'flag' : 'blocked'} hides purchases and refuses checkout`, async () => {
     const body = { ...reply, state: 'empty', ...disabled }
     assert.deepEqual(mapBalanceReply(200, body), body)
-    const html = render(body)
-    assert.ok(html.includes('Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.'))
-    assert.ok(!html.includes('<button') && !html.includes('Add $') && !html.includes('Get dictation'))
+    const v = view({ ...body, amounts: [5] })
+    assert.equal(v.notice, 'Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.')
+    assert.deepEqual(v.amounts, [], 'no amount, so no Add or Get dictation button')
+    assert.equal(v.line, null)
     const f = fixture(body)
     assert.equal(await f.client.openDictationCheckout(5), false)
     assert.deepEqual(f.opened, [])
   })
 }
-test('daily limit keeps balance, adds the message, and only low/empty offers a purchase', () => {
+// Changed 24 Oct 2026: the tool page offers Add in every balance state (John: "your balance and Add $5–$20"), not only low/empty
+test('daily limit keeps balance, adds the message, and offers Add', () => {
   for (const state of ['ok', 'low', 'empty']) {
     const body = { ...reply, state, blocked: 'daily_limit' }
     assert.deepEqual(mapBalanceReply(200, body), body)
-    const html = render({ ...body, amounts: [5] })
-    assert.ok(html.includes('$4.07 left'))
-    assert.ok(html.includes("You've used today's 3 hours. Dictation is back within 24 hours."))
-    assert.equal(html.includes('<button'), state !== 'ok')
+    const v = view({ ...body, amounts: [5] })
+    assert.ok(v.line.includes('$4.07 left'))
+    assert.equal(v.notice, COPY.dailyLimit)
+    assert.deepEqual(v.amounts, [5])
   }
 })
 test('negative safe integer balance stays empty with paused message and an Add button, without an amount', () => {
   for (const balanceMicros of [-500000, Number.MIN_SAFE_INTEGER]) {
     const body = { ...reply, state: 'empty', balanceMicros, minutesLeft: 0 }
     assert.deepEqual(mapBalanceReply(200, body), body)
-    const html = render({ ...mapBalanceReply(200, body), amounts: [5] })
-    assert.ok(html.includes('Dictation is paused. Top up to keep going.'))
-    assert.ok(html.includes('<button') && html.includes('Add $5'))
-    assert.ok(!html.includes(' left') && !html.includes('$-'))
+    const v = view({ ...mapBalanceReply(200, body), amounts: [5] })
+    assert.equal(v.notice, 'Dictation is paused. Top up to keep going.')
+    assert.equal(buyLabel(v, 5), 'Add $5')
+    assert.deepEqual(v.amounts, [5])
+    assert.equal(v.line, null)
   }
   assert.deepEqual(mapBalanceReply(200, { ...reply, balanceMicros: Number.MIN_SAFE_INTEGER - 1 }), { state: 'hidden' })
 })
@@ -155,25 +145,23 @@ test('failed balance is hidden and does not leave a stuck in-flight request', as
   assert.equal(f.requests.length, 2)
 })
 
-test('merged prepaid row renders each balance state and purchase action', () => {
-  assert.equal(render({ state: 'hidden' }), '')
-  const offer = render({ state: 'no_addon', amounts: [5] })
-  assert.ok(offer.includes('Dictation</div>'))
-  assert.ok(offer.includes('$5 buys about 15 hours of talking. Unused time never expires.'))
-  assert.ok(offer.includes('Get dictation for $5</button>'))
-  const ok = render(reply)
-  assert.ok(ok.includes('Dictation balance') && ok.includes('$4.07 left · about 15 hours'))
-  assert.ok(!ok.includes('<button'))
-  assert.ok(render({ ...reply, state: 'low', amounts: [5] }).includes('Add $5</button>'))
+test('the tool page shows each balance state and purchase action', () => {
+  assert.deepEqual(view({ state: 'hidden' }), { kind: 'own-key' })
+  const offer = view({ state: 'no_addon', amounts: [5] })
+  assert.equal(COPY.offer, '$5 buys about 15 hours of talking. Unused time never expires.')
+  assert.equal(buyLabel(offer, 5), 'Get dictation for $5')
+  const ok = view({ ...reply, amounts: [5] })
+  assert.equal(ok.line, '$4.07 left · about 15 hours')
+  assert.equal(buyLabel(ok, 5), 'Add $5')
+  assert.deepEqual(view(reply).amounts, [], 'no buy link, no button')
   for (const body of [{ ...reply, state: 'empty', amounts: [5] }, { ...reply, balanceMicros: -1, amounts: [5] }]) {
-    const html = render(body)
-    assert.ok(html.includes('Dictation is paused. Top up to keep going.'))
-    assert.ok(html.includes('Add $5</button>'))
-    assert.ok(!html.includes(' left'))
+    const v = view(body)
+    assert.equal(v.notice, 'Dictation is paused. Top up to keep going.')
+    assert.equal(buyLabel(v, 5), 'Add $5')
+    assert.equal(v.line, null)
   }
-  const devices = render({ state: 'devices' })
-  assert.ok(devices.includes('Dictation is already on two other computers'))
-  assert.ok(!devices.includes('<button'))
+  assert.deepEqual(view({ state: 'devices' }), { kind: 'devices' })
+  assert.equal(COPY.devices, 'Dictation is already on two other computers.')
 })
 test('one server client and device source, one add-on settings row, and clip refresh wiring', () => {
   const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8')
@@ -183,14 +171,12 @@ test('one server client and device source, one add-on settings row, and clip ref
   const index = read('src/main/dictation/index.ts')
   assert.ok(index.includes('createDictationAccountClient(addonAuth)'))
   assert.ok(index.includes('if (auth) void refreshAddon(true)'))
-  assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in Launcher Settings'"))
+  assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in PeakFlow › Dictation'"))
   assert.ok(index.includes('webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)'))
-  const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
-  assert.ok(row.includes('window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)'))
-  const settings = read('src/renderer/src/launcher/LauncherApp.tsx')
-  assert.equal(settings.split('<DictationAccountRow />').length - 1, 1)
-  assert.ok(!settings.includes('d.usage') && !settings.includes('Dictation add-on</div>'))
-  assert.ok(settings.includes('{d.ownKey && ('))
+  const page = read('src/renderer/src/panel/tools/dictation/index.tsx')
+  assert.ok(page.includes('useIpcEvent(IPC_SEND.DICTATION_ACCOUNT_CHANGED, reloadAccount)'))
+  assert.ok(page.includes('useIpcEvent(IPC_SEND.LICENSE_STATUS_CHANGED, reloadAccount)'))
+  assert.equal(page.split('IPC_INVOKE.DICTATION_CHECKOUT').length - 1, 1, 'one buy path')
 })
 
 test('same-state disabled changes reapply the hold watcher', async () => {

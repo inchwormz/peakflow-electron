@@ -21,7 +21,7 @@ export type LauncherKind =
 export type LauncherGlyph =
   | 'app' | 'file' | 'folder' | 'settings' | 'power' | 'lock' | 'moon' | 'trash' | 'eject' | 'restart'
   | 'logout' | 'coffee' | 'kill' | 'calc' | 'globe' | 'search' | 'link' | 'text' | 'sparkle' | 'plus'
-  | 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'window' | 'keyboard'
+  | 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'window' | 'keyboard' | 'dictation'
 
 export interface LauncherItem {
   /** Stable id, e.g. 'app:/Applications/Safari.app', 'cmd:sleep', 'snip:3' */

@@ -5,7 +5,7 @@
  * screen when the trial has ended).
  */
 
-import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS } from '@shared/tool-ids'
+import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS, DICTATION_PAGE } from '@shared/tool-ids'
 import type { LauncherItem, LauncherRunResult } from '@shared/launcher/types'
 import { openToolWithAccessCheck } from '../windows'
 import { showPanel } from '../panel'
@@ -88,6 +88,18 @@ const COMMANDS: ToolCommand[] = [
     run: async () => {
       await openToolWithAccessCheck(ToolId.ScreenSlap)
       return { ok: true }
+    }
+  },
+  {
+    id: 'tool:dictation',
+    tool: null,
+    title: 'Dictation',
+    subtitle: 'Hold a key, talk, let go',
+    keywords: ['dictation', 'dictate', 'voice', 'speech', 'talk', 'microphone', 'type by voice'],
+    glyph: 'dictation',
+    run: () => {
+      showPanel(DICTATION_PAGE)
+      return Promise.resolve({ ok: true })
     }
   },
   {

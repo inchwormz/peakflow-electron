@@ -53,6 +53,12 @@ export function requestAccessibility(): void {
   openSettingsPane('accessibility')
 }
 
+/** Open the Camera or Microphone page of Privacy & Security (no-op off macOS). */
+export function openMediaSettings(media: 'camera' | 'microphone'): void {
+  if (!isMac) return
+  openSettingsPane(media)
+}
+
 // ─── First run ──────────────────────────────────────────────────────────────
 
 /**

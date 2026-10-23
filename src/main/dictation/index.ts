@@ -12,7 +12,7 @@
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { randomUUID } from 'crypto'
-import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
@@ -21,7 +21,9 @@ import { SystemWindowId } from '@shared/tool-ids'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationHoldKey, DictationSettings, DictationState } from '@shared/launcher/types'
 import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
-import { ensureMediaAccess } from '../services/permissions-darwin'
+import { ensureMediaAccess, checkAccessibility, requestAccessibility, openMediaSettings } from '../services/permissions-darwin'
+import { getPanel } from '../panel'
+import { missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
 import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { saveClipboard, restoreClipboard } from '../launcher/selection'
 import { simulateCtrlV } from '../native/keyboard'
@@ -266,14 +268,13 @@ function state(s: DictationState): void {
 }
 
 const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = {
-  no_key: 'Add your OpenAI key in Launcher Settings',
+  no_key: 'Add your OpenAI key in PeakFlow › Dictation',
   bad_key: 'OpenAI didn’t accept your key',
   network: 'No internet connection',
   no_speech: 'Didn’t hear anything',
   failed: 'Couldn’t turn that into text',
   model_unavailable: 'Couldn’t turn that into text',
-  // copy: Dictation is paused. Top up in Launcher Settings
-  addon_empty: 'Dictation is paused. Top up in Launcher Settings',
+  addon_empty: 'Dictation is paused. Top up in PeakFlow › Dictation',
   addon_devices: 'Dictation is already on two other computers',
   addon_daily: 'That’s 3 hours today. Dictation starts again tomorrow',
   addon_off: 'Dictation isn’t on for this licence',
@@ -455,10 +456,36 @@ async function saveKey(key: unknown): Promise<{ ok: boolean; error?: string; set
   return { ok: true, settings: settings() }
 }
 
+// ─── permissions (the Dictation tool's Allow button) ──────────────────────────
+
+/** Microphone and Accessibility on a Mac; everything is allowed elsewhere. */
+function permissions(): DictationPermissions {
+  if (!isMac) return { microphone: 'granted', accessibility: true }
+  const mic = systemPreferences.getMediaAccessStatus('microphone')
+  const known: MediaStatus[] = ['granted', 'denied', 'not-determined', 'restricted']
+  const p: DictationPermissions = { microphone: known.includes(mic as MediaStatus) ? (mic as MediaStatus) : 'unknown', accessibility: checkAccessibility() }
+  // Permission granted since the key watcher started without it: restart it now
+  if (p.accessibility && store.get('enabled') && !isExpansionActive()) retryExpansion()
+  return p
+}
+
+/** Ask for the first missing permission: macOS's own prompt if it never asked, otherwise its settings page. */
+async function allowNext(): Promise<DictationPermissions> {
+  const missing = missingPermission(permissions())
+  if (missing === 'accessibility') requestAccessibility()
+  else if (missing === 'microphone') {
+    if (systemPreferences.getMediaAccessStatus('microphone') === 'not-determined') await systemPreferences.askForMediaAccess('microphone')
+    else openMediaSettings('microphone')
+  }
+  applyWatcher()
+  return permissions()
+}
+
 function registerIpc(getLauncherContents: () => Electron.WebContents | undefined): void {
   const h = ipcMain.handle.bind(ipcMain)
   const fromPill = (e: Electron.IpcMainInvokeEvent): boolean => !!pill && !pill.isDestroyed() && e.sender === pill.webContents
-  const fromLauncher = (e: Electron.IpcMainInvokeEvent): boolean => e.sender === getLauncherContents()
+  // Settings and paying: the Dictation tool in the panel (and the launcher's own pages)
+  const fromUi = (e: Electron.IpcMainInvokeEvent): boolean => e.sender === getLauncherContents() || e.sender === getPanel()?.webContents
 
   h(IPC_INVOKE.DICTATION_READY, (e, m?: { micMs?: number }) => {
     // The pill reports how long the microphone took to open after the key went down
@@ -476,11 +503,13 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
-  h(IPC_INVOKE.DICTATION_ACCOUNT, (e) => fromLauncher(e) ? getDictationAccount() : { state: 'hidden' })
-  h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromLauncher(e) ? openDictationCheckout(amount) : false)
+  h(IPC_INVOKE.DICTATION_ACCOUNT, (e) => fromUi(e) ? getDictationAccount() : { state: 'hidden' })
+  h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromUi(e) ? openDictationCheckout(amount) : false)
   h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
+  h(IPC_INVOKE.DICTATION_PERMISSIONS, () => permissions())
+  h(IPC_INVOKE.DICTATION_ALLOW, (e) => (fromUi(e) ? allowNext() : permissions()))
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
-    if (!fromLauncher(e)) return settings()
+    if (!fromUi(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
       store.set('enabled', value)
       if (value) {
@@ -496,15 +525,15 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     if (settings().enabled) getPill()
     return settingsWithHint()
   })
-  h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromLauncher(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
-  h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromLauncher(e) ? store.get('words') : ''))
+  h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromUi(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
+  h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromUi(e) ? store.get('words') : ''))
   h(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
-    if (!fromLauncher(e) || typeof text !== 'string') return settings()
+    if (!fromUi(e) || typeof text !== 'string') return settings()
     store.set('words', text.slice(0, 20_000))
     return settings()
   })
   h(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
-    if (!fromLauncher(e)) return settings()
+    if (!fromUi(e)) return settings()
     deleteCredential(CRED_TOOL, CRED_TYPE)
     // With the add-on, dictation carries on without their own key
     if (!viaAddon()) store.set('enabled', false)

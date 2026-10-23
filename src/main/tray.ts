@@ -9,7 +9,7 @@
 import { Tray, Menu, app, nativeImage } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS } from '@shared/tool-ids'
+import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS, DICTATION_PAGE, DICTATION_SWITCH_KEY } from '@shared/tool-ids'
 import { openToolWithAccessCheck } from './windows'
 import { setPanelAnchor, showPanel, togglePanel } from './panel'
 import { checkForUpdates } from './services/auto-updater'
@@ -144,6 +144,13 @@ export function buildContextMenu(): Electron.Menu {
       }
     })
   }
+  // Dictation's page, after SnapGrid (⌥⌘6)
+  toolItems.push({
+    label: 'Dictation',
+    accelerator: formatHotkeyLabel(DICTATION_SWITCH_KEY),
+    registerAccelerator: false,
+    click: (): void => { showPanel(DICTATION_PAGE) }
+  })
 
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'PeakFlow', enabled: false },

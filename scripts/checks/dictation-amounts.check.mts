@@ -2,8 +2,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { transformSync } from 'esbuild'
 import * as core from '../../src/main/dictation/account-core.ts'
 import { accountHash } from '../../src/main/dictation/account-core.ts'
 import { mapBalanceReply } from '../../src/main/dictation/addon.ts'
@@ -53,74 +51,14 @@ test('a disabled account opens no checkout for any amount', async () => {
   assert.deepEqual(opened, [])
 })
 
-// ─── the settings row ────────────────────────────────────────────────────────
+// The amount choice, Get dictation and Add $N buttons moved to the Dictation
+// tool page (24 Oct 2026). Their rules, including AM1 and AM2 below, are
+// checked in dictation-tool.check.mts against src/shared/dictation-view.ts.
 
-const require = createRequire(import.meta.url)
-const React = require('react')
-const { renderToStaticMarkup } = require('react-dom/server')
-const rowCode = transformSync(readFileSync(new URL('../../src/renderer/src/launcher/DictationAccountRow.tsx', import.meta.url), 'utf8'), { loader: 'tsx', format: 'cjs', jsx: 'automatic' }).code
-function render(account: unknown, chosen?: number): string {
-  const mod = { exports: {} as any }
-  let reads = 0
-  const rowRequire = (id: string): unknown => {
-    if (id === 'react') return { ...React, useState: (initial: unknown) => { const i = reads++; return [i === 0 ? account : i === 3 && chosen !== undefined ? chosen : initial, () => {}] }, useEffect: () => {} }
-    if (id === '@shared/ipc-types') return { IPC_INVOKE: {}, IPC_SEND: {} }
-    if (id === '../panel/hooks') return { invoke: () => { throw new Error('unexpected IPC') } }
-    return require(id)
-  }
-  new Function('require', 'module', 'exports', rowCode)(rowRequire, mod, mod.exports)
-  return renderToStaticMarkup(mod.exports.DictationAccountRow()).replaceAll('&#x27;', "'")
-}
-const four = [5, 10, 15, 20]
-
-test('low and empty show the amount choice and an Add button for the chosen amount', () => {
-  for (const state of ['low', 'empty']) {
-    const html = render({ ...reply, state, amounts: four })
-    assert.ok(html.includes('aria-label="Top-up amount"'), state)
-    for (const a of four) assert.ok(html.includes(`>$${a}</button>`), `${state} $${a}`)
-    assert.ok(html.includes('aria-pressed="true">$5</button>'))
-    assert.ok(html.includes('Add $5</button>'))
-    assert.ok(render({ ...reply, state, amounts: four }, 15).includes('Add $15</button>'))
-  }
-  assert.ok(render({ ...reply, state: 'empty', amounts: four }).includes('Dictation is paused. Top up to keep going.'))
-})
-
-test('Get dictation offers the same amount choice', () => {
-  const html = render({ state: 'no_addon', amounts: four })
-  assert.ok(html.includes('Get dictation</button>') && html.includes('aria-label="Top-up amount"'))
-  assert.ok(html.includes('$5 buys about 15 hours of talking. Unused time never expires.'))
-})
-
-test('unset amounts are hidden; one amount shows no choice', () => {
-  const two = render({ ...reply, state: 'low', amounts: [5, 20] })
-  assert.ok(two.includes('>$20</button>') && !two.includes('>$10</button>') && !two.includes('>$15</button>'))
-  const one = render({ ...reply, state: 'low', amounts: [10] })
-  assert.ok(!one.includes('Top-up amount') && one.includes('Add $10</button>'))
-  assert.ok(!render({ ...reply, amounts: four }).includes('Top-up amount'), 'ok balance offers nothing')
-  assert.ok(!render({ ...reply, state: 'empty', disabled: true, amounts: four }).includes('<button'), 'disabled offers nothing')
-})
-
-test('no row text or pill text still promises a fixed $5 top-up', () => {
-  const row = readFileSync(new URL('../../src/renderer/src/launcher/DictationAccountRow.tsx', import.meta.url), 'utf8')
+test('no page or pill text still promises a fixed $5 top-up', () => {
+  const view = readFileSync(new URL('../../src/shared/dictation-view.ts', import.meta.url), 'utf8')
   const index = readFileSync(new URL('../../src/main/dictation/index.ts', import.meta.url), 'utf8')
-  assert.ok(!row.includes("'Add $5'") && !row.includes('Add $5 to keep going'))
-  assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in Launcher Settings'"))
+  assert.ok(!view.includes("'Add $5'") && !view.includes('Add $5 to keep going'))
+  assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in PeakFlow › Dictation'"))
   assert.ok(index.includes('openDictationCheckout(amount)'))
-})
-
-// ─── review round 1 (24 Oct, Sol app 1 P2; Sol app 2 P3) ────────────────────
-
-test('[AM1] with one amount and no choice shown, Get dictation names the price', () => {
-  for (const a of [5, 10, 20]) {
-    const html = render({ state: 'no_addon', amounts: [a] })
-    assert.ok(html.includes(`Get dictation for $${a}</button>`), String(a))
-    assert.ok(!html.includes('Top-up amount'))
-  }
-  assert.ok(render({ state: 'no_addon', amounts: four }).includes('>Get dictation</button>'), 'the choice shows the price when there are several')
-})
-
-test('[AM2] a chosen amount that is no longer offered falls back to the smallest offered one', () => {
-  const html = render({ ...reply, state: 'low', amounts: [5, 20] }, 15)
-  assert.ok(html.includes('aria-pressed="true">$5</button>') && html.includes('Add $5</button>'))
-  assert.ok(render({ ...reply, state: 'low', amounts: [10, 20] }, 20).includes('Add $20</button>'))
 })

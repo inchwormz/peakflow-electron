@@ -40,7 +40,11 @@ export const LAUNCHER_INVOKE = {
   DICTATION_REMOVE_KEY: 'dictation:remove-key',
   /** My words: the raw text, and saving it */
   DICTATION_WORDS: 'dictation:words',
-  DICTATION_SET_WORDS: 'dictation:set-words'
+  DICTATION_SET_WORDS: 'dictation:set-words',
+  /** Microphone and Accessibility state (DictationPermissions) */
+  DICTATION_PERMISSIONS: 'dictation:permissions',
+  /** Ask for the first missing permission; returns DictationPermissions */
+  DICTATION_ALLOW: 'dictation:allow'
 } as const
 
 export const LAUNCHER_SEND = {
