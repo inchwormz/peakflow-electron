@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { transformSync } from 'esbuild'
 import * as core from '../../src/main/dictation/account-core.ts'
-import { accountHash, checkoutUrl, mapBalanceReply } from '../../src/main/dictation/account-core.ts'
+import { accountHash, checkoutUrl, accountFromStatus } from '../../src/main/dictation/account-core.ts'
+
+import { mapBalanceReply as parseBalanceReply } from '../../src/main/dictation/addon.ts'
+const mapBalanceReply = (status: number, body: unknown) => accountFromStatus(parseBalanceReply(status, body))
 
 const hash = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
 assert.equal(accountHash('  abc\n'), hash)
@@ -20,7 +23,7 @@ assert.equal(new URL(url!).searchParams.get('test'), '1')
 assert.deepEqual(mapBalanceReply(404, { error: 'off' }), { state: 'hidden' })
 assert.deepEqual(mapBalanceReply(402, { error: 'no_addon' }), { state: 'no_addon' })
 assert.deepEqual(mapBalanceReply(402, { error: 'other' }), { state: 'hidden' })
-assert.deepEqual(mapBalanceReply(403, { error: 'too_many_devices' }), { state: 'hidden' })
+assert.deepEqual(mapBalanceReply(403, { error: 'too_many_devices' }), { state: 'devices' })
 assert.deepEqual(mapBalanceReply(401, { error: 'invalid_licence' }), { state: 'hidden' })
 test('missing blocked maps to null', () => {
   for (const state of ['ok', 'low', 'empty']) {
@@ -59,14 +62,13 @@ function fixture(body: unknown = reply) {
   const opened: string[] = []
   let pending: (() => Promise<void>) | undefined
   const client = core.createAccountClient({
-    topupUrl: buyLink, apiUrl: 'https://example.test/api/dictation',
-    readLicence: () => key, readDevice: () => device,
-    fetch: async (_url: URL, init: RequestInit) => {
-      const headers = init.headers as Record<string, string>
-      requests.push({ key: headers.Authorization, device: headers['X-Device'] })
+    topupUrl: buyLink,
+    readAuth: () => ({ licence: key, deviceId: device }),
+    fetchStatus: async (auth) => {
+      requests.push({ key: `Licence ${auth.licence}`, device: auth.deviceId })
       const result = answer
       await pending?.()
-      return { status: 200, json: async () => result }
+      return parseBalanceReply(200, result)
     },
     openExternal: async (url: string) => { opened.push(url) }
   })
@@ -151,4 +153,75 @@ test('failed balance is hidden and does not leave a stuck in-flight request', as
   f.waitOn(async () => {})
   assert.deepEqual(await f.client.getDictationAccount(), reply)
   assert.equal(f.requests.length, 2)
+})
+
+test('merged prepaid row renders each balance state and purchase action', () => {
+  assert.equal(render({ state: 'hidden' }), '')
+  const offer = render({ state: 'no_addon' })
+  assert.ok(offer.includes('Dictation</div>'))
+  assert.ok(offer.includes('$5 buys about 15 hours of talking. Unused time never expires.'))
+  assert.ok(offer.includes('Get dictation</button>'))
+  const ok = render(reply)
+  assert.ok(ok.includes('Dictation balance') && ok.includes('$4.07 left · about 15 hours'))
+  assert.ok(!ok.includes('<button'))
+  assert.ok(render({ ...reply, state: 'low' }).includes('Add $5</button>'))
+  for (const body of [{ ...reply, state: 'empty' }, { ...reply, balanceMicros: -1 }]) {
+    const html = render(body)
+    assert.ok(html.includes('Dictation is paused. Add $5 to keep going.'))
+    assert.ok(html.includes('Add $5</button>'))
+    assert.ok(!html.includes(' left'))
+  }
+  const devices = render({ state: 'devices' })
+  assert.ok(devices.includes('Dictation is already on two other computers'))
+  assert.ok(!devices.includes('<button'))
+})
+test('one server client and device source, one add-on settings row, and clip refresh wiring', () => {
+  const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8')
+  const account = read('src/main/dictation/account.ts')
+  assert.ok(account.includes('fetchStatus: fetchAddonStatus'))
+  assert.ok(!account.includes('MAIN_VITE_DICTATION_API_URL') && !account.includes('electron-store'))
+  const index = read('src/main/dictation/index.ts')
+  assert.ok(index.includes('createDictationAccountClient(addonAuth)'))
+  assert.ok(index.includes('if (auth) void refreshAddon(true)'))
+  assert.ok(index.includes("addon_empty: 'Dictation is paused. Add $5 to keep going.'"))
+  assert.ok(index.includes('webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)'))
+  const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
+  assert.ok(row.includes('window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)'))
+  const settings = read('src/renderer/src/launcher/LauncherApp.tsx')
+  assert.equal(settings.split('<DictationAccountRow />').length - 1, 1)
+  assert.ok(!settings.includes('d.usage') && !settings.includes('Dictation add-on</div>'))
+  assert.ok(settings.includes('{d.ownKey && ('))
+})
+
+test('same-state disabled changes reapply the hold watcher', async () => {
+  const source = readFileSync(new URL('../../src/main/dictation/index.ts', import.meta.url), 'utf8')
+  const path = source.slice(source.indexOf('const viaAddon ='), source.indexOf('function settings():'))
+  const code = transformSync(path, { loader: 'ts', format: 'cjs' }).code
+  for (const disabled of [{ disabled: true, blocked: null }, { disabled: false, blocked: 'disabled' }]) {
+    let next = { ...reply, ...disabled }
+    const run = new Function('fetchAddonStatus', `
+      let addon = { state: 'none' }, addonCheckedAt = 0, addonRefresh = null, addonRetry = null
+      let watcherUpdates = 0
+      const addonAuth = () => ({ licence: 'abc', deviceId: 'device' })
+      const applyWatcher = () => { watcherUpdates++ }
+      const settings = () => ({ enabled: false })
+      const getPill = () => {}
+      const BrowserWindow = { getAllWindows: () => [] }
+      const IPC_SEND = {}
+      const console = { log: () => {} }
+      ${code}
+      return { refresh: () => refreshAddon(true), updates: () => watcherUpdates, usable: viaAddon }
+    `)(async () => next)
+    await run.refresh()
+    assert.equal(run.usable(), false)
+    assert.equal(run.updates(), 1)
+    next = reply
+    await run.refresh()
+    assert.equal(run.usable(), true)
+    assert.equal(run.updates(), 2)
+    next = { ...reply, ...disabled }
+    await run.refresh()
+    assert.equal(run.usable(), false)
+    assert.equal(run.updates(), 3)
+  }
 })

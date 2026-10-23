@@ -55,6 +55,8 @@ export const LAUNCHER_SEND = {
   DICTATION_START: 'dictation:start',
   /** Stop recording; send the audio if { send: true } */
   DICTATION_STOP: 'dictation:stop',
+  /** Refresh the prepaid balance after a clip or account update. */
+  DICTATION_ACCOUNT_CHANGED: 'dictation:account-changed',
   /** What the pill shows (DictationState) */
   DICTATION_STATE: 'dictation:state'
 } as const

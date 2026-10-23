@@ -9,7 +9,7 @@
  * the paste lands in the app the person is typing in.
  */
 
-import { getDictationAccount, openDictationCheckout } from './account'
+import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { randomUUID } from 'crypto'
 import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
@@ -29,7 +29,7 @@ import { transcribe, checkKey, warmConnection, type DictationModel, type Transcr
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
-import { allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, usageLine, type AddonAuth, type AddonStatus } from './addon'
+import { allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
 
 const isMac = process.platform === 'darwin'
 const CRED_TOOL = 'Dictation'
@@ -90,14 +90,16 @@ let addonRefresh: Promise<void> | null = null
 let addonRetry: ReturnType<typeof setTimeout> | null = null
 
 function addonAuth(): AddonAuth | null {
-  const licence = getCredential('license', 'key')
+  const licence = getCredential('license', 'key')?.trim()
   if (!licence) return null
   let deviceId = store.get('deviceId')
   if (!deviceId) store.set('deviceId', (deviceId = randomUUID()))
   return { licence, deviceId }
 }
 
-const viaAddon = (): boolean => addon.state === 'active'
+const { getDictationAccount, openDictationCheckout } = createDictationAccountClient(addonAuth)
+
+const viaAddon = (): boolean => ['ok', 'low', 'empty'].includes(addon.state) && !addon.disabled && addon.blocked !== 'disabled'
 
 /**
  * Ask the server how the add-on stands (at most once a minute unless forced;
@@ -115,10 +117,12 @@ function refreshAddon(force = false): Promise<void> {
     const temporary = next.state === 'error' && next.error !== 'devices'
     if (addonRetry) clearTimeout(addonRetry)
     addonRetry = temporary && auth ? setTimeout(() => void refreshAddon(true), 60_000) : null
-    if (temporary && addon.state === 'active') return
+    if (temporary && viaAddon()) return
     const before = addon.state
+    const wasUsable = viaAddon()
     addon = next
-    if (addon.state !== before) {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
+    if (addon.state !== before || viaAddon() !== wasUsable) {
       console.log(`[Dictation] add-on: ${addon.state}${addon.error ? ` (${addon.error})` : ''}`)
       applyWatcher()
       // Dictation just became usable: load the recording window now so the first hold records
@@ -137,7 +141,6 @@ function settings(): DictationSettings {
     hasKey: key,
     ownKey: hasKey(),
     viaAddon: viaAddon(),
-    usage: viaAddon() ? usageLine(addon) : undefined,
     holdKey: store.get('holdKey'),
     model,
     cleanup: store.get('tidy'),
@@ -269,7 +272,8 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
   no_speech: 'Didn’t hear anything',
   failed: 'Couldn’t turn that into text',
   model_unavailable: 'Couldn’t turn that into text',
-  addon_empty: 'You’ve used this month’s dictation. Add $5 to keep going',
+  // copy: Dictation is paused. Add $5 to keep going.
+  addon_empty: 'Dictation is paused. Add $5 to keep going.',
   addon_devices: 'Dictation is already on two other computers',
   addon_daily: 'That’s 3 hours today. Dictation starts again tomorrow',
   addon_off: 'Dictation isn’t on for this licence',

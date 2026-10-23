@@ -40,21 +40,24 @@ export function DictationAccountRow(): React.JSX.Element | null {
     refresh()
     window.addEventListener('focus', refresh)
     const shown = window.peakflow.on(IPC_SEND.LAUNCHER_SHOWN, refresh)
+    const changed = window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)
     const licensed = window.peakflow.on(IPC_SEND.LICENSE_STATUS_CHANGED, refresh)
     return () => {
       live = false
       window.removeEventListener('focus', refresh)
       shown()
       licensed()
+      changed()
     }
   }, [])
   if (account.state === 'hidden') return null
+  const devices = account.state === 'devices'
   const disabled = 'disabled' in account && (account.disabled || account.blocked === 'disabled')
   const dailyLimit = 'blocked' in account && account.blocked === 'daily_limit'
   const buy = account.state === 'no_addon'
-  const empty = account.state === 'empty'
+  const empty = account.state === 'empty' || ('balanceMicros' in account && account.balanceMicros < 0)
   let balance = ''
-  if ('balanceMicros' in account && account.balanceMicros >= 0 && !disabled) {
+  if ('balanceMicros' in account && account.balanceMicros >= 0 && !disabled && (!empty || dailyLimit)) {
     const dollars = (account.balanceMicros / 1_000_000).toFixed(2)
     const hours = Math.round(account.minutesLeft / 60)
     const minutes = Math.round(account.minutesLeft)
@@ -76,6 +79,8 @@ export function DictationAccountRow(): React.JSX.Element | null {
     <div className="lc-set">
       <div aria-live="polite">
         <div className="lbl">{buy ? DICTATION_LABEL : BALANCE_LABEL}</div>
+        {/* copy: Dictation is already on two other computers */}
+        {devices && <div className="sub">Dictation is already on two other computers</div>}
         {disabled && <div className="sub">{DISABLED}</div>}
         {!disabled && buy && <div className="sub">{OFFER}</div>}
         {balance && <div className="sub">{balance}</div>}

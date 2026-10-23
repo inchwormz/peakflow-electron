@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { AddonAuth, AddonStatus } from './addon'
 import type { DictationAccount } from '../../shared/dictation-account'
 
 export function accountHash(key: string): string {
@@ -17,25 +18,17 @@ export function checkoutUrl(buyLink: string | undefined, key: string): string | 
   }
 }
 
-export function mapBalanceReply(status: number, body: unknown): DictationAccount {
-  const hidden: DictationAccount = { state: 'hidden' }
-  if (!body || typeof body !== 'object') return hidden
-  const b = body as Record<string, unknown>
-  if (status === 402 && b.error === 'no_addon') return { state: 'no_addon' }
-  if (status !== 200 || !['ok', 'low', 'empty'].includes(String(b.state))) return hidden
-  if (typeof b.balanceMicros !== 'number' || !Number.isSafeInteger(b.balanceMicros) ||
-      typeof b.minutesLeft !== 'number' || !Number.isFinite(b.minutesLeft) || b.minutesLeft < 0 || typeof b.disabled !== 'boolean') return hidden
-  const blocked = b.blocked === undefined ? null : b.blocked
-  if (blocked !== null && blocked !== 'disabled' && blocked !== 'daily_limit') return hidden
-  return { state: b.state as 'ok' | 'low' | 'empty', balanceMicros: b.balanceMicros, minutesLeft: b.minutesLeft, disabled: b.disabled, blocked }
+export function accountFromStatus(status: AddonStatus): DictationAccount {
+  if (status.state === 'none') return { state: 'no_addon' }
+  if (status.state === 'error' && status.error === 'devices') return { state: 'devices' }
+  if (status.state !== 'ok' && status.state !== 'low' && status.state !== 'empty') return { state: 'hidden' }
+  return { state: status.state, balanceMicros: status.balanceMicros!, minutesLeft: status.minutesLeft!, disabled: status.disabled!, blocked: status.blocked ?? null }
 }
 
 interface AccountDependencies {
   topupUrl: string | undefined
-  apiUrl: string
-  readLicence: () => string | null | undefined
-  readDevice: () => string
-  fetch: (url: URL, init: RequestInit) => Promise<{ status: number; json: () => Promise<unknown> }>
+  readAuth: () => AddonAuth | null
+  fetchStatus: (auth: AddonAuth) => Promise<AddonStatus>
   openExternal: (url: string) => Promise<unknown>
 }
 
@@ -44,7 +37,8 @@ export function createAccountClient(deps: AccountDependencies): {
   openDictationCheckout: () => Promise<boolean>
 } {
   const inFlight = new Map<string, Promise<DictationAccount>>()
-  const licence = (): string => deps.readLicence()?.trim() || ''
+  const auth = (): AddonAuth | null => deps.readAuth()
+  const licence = (): string => auth()?.licence.trim() || ''
 
   function balance(key: string, device: string): Promise<DictationAccount> {
     if (!key || !checkoutUrl(deps.topupUrl, key)) return Promise.resolve({ state: 'hidden' })
@@ -53,15 +47,7 @@ export function createAccountClient(deps: AccountDependencies): {
     if (pending) return pending
     const request = (async (): Promise<DictationAccount> => {
       try {
-        const url = new URL(`${deps.apiUrl.replace(/\/$/, '')}/balance`)
-        // Credentials must never follow a redirect or travel over plain HTTP.
-        if (url.protocol !== 'https:') return { state: 'hidden' }
-        const res = await deps.fetch(url, {
-          headers: { Authorization: `Licence ${key}`, 'X-Device': device },
-          signal: AbortSignal.timeout(10_000), redirect: 'error'
-        })
-        if (res.status === 401 || res.status === 403) console.warn(`[Dictation:Account] Balance HTTP ${res.status}`)
-        return mapBalanceReply(res.status, await res.json())
+        return accountFromStatus(await deps.fetchStatus({ licence: key, deviceId: device }))
       } catch {
         // Do not log responses or network exceptions that might contain credentials.
         console.warn('[Dictation:Account] Balance unavailable')
@@ -74,21 +60,21 @@ export function createAccountClient(deps: AccountDependencies): {
   }
 
   async function getDictationAccount(): Promise<DictationAccount> {
-    const key = licence()
-    return balance(key, deps.readDevice())
+    const current = auth()
+    return balance(current?.licence.trim() || '', current?.deviceId || '')
   }
 
   async function openDictationCheckout(): Promise<boolean> {
     let key = licence()
     while (key) {
-      const account = await balance(key, deps.readDevice())
+      const account = await balance(key, auth()?.deviceId || '')
       const current = licence()
       // A changed licence needs its own balance answer before opening checkout.
       if (current !== key) {
         key = current
         continue
       }
-      if (account.state === 'hidden' || ('disabled' in account && (account.disabled || account.blocked === 'disabled'))) return false
+      if (account.state === 'hidden' || account.state === 'devices' || ('disabled' in account && (account.disabled || account.blocked === 'disabled'))) return false
       const url = checkoutUrl(deps.topupUrl, key)
       if (!url) return false
       try {

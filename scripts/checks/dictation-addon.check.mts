@@ -3,8 +3,7 @@
  * Run: node scripts/checks/dictation-addon.check.mts
  */
 import assert from 'node:assert/strict'
-process.env.TZ = 'UTC' // the renewal day is shown in local time
-import { fetchAddonStatus, transcribeViaAddon, addonTidyFetch, usageLine } from '../../src/main/dictation/addon.ts'
+import { fetchAddonStatus, transcribeViaAddon, addonTidyFetch } from '../../src/main/dictation/addon.ts'
 
 const auth = { licence: '38b1460a-5104-4067-a91d-77b872934d51', deviceId: '0f8fad5b-d9cb-469f-a165-70867728950e' }
 const reply = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch
@@ -15,13 +14,11 @@ assert.equal((await fetchAddonStatus(auth, reply(402, { error: 'no_addon' }))).s
 assert.equal((await fetchAddonStatus(null)).state, 'none', 'no licence: nothing is sent')
 assert.deepEqual(await fetchAddonStatus(auth, reply(403, { error: 'too_many_devices' })), { state: 'error', error: 'devices' })
 assert.equal((await fetchAddonStatus(auth, (async () => { throw new Error('offline') }) as unknown as typeof fetch)).state, 'error')
-const active = await fetchAddonStatus(auth, reply(200, { balanceMicros: 3_750_000, usedSeconds: 4320, usedMicros: 320_000, periodEnd: '2026-11-22T12:00:00Z', refundCents: 375, exhausted: false }))
-assert.equal(active.state, 'active')
-
-// The approved copy
-assert.equal(usageLine(active), 'This month: 1h 12m used (32¢). $3.75 comes back to your card on 22 November.')
-assert.equal(usageLine({ ...active, exhausted: true }), 'You’ve used this month’s dictation. Add $5 to keep going, or it starts again on 22 November.')
-assert.equal(usageLine({ ...active, refundCents: 0, usedSeconds: 50_400, usedMicros: 3_780_000 }), 'This month: 14h 0m used ($3.78).')
+const balance = { state: 'ok', balanceMicros: 4_070_000, minutesLeft: 900, usedSeconds: 4320, usedMicros: 320_000, disabled: false, blocked: null }
+assert.deepEqual(await fetchAddonStatus(auth, reply(200, balance)), balance)
+for (const state of ['low', 'empty']) {
+  assert.deepEqual(await fetchAddonStatus(auth, reply(200, { ...balance, state, balanceMicros: -1 })), { ...balance, state, balanceMicros: -1 })
+}
 
 // Transcription: the licence and device go in headers, the server's errors map to plain ones
 let sent: RequestInit | undefined
@@ -63,6 +60,34 @@ console.log('dictation-addon: ok')
     process.env.PEAKFLOW_DICTATION_SERVER = raw
     allowServerOverride()
     assert.equal(addonServer(), want, raw)
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      assert.equal(url, `${addonServer()}/balance`)
+      assert.equal(init.redirect, 'error')
+      assert.deepEqual(init.headers, { Authorization: `Licence ${auth.licence}`, 'X-Device': auth.deviceId })
+      return new Response(JSON.stringify(balance))
+    }) as typeof fetch
+    assert.deepEqual(await fetchAddonStatus(auth, fetchImpl), balance)
   }
 }
 console.log('dictation-addon server override: ok')
+
+// Callers across transcription and settings share one balance request per server/licence/device.
+{
+  let count = 0
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const fetchImpl = (async () => {
+    count++
+    await gate
+    return new Response(JSON.stringify(balance))
+  }) as typeof fetch
+  const first = fetchAddonStatus(auth, fetchImpl)
+  const second = fetchAddonStatus(auth, fetchImpl)
+  assert.equal(count, 1)
+  const other = fetchAddonStatus({ ...auth, deviceId: 'other' }, fetchImpl)
+  assert.equal(count, 2)
+  release()
+  await Promise.all([first, second, other])
+  await fetchAddonStatus(auth, fetchImpl)
+  assert.equal(count, 3)
+}
