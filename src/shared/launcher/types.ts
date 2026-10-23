@@ -179,8 +179,6 @@ export interface DictationSettings {
   viaAddon?: boolean
   /** Their own OpenAI key is saved (it can be removed even while the add-on is in use) */
   ownKey?: boolean
-  /** The add-on's usage line: "This month: 1h 12m used (32¢). …" */
-  usage?: string
 }
 
 export interface DictationState {

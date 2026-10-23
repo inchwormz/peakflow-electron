@@ -1,5 +1,5 @@
 /**
- * The $5 dictation add-on: PeakFlow's server holds the OpenAI key and meters
+ * The prepaid dictation add-on ($5, $10, $15 or $20 top-ups): PeakFlow's server holds the OpenAI key and meters
  * each clip against the person's balance, so they don't need a key of their own.
  * Signed in with their PeakFlow licence key plus a device id made up once.
  *
@@ -33,17 +33,33 @@ export function addonServer(): string {
 }
 
 export interface AddonStatus {
-  /** off: the add-on isn't running; none: no add-on on this licence; active: dictation runs on PeakFlow's server */
-  state: 'off' | 'none' | 'active' | 'error'
+  state: 'off' | 'none' | 'ok' | 'low' | 'empty' | 'error'
   balanceMicros?: number
+  minutesLeft?: number
   usedSeconds?: number
   usedMicros?: number
-  periodEnd?: string | null
-  refundCents?: number
-  exhausted?: boolean
   disabled?: boolean
+  blocked?: null | 'disabled' | 'daily_limit'
   /** devices: a third computer; the add-on is on the licence but not here */
   error?: string
+}
+
+export function mapBalanceReply(status: number, body: unknown): AddonStatus {
+  const b = body && typeof body === 'object' ? body as Record<string, unknown> : {}
+  if (status === 404) return { state: 'off' }
+  if (status === 402 && b.error === 'no_addon') return { state: 'none' }
+  if (status === 403 && b.error === 'too_many_devices') return { state: 'error', error: 'devices' }
+  if (status !== 200 || !['ok', 'low', 'empty'].includes(String(b.state)) ||
+      typeof b.balanceMicros !== 'number' || !Number.isSafeInteger(b.balanceMicros) ||
+      typeof b.minutesLeft !== 'number' || !Number.isFinite(b.minutesLeft) || b.minutesLeft < 0 ||
+      typeof b.disabled !== 'boolean' ||
+      (b.blocked != null && b.blocked !== 'disabled' && b.blocked !== 'daily_limit')) return { state: 'error' }
+  return {
+    state: b.state as 'ok' | 'low' | 'empty', balanceMicros: b.balanceMicros,
+    minutesLeft: b.minutesLeft, disabled: b.disabled, blocked: b.blocked as AddonStatus['blocked'] ?? null,
+    ...(typeof b.usedSeconds === 'number' ? { usedSeconds: b.usedSeconds } : {}),
+    ...(typeof b.usedMicros === 'number' ? { usedMicros: b.usedMicros } : {})
+  }
 }
 
 export interface AddonAuth {
@@ -55,19 +71,29 @@ type Fetch = typeof fetch
 
 const headers = (a: AddonAuth): Record<string, string> => ({ Authorization: `Licence ${a.licence}`, 'X-Device': a.deviceId })
 
-export async function fetchAddonStatus(a: AddonAuth | null, fetchImpl: Fetch = fetch): Promise<AddonStatus> {
-  if (!a) return { state: 'none' }
-  try {
-    const res = await fetchImpl(`${addonServer()}/balance`, { headers: headers(a), signal: AbortSignal.timeout(5000) })
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string }
-    if (res.status === 404) return { state: 'off' }
-    if (res.status === 402) return { state: 'none' }
-    if (res.status === 403 && body.error === 'too_many_devices') return { state: 'error', error: 'devices' }
-    if (!res.ok) return { state: 'error', error: body.error ?? `HTTP ${res.status}` }
-    return { state: 'active', ...(body as Omit<AddonStatus, 'state'>) }
-  } catch {
-    return { state: 'error', error: 'network' }
-  }
+// Shared by settings, checkout and transcription refreshes, including development overrides.
+const inFlight = new WeakMap<Fetch, Map<string, Promise<AddonStatus>>>()
+export function fetchAddonStatus(a: AddonAuth | null, fetchImpl: Fetch = fetch): Promise<AddonStatus> {
+  if (!a) return Promise.resolve({ state: 'none' })
+  const base = addonServer()
+  const id = JSON.stringify([base, a.licence, a.deviceId])
+  let requests = inFlight.get(fetchImpl)
+  if (!requests) inFlight.set(fetchImpl, (requests = new Map()))
+  const pending = requests.get(id)
+  if (pending) return pending
+  const request = (async (): Promise<AddonStatus> => {
+    try {
+      const res = await fetchImpl(`${base}/balance`, {
+        headers: headers(a), signal: AbortSignal.timeout(10_000), redirect: 'error'
+      })
+      return mapBalanceReply(res.status, await res.json().catch(() => ({})))
+    } catch {
+      return { state: 'error', error: 'network' }
+    }
+  })()
+  requests.set(id, request)
+  void request.finally(() => requests.delete(id))
+  return request
 }
 
 const SERVER_ERRORS: Record<string, TranscribeResult['error']> = {
@@ -127,33 +153,4 @@ export function addonTidyFetch(a: AddonAuth, fetchImpl: Fetch = fetch): Fetch {
     const body = (await res.json().catch(() => ({}))) as { text?: string }
     return new Response(JSON.stringify({ choices: [{ message: { content: body.text ?? '' } }] }), { status: 200 })
   }) as Fetch
-}
-
-// ─── the usage line (approved copy) ──────────────────────────────────────────
-
-const MICROS_PER_CENT = 10_000
-
-function money(micros: number): string {
-  const cents = Math.round(micros / MICROS_PER_CENT)
-  return cents < 100 ? `${cents}¢` : `$${(cents / 100).toFixed(2)}`
-}
-
-function duration(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`
-}
-
-function day(iso: string | null | undefined): string | null {
-  if (!iso) return null
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
-}
-
-/** "This month: 1h 12m used (32¢). $3.75 comes back to your card on 22 November." */
-export function usageLine(s: AddonStatus): string {
-  const when = day(s.periodEnd)
-  if (s.exhausted) return `You’ve used this month’s dictation. Add $5 to keep going${when ? `, or it starts again on ${when}` : ''}.`
-  const used = `This month: ${duration(s.usedSeconds ?? 0)} used (${money(s.usedMicros ?? 0)}).`
-  const back = s.refundCents && when ? ` ${money(s.refundCents * MICROS_PER_CENT)} comes back to your card on ${when}.` : ''
-  return used + back
 }

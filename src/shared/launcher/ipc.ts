@@ -32,6 +32,8 @@ export const LAUNCHER_INVOKE = {
   DICTATION_AUDIO: 'dictation:audio',
   /** The pill couldn't open the microphone ('denied' | 'none' | 'failed') */
   DICTATION_MIC_ERROR: 'dictation:mic-error',
+  DICTATION_ACCOUNT: 'dictation:account',
+  DICTATION_CHECKOUT: 'dictation:checkout',
   DICTATION_SETTINGS: 'dictation:settings',
   DICTATION_SET: 'dictation:set',
   DICTATION_SAVE_KEY: 'dictation:save-key',
@@ -53,6 +55,8 @@ export const LAUNCHER_SEND = {
   DICTATION_START: 'dictation:start',
   /** Stop recording; send the audio if { send: true } */
   DICTATION_STOP: 'dictation:stop',
+  /** Refresh the prepaid balance after a clip or account update. */
+  DICTATION_ACCOUNT_CHANGED: 'dictation:account-changed',
   /** What the pill shows (DictationState) */
   DICTATION_STATE: 'dictation:state'
 } as const

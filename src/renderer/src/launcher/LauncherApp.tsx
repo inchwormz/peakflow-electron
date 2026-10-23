@@ -21,6 +21,7 @@ import { Icon } from '../panel/icons'
 import { Glyph } from './glyphs'
 import '../panel/panel.css'
 import './launcher.css'
+import { DictationAccountRow } from './DictationAccountRow'
 
 type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup' | 'words'
 
@@ -829,6 +830,7 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
           </span>
         </div>
       )}
+      <DictationAccountRow />
       <DictationRows onWords={onWords} />
       <div className="lc-set">
         <div>
@@ -927,14 +929,6 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
             <button className="switch" role="switch" aria-checked={d.cleanup} aria-label="Clean up as you go" onClick={() => set('cleanup', !d.cleanup)} />
           </div>
         </>
-      )}
-      {d.viaAddon && (
-        <div className="lc-set">
-          <div>
-            <div className="lbl">Dictation add-on</div>
-            <div className="sub">{d.usage}</div>
-          </div>
-        </div>
       )}
       {d.ownKey && (
         <div className="lc-set">
