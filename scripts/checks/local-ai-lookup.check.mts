@@ -28,6 +28,8 @@ const exe = (p: string, body: string): void => {
 exe(join(home, 'fake-shell'), `echo "$@" >> "${home}/shell-args"; printf "__PF_PATH__/usr/bin:/bin__PF_END__"`)
 // A fake Codex that is signed in once the flag file exists
 exe(join(home, '.local/bin/codex'), `echo x >> "${home}/codex-runs"; if [ "$1" = login ] && [ "$2" = status ]; then if [ -f "${home}/signed-in" ]; then echo "Logged in using ChatGPT"; exit 0; fi; echo "Not logged in"; exit 1; fi; exit 1`)
+// Claude installed too, so both CLIs are cached by the first plain check
+exe(join(home, '.local/bin/claude'), `if [ "$1" = auth ]; then echo '{"loggedIn": false}'; exit 1; fi; exit 1`)
 process.env.HOME = home
 process.env.SHELL = join(home, 'fake-shell')
 process.env.PATH = '/usr/bin:/bin'

@@ -19,7 +19,7 @@ import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { app } from 'electron'
 import Store from 'electron-store'
-import { cliArgs, codexMcpListArgs, codexMcpNames, CODEX_BASE_INSTRUCTIONS } from './local-ai-args'
+import { cliArgs, codexMcpListArgs, codexMcpNames, supportsIgnoreUserConfig, CODEX_BASE_INSTRUCTIONS, type CodexIsolation } from './local-ai-args'
 import { winCommand } from './local-ai-spawn'
 
 export type AiProviderId = 'codex' | 'claude' | 'ollama'
@@ -51,8 +51,6 @@ export interface RunLocalAiResult {
   ok: boolean
   text?: string
   error?: 'no_provider' | 'not_signed_in' | 'timeout' | 'failed'
-  /** Codex refused its config (internal: retried without the MCP switches) */
-  configError?: boolean
 }
 
 /**
@@ -143,6 +141,9 @@ async function searchPath(deep = false): Promise<string[]> {
 const binCache = new Map<string, { at: number; path: string | null }>()
 
 async function findBinary(name: 'codex' | 'claude', look: AiLookup = {}): Promise<string | null> {
+  // Deep: read the shell's PATH first, even for a cached find, so the CLI's
+  // environment has it too (Codex needs `node`, which may be only there)
+  if (look.deep) await loginShellPath()
   const hit = binCache.get(name)
   // A deep or fresh look doesn't trust "not found" from a shallower one
   if (hit && Date.now() - hit.at < 60_000 && (hit.path || !(look.deep || look.fresh))) return hit.path
@@ -343,22 +344,28 @@ async function codexLightModel(bin: string): Promise<string | null> {
   return model
 }
 
-// The person's MCP servers, by name, so our calls can switch each one off (local-ai-args.ts)
-let codexMcp: { bin: string; names: string[] } | null = null
+// Whether this Codex can skip the person's config (and so their MCP servers): see CodexIsolation
+let codexIgnoreConfig: { bin: string; ok: boolean } | null = null
 
-async function codexMcpServers(bin: string): Promise<string[]> {
-  if (codexMcp?.bin === bin) return codexMcp.names
+/** How to keep the person's MCP servers out of this call; null if that can't be confirmed (don't run). */
+async function codexIsolation(bin: string): Promise<CodexIsolation | null> {
+  if (codexIgnoreConfig?.bin !== bin) {
+    const help = await run(bin, ['exec', '--help'], await childEnv(bin), 8000)
+    if (help.code !== 0) return null
+    codexIgnoreConfig = { bin, ok: supportsIgnoreUserConfig(help.out) }
+  }
+  if (codexIgnoreConfig.ok) return { ignoreUserConfig: true }
+  // Older Codex: list the servers now (the person may have added one since) and switch each off
   const r = await run(bin, codexMcpListArgs(), await childEnv(bin), 8000)
-  const names = codexMcpNames(r.out)
-  // A failed list isn't remembered, so the next call asks again
-  if (r.code === 0) codexMcp = { bin, names }
-  return names
+  const names = r.code === 0 ? codexMcpNames(r.out) : null
+  return names ? { ignoreUserConfig: false, mcpServers: names } : null
 }
 
 /** Forget cached sign-in answers (after the person signs in from the setup screen). */
 export function refreshAiProviders(): void {
   signInCache.clear()
   binCache.clear()
+  codexIgnoreConfig = null
 }
 
 // ─── running ─────────────────────────────────────────────────────────────────
@@ -385,13 +392,13 @@ function runCli(
   signal: AbortSignal | undefined,
   onChunk: ((t: string) => void) | undefined,
   model: string | null,
-  mcp: string[] = []
+  isolation: CodexIsolation | undefined
 ): Promise<RunLocalAiResult> {
   return new Promise((resolve) => {
     void childEnv(bin).then((env) => {
       let child: ChildProcess
       try {
-        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' ? codexInstructionsFile() : null, codexMcpServers: mcp })
+        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' ? codexInstructionsFile() : null, codexIsolation: isolation })
         child = launch(bin, args, env)
       } catch {
         resolve({ ok: false, error: 'failed' })
@@ -472,7 +479,7 @@ function runCli(
         }
         if (answer) return finish({ ok: true, text: answer })
         console.warn(`[LocalAI] ${id} exited ${code}: ${errText.slice(0, 400)}`)
-        finish({ ok: false, error: 'failed', configError: /error loading config/i.test(errText) })
+        finish({ ok: false, error: 'failed' })
       })
       // Prompt goes in on stdin: no length limit, nothing in the process list
       const input = id === 'codex' ? `${system}\n\n${prompt}` : prompt
@@ -543,26 +550,23 @@ export async function runLocalAi(opts: RunLocalAiOptions): Promise<RunLocalAiRes
     const bin = await findBinary(provider, { deep: true })
     if (!bin) return { ok: false, error: 'no_provider' }
     // Light: Claude's Haiku tier; Codex's smallest listed model. Best: the CLI's own default.
-    let [model, mcp] = await Promise.all([
+    const [model, isolation] = await Promise.all([
       tier === 'best' ? null : provider === 'claude' ? 'haiku' : codexLightModel(bin),
-      provider === 'codex' ? codexMcpServers(bin) : []
+      provider === 'codex' ? codexIsolation(bin) : undefined
     ])
-    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model, mcp)
-    // Codex wouldn't load a config with those MCP switches: run without them (code mode is still off, which keeps MCP tools out)
-    if (result.configError && mcp.length && !opts.signal?.aborted) {
-      console.warn('[LocalAI] codex refused the MCP switches; running without them')
-      codexMcp = { bin, names: [] }
-      mcp = []
-      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model, mcp)
+    // Fail closed: never send copied text to a Codex whose MCP tools might be reachable
+    if (isolation === null) {
+      console.warn("[LocalAI] couldn't confirm Codex's MCP servers are off; not running")
+      return { ok: false, error: 'failed' }
     }
+    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model, isolation)
     // The plan doesn't offer that model (or this CLI doesn't know it): use the default instead
     if (!result.ok && model && result.error === 'failed' && !opts.signal?.aborted) {
       console.warn(`[LocalAI] ${provider} light model ${model} failed; using the default model`)
       if (provider === 'codex') codexLight = { bin, model: null }
-      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null, mcp)
+      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null, isolation)
     }
   }
-  delete result.configError
   if (result.ok && opts.json && result.text) result = { ...result, text: extractJson(result.text) }
   return result
 }
