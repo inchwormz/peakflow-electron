@@ -142,8 +142,8 @@ function workDir(): string {
 
 /** Our short instructions for Codex, in our own folder (null if it can't be written: Codex then uses its own). */
 function codexInstructionsFile(): string | null {
-  const file = join(workDir(), 'codex-instructions.md')
   try {
+    const file = join(workDir(), 'codex-instructions.md')
     if (!existsSync(file) || readFileSync(file, 'utf8') !== CODEX_BASE_INSTRUCTIONS) writeFileSync(file, CODEX_BASE_INSTRUCTIONS)
     return file
   } catch {
@@ -305,10 +305,10 @@ function runCli(
   return new Promise((resolve) => {
     void childEnv(bin).then((env) => {
       const viaShell = isWin && bin.endsWith('.cmd')
-      // A shell would split a path with spaces, so .cmd installs keep Codex's own instructions
-      const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' && !viaShell ? codexInstructionsFile() : null })
       let child: ChildProcess
       try {
+        // A shell would split a path with spaces, so .cmd installs keep Codex's own instructions
+        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' && !viaShell ? codexInstructionsFile() : null })
         child = spawn(bin, args, { env, cwd: workDir(), shell: viaShell, windowsHide: true })
       } catch {
         resolve({ ok: false, error: 'failed' })
