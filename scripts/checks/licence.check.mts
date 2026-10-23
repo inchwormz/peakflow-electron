@@ -5,7 +5,8 @@
  * Cases: valid, expired, disabled, not found, network down, server 5xx,
  * 429, captive-portal HTML, timeout, clock moved back and forward, the
  * 14-day offline cap, the 2.0 -> 2.1 upgrade, one shared request, attempt
- * throttling, activation errors and instance IDs, and Remove licence.
+ * throttling, activation errors and instance IDs, Remove licence, and the
+ * Sol review findings (offline re-entry, refused removal, races, clock).
  * Run: node scripts/checks/licence.check.mts
  */
 import assert from 'node:assert/strict'
@@ -43,16 +44,17 @@ performance.now = () => mono
 const pass = (ms: number): void => { now += ms; mono += ms }
 
 type Reply = { status: number; body?: unknown; html?: boolean } | 'network' | 'hang'
-let reply: Reply = 'network'
+let reply: Reply | ((url: string) => Reply) = 'network'
 const calls: Array<{ url: string; body: Record<string, string>; timeoutMs: number | undefined }> = []
 let lastTimeout: number | undefined
 const origTimeout = AbortSignal.timeout.bind(AbortSignal)
 AbortSignal.timeout = (ms: number) => { lastTimeout = ms; return origTimeout(ms === 10_000 ? 30 : ms) }
 let gate: Promise<void> | null = null
 globalThis.fetch = (async (url: string, init: RequestInit) => {
-  calls.push({ url: String(url), body: JSON.parse(String(init.body)), timeoutMs: lastTimeout })
+  assert.equal((init.headers as Record<string, string>)['Content-Type'], 'application/x-www-form-urlencoded', 'License API takes form bodies')
+  calls.push({ url: String(url), body: Object.fromEntries(new URLSearchParams(String(init.body))), timeoutMs: lastTimeout })
   if (gate) await gate
-  const r = reply
+  const r = typeof reply === 'function' ? reply(String(url)) : reply
   if (r === 'network') throw new TypeError('fetch failed')
   if (r === 'hang') {
     return await new Promise((_res, rej) => init.signal!.addEventListener('abort', () => rej(init.signal!.reason)))
@@ -73,7 +75,7 @@ const notFound = (): Reply => ({ status: 404, body: { valid: false, error: 'lice
 
 /** A 2.1 customer whose last good check was `ago` ms ago. */
 function customer(ago: number): void {
-  mono += 120_000 // scenarios are minutes apart
+  mono += 2 * HOUR // scenarios are hours of running time apart
   store().clear(); g.__pf.creds.clear(); calls.length = 0
   g.__pf.creds.set('license:key', 'KEY')
   g.__pf.creds.set('license:product_id', String(PRO))
@@ -134,7 +136,7 @@ reply = valid()
 await pro(); await settle()
 assert.equal(await pro(), true, 'renewed licence unlocks')
 
-// 4. Network down, 5xx, 429, captive portal, timeout, odd answers: never lock inside 14 days
+// 4. Network down, 5xx, 429, captive portal, timeout, odd answers: never lock, never change status
 for (const [label, r] of [
   ['network down', 'network'],
   ['server 500', { status: 500, body: { error: 'oops' } }],
@@ -144,7 +146,9 @@ for (const [label, r] of [
   ['timeout', 'hang'],
   ['404 html from a proxy', { status: 404, html: true }],
   ['5xx that says expired', { status: 502, body: { valid: false, license_key: { status: 'expired' } } }],
-  ['valid:false, status inactive', { status: 200, body: { valid: false, license_key: { status: 'inactive' } } }]
+  ['valid:false, status inactive', { status: 200, body: { valid: false, license_key: { status: 'inactive' } } }],
+  ['valid:false, status active', { status: 200, body: { valid: false, license_key: { status: 'active' } } }],
+  ['404 instance not found', { status: 404, body: { error: 'license_key instance not found.' } }]
 ] as const) {
   customer(13 * DAY)
   reply = r as Reply
@@ -155,14 +159,19 @@ for (const [label, r] of [
   assert.equal(validates(), 1, `${label}: one attempt, then wait an hour`)
 }
 
-// 5. The 14-day cap: offline past it locks; back online unlocks on the next use
+/** n hours of the app running offline: one press an hour. */
+async function offlineHours(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) { pass(HOUR); await pro(); await settle() }
+}
+
+// 5. The 14-day cap: 14 days since the last good check AND a day of failed
+// checks while running. Back online unlocks on the next use.
 customer(13 * DAY)
 reply = 'network'
-for (let d = 0; d < 1; d++) { assert.equal(await pro(), true); await settle(); pass(12 * HOUR) }
-assert.equal(await pro(), true, 'day 13.5: in grace')
-await settle()
-pass(DAY)
-assert.equal(await pro(), false, 'day 14.5 offline: locked')
+await offlineHours(23)
+assert.equal(await pro(), true, 'day 14, 23 failed hours: in grace')
+await offlineHours(2)
+assert.equal(await pro(), false, 'day 14+, 25 failed hours: locked')
 assert.equal((await checkAccess('PeakFlow')).licence, 'offline', 'Plan screen says "can’t check"')
 const before = validates()
 assert.equal(await pro(), false)
@@ -171,9 +180,15 @@ pass(61 * 1000)
 reply = valid()
 assert.equal(await pro(), true, 'back online: unlocked on the same key press')
 assert.equal(store().get('license_status'), 'active')
+assert.equal(store().get('failed_check_hours'), undefined, 'failed hours reset')
+// Offline 30 days with the app barely open: not locked (needs a day of running time)
+customer(30 * DAY)
+reply = 'network'
+await offlineHours(3)
+assert.equal(await pro(), true, '30 days, 3 failed hours: in grace')
 
 // 6. Clock changes
-// 6a. Clock moved back a year: trusted, re-checked, never locked
+// 6a. Clock moved back a year: trusted, re-checked, never locked by a day of failures
 customer(HOUR)
 now -= 365 * DAY
 reply = 'network'
@@ -181,26 +196,33 @@ assert.equal(await pro(), true, 'clock back: licensed')
 await settle()
 assert.equal(validates(), 1, 'clock back: re-checks (future timestamps are stale)')
 assert.equal(await pro(), true)
-assert.equal(validates(), 1, 'clock back: …but only once (monotonic/attempt throttle)')
+assert.equal(validates(), 1, 'clock back: …but only once an hour (monotonic)')
+await offlineHours(48)
+assert.equal(await pro(), true, 'clock back + 2 days offline: licensed')
+// 6b. …but moving the clock back can't extend the grace forever
+store().set('failed_check_hours', 14 * 24 - 1)
+await offlineHours(2)
+assert.equal(await pro(), false, 'clock back: locked after 14 days of failed hours (2099 timestamp in 2050 case)')
 now += 365 * DAY
-// 6b. Clock moved forward a year while online: the check passes, still licensed
+// 6c. Clock moved forward a year while online: the check passes, still licensed
 customer(HOUR)
 now += 365 * DAY
 reply = valid()
 assert.equal(await pro(), true, 'clock forward + online: licensed')
+await settle()
 assert.equal(store().get('license_status'), 'active')
-// 6c. Clock forward a year while offline: past the cap, locks until the next good check
+// 6d. Clock forward a year while offline: NOT locked (no false lockout)
 customer(HOUR)
 reply = 'network'
 now += 365 * DAY
-assert.equal(await pro(), false, 'clock forward + offline: locked (cannot tell from 14 days offline)')
-mono += 61 * 1000
-reply = valid()
-assert.equal(await pro(), true, '…and unlocks as soon as it reaches the server')
-// 6d. Clock forward but expired answer: stays locked
+assert.equal(await pro(), true, 'clock forward + offline: still licensed')
+await offlineHours(5)
+assert.equal(await pro(), true, '…a few hours later too')
+// 6e. Clock forward but expired answer: locks
 customer(HOUR)
 now += 30 * DAY
 reply = ls('expired')
+await pro(); await settle()
 assert.equal(await pro(), false)
 assert.equal(store().get('license_status'), 'expired')
 
@@ -210,11 +232,13 @@ store().delete('last_check_attempt')
 store().set('validation_timestamp', iso(now - 90 * DAY))
 reply = 'network'
 assert.equal(await pro(), true, 'upgraded offline: not locked')
-pass(13 * DAY)
-assert.equal(await pro(), true, 'upgrade grace day 13')
-pass(2 * DAY)
-mono += 61 * 1000
-assert.equal(await pro(), false, 'upgrade grace ends after 14 days offline')
+await settle()
+pass(12 * DAY)
+await offlineHours(30)
+assert.equal(await pro(), true, 'upgrade grace: day 13, 30 failed hours')
+pass(DAY)
+await offlineHours(1)
+assert.equal(await pro(), false, 'upgrade grace ends after 14 days and a day of failed checks')
 // …and a refunded 2.0 user online at upgrade is locked by the first check
 customer(0)
 store().delete('last_check_attempt')
@@ -222,6 +246,11 @@ store().set('validation_timestamp', iso(now - 90 * DAY))
 reply = ls('disabled')
 await pro(); await settle()
 assert.equal(await pro(), false, 'refunded 2.0 user locked after upgrade')
+// A 2.0 offline save (never activated) unlocks nothing and makes no request
+customer(0)
+store().set('license_status', 'unvalidated')
+assert.equal(await pro(), false)
+assert.equal(calls.length, 0)
 
 // 8. S6: one shared check in flight
 customer(2 * DAY)
@@ -235,6 +264,7 @@ await settle()
 assert.equal(validates(), 1, '25 presses, one request')
 // …and a locked state shares one awaited request too
 customer(20 * DAY)
+store().set('failed_check_hours', 30)
 reply = valid()
 gate = new Promise((r) => { open = r })
 const waiting = Promise.all(Array.from({ length: 10 }, () => pro()))
@@ -242,23 +272,56 @@ await settle(); open(); gate = null
 assert.ok((await waiting).every(Boolean))
 assert.equal(validates(), 1, 'locked: 10 presses, one request')
 
-// 9. A key replaced while a check runs: the old answer is ignored
+// 9. Races (Sol review)
+// 9a. A key replaced while a check runs: the old answer is ignored
 customer(2 * DAY)
 reply = ls('expired')
 gate = new Promise((r) => { open = r })
-const p = lic.refreshLicence()
+let p = lic.refreshLicence()
 g.__pf.creds.set('license:key', 'NEW-KEY')
 open(); gate = null
 await p
 assert.equal(store().get('license_status'), 'active', 'stale answer for the old key dropped')
+// 9b. The SAME key re-activated while an "expired" check runs: the check is dropped
+customer(2 * DAY)
+reply = ls('expired')
+gate = new Promise((r) => { open = r })
+p = lic.refreshLicence()
+await settle()
+reply = { status: 200, body: { activated: true, license_key: { status: 'active' }, instance: { id: 'inst-9' }, meta: { product_id: PRO } } }
+const act = lic.activateLicense('KEY')
+open(); gate = null
+await p; await act
+assert.equal(store().get('license_status'), 'active', 'reactivation wins over an older check')
+// 9c. Removing key A, then activating key B before A's removal answers: B survives
+customer(HOUR)
+g.__pf.creds.set('license:instance_id', 'inst-A')
+reply = (url) => url.endsWith('/deactivate')
+  ? { status: 200, body: { deactivated: true } }
+  : { status: 200, body: { activated: true, license_key: { status: 'active' }, instance: { id: 'inst-B' }, meta: { product_id: PRO } } }
+gate = new Promise((r) => { open = r })
+const removing = lic.deactivateLicense()
+await settle()
+const activating = lic.activateLicense('KEY-B')
+await settle()
+assert.equal(calls.filter((c) => c.url.endsWith('/activate')).length, 0, 'activation waits for the removal')
+open(); gate = null
+assert.equal((await removing).success, true)
+assert.equal((await activating).success, true)
+assert.equal(g.__pf.creds.get('license:key'), 'KEY-B', 'B kept')
+assert.equal(g.__pf.creds.get('license:instance_id'), 'inst-B')
 
 // 10. S5: activation shows Lemon Squeezy's text and stores the instance ID
 store().clear(); g.__pf.creds.clear(); calls.length = 0
-reply = { status: 400, body: { activated: false, error: 'This license key has reached the activation limit.', license_key: { status: 'active' } } }
+reply = { status: 400, body: { activated: false, error: 'This license key has reached the activation limit.', license_key: { status: 'active', key: 'KEY' }, meta: { customer_email: 'a@b.c' } } }
+const warned: string[] = []
+console.warn = (...a: unknown[]) => { warned.push(a.map(String).join(' ')) }
 let r = await lic.activateLicense('KEY')
 assert.deepEqual(r, { success: false, message: 'This license key has reached the activation limit.' })
+assert.ok(!warned.join('\n').includes('a@b.c'), 'activation errors log no customer details')
+console.warn = () => {}
 assert.equal(g.__pf.creds.get('license:key'), undefined, 'limit reached: nothing saved')
-reply = { status: 404, body: { activated: false, error: 'license_key not found.' } }
+reply = { status: 404, body: { error: 'license_key not found.' } }
 assert.equal((await lic.activateLicense('KEY')).message, 'License_key not found.')
 reply = { status: 500, html: true }
 assert.equal((await lic.activateLicense('KEY')).message, 'The licence server didn’t answer. Try again in a few minutes.')
@@ -266,27 +329,61 @@ reply = { status: 200, body: { activated: true, error: null, license_key: { stat
 r = await lic.activateLicense('KEY')
 assert.equal(r.success, true)
 assert.equal(calls.at(-1)!.timeoutMs, 10_000, 'activation timeout')
+assert.equal(calls.at(-1)!.body.instance_name.startsWith('PeakFlow-'), true)
 assert.equal(g.__pf.creds.get('license:instance_id'), 'inst-1', 'instance ID stored')
 assert.equal(await pro(), true)
+// 10b. Re-entering a key offline never touches the working licence (Sol P1)
 reply = 'network'
-r = await lic.activateLicense('OTHER')
-assert.equal(r.success, false)
-assert.match(r.message, /Your key is saved/)
+for (const k of ['KEY', 'OTHER']) {
+  r = await lic.activateLicense(k)
+  assert.equal(r.success, false)
+  assert.match(r.message, /Check your connection/)
+  assert.equal(g.__pf.creds.get('license:key'), 'KEY', `offline ${k}: saved key kept`)
+  assert.equal(g.__pf.creds.get('license:instance_id'), 'inst-1')
+  assert.equal(store().get('license_status'), 'active')
+  assert.equal(await pro(), true, `offline ${k}: still unlocked`)
+}
+// 10c. A refused activation (limit reached) never touches the working licence either
+reply = { status: 400, body: { activated: false, error: 'This license key has reached the activation limit.' } }
+await lic.activateLicense('OTHER')
+assert.equal(g.__pf.creds.get('license:key'), 'KEY')
+assert.equal(await pro(), true)
 
 // 11. S5: Remove licence from this computer
-reply = { status: 200, body: { activated: true, license_key: { status: 'active' }, instance: { id: 'inst-2' }, meta: { product_id: PRO } } }
-await lic.activateLicense('KEY')
 reply = 'network'
 r = await lic.deactivateLicense()
 assert.equal(r.success, false, 'offline: nothing removed')
 assert.equal(g.__pf.creds.get('license:key'), 'KEY')
-reply = { status: 200, body: { deactivated: true, error: null } }
+for (const [label, rr] of [
+  ['422 refused', { status: 422, body: { deactivated: false, error: 'The instance id field is required.' } }],
+  ['200 deactivated:false', { status: 200, body: { deactivated: false, error: 'nope' } }],
+  ['200 captive portal', { status: 200, html: true }],
+  ['403', { status: 403, body: { error: 'Forbidden' } }],
+  ['503', { status: 503, body: {} }]
+] as const) {
+  reply = rr as Reply
+  r = await lic.deactivateLicense()
+  assert.equal(r.success, false, `${label}: not reported as removed`)
+  assert.equal(g.__pf.creds.get('license:key'), 'KEY', `${label}: key kept`)
+  assert.equal(g.__pf.creds.get('license:instance_id'), 'inst-1', `${label}: instance ID kept`)
+}
+const logged: string[] = []
+console.log = (...a: unknown[]) => { logged.push(a.map(String).join(' ')) }
+reply = { status: 200, body: { deactivated: true, error: null, license_key: { key: 'KEY-SECRET-123' }, meta: { customer_email: 'a@b.c' } } }
 r = await lic.deactivateLicense()
+console.log = () => {}
 assert.deepEqual(r, { success: true, message: 'Licence removed' })
-assert.deepEqual(calls.at(-1)!.body, { license_key: 'KEY', instance_id: 'inst-2' }, 'frees this instance')
+assert.ok(!logged.join('\n').includes('KEY-SECRET-123') && !logged.join('\n').includes('a@b.c'), 'no key or email in logs')
+assert.deepEqual(calls.at(-1)!.body, { license_key: 'KEY', instance_id: 'inst-1' }, 'frees this instance')
 assert.equal(g.__pf.creds.get('license:key'), undefined)
 assert.equal(g.__pf.creds.get('license:instance_id'), undefined)
 assert.equal((await checkAccess('PeakFlow')).hasLicenceKey, false)
+// already gone on the server (404 not found): removed here too
+customer(HOUR)
+g.__pf.creds.set('license:instance_id', 'inst-x')
+reply = { status: 404, body: { error: 'license_key instance not found.' } }
+assert.equal((await lic.deactivateLicense()).success, true)
+assert.equal(g.__pf.creds.get('license:key'), undefined)
 // a key from before 2.1 (no instance ID) is removed here, with a note
 customer(HOUR)
 r = await lic.deactivateLicense()
@@ -298,8 +395,12 @@ assert.equal(calls.length, 0, 'nothing to free without an instance ID')
 const c = lic.classifyValidation
 assert.equal(c(200, { valid: true, license_key: { status: 'active' } }).kind, 'valid')
 assert.equal(c(200, { valid: true, license_key: { status: 'expired' } }).kind, 'valid', 'server says valid: never lock')
+assert.equal(c(200, { valid: false, license_key: { status: 'active' } }).kind, 'transient', 'only valid:true unlocks')
 assert.equal(c(200, null).kind, 'transient')
-assert.equal(c(404, { valid: false, license_key: { status: 'active' } }).kind, 'transient', '404 with a key is not "not found"')
-assert.equal(c(404, { error: 'not found' }).kind, 'transient', '404 without valid:false is not Lemon Squeezy')
+assert.equal(c(404, { error: 'license_key not found.' }).kind, 'not_found', 'error-only 404')
+assert.equal(c(404, { valid: false, error: 'license_key not found.', license_key: null }).kind, 'not_found')
+assert.equal(c(404, { valid: false, license_key: { status: 'active' }, error: 'not found' }).kind, 'transient', '404 with a key is not "not found"')
+assert.equal(c(404, { error: 'license_key instance not found.' }).kind, 'transient', 'instance not found is not key not found')
+assert.equal(c(404, { error: 'Page missing' }).kind, 'transient', '404 without "not found" is not Lemon Squeezy')
 
 console.info('licence: ok')

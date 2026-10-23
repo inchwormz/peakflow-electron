@@ -61,7 +61,7 @@ console.warn = () => {}
 const { getSnapGridService, initSnapGrid, destroySnapGrid } = await import(srcUrl('src/main/services/snapgrid.ts'))
 const s = g.__sg
 const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)) }
-const svc = getSnapGridService()
+let svc = getSnapGridService()
 const drag = async (allowedWhenDragging = s.allowed): Promise<void> => {
   s.allowed = allowedWhenDragging
   s.onDrag!({ e: 'start', pid: 42, windowId: 7 })
@@ -72,14 +72,32 @@ const drag = async (allowedWhenDragging = s.allowed): Promise<void> => {
   await new Promise((r) => setTimeout(r, 100))
 }
 
-// 1. Trial over at launch: drag-snapping never starts; keys move nothing
+// 1a. Trial over at launch, first thing is a drag: no preview, no snap, the
+// notice once, then the drag watch stops
 s.allowed = false
 initSnapGrid()
 await settle()
-assert.equal(s.watching, false, 'no drag watch without access')
+assert.equal(s.watching, true, 'watch kept only until the notice is shown')
+await drag(false)
+assert.equal(s.previews, 0, 'no preview')
+assert.equal(s.frames, 0, 'no snap')
+assert.deepEqual(s.panels, ['snapgrid'], 'first blocked drag opens the trial-ended screen')
+assert.equal(s.watching, false, 'then drag-snapping is off')
+assert.equal(await svc.applyLayout('left'), 'Your trial has ended')
+assert.deepEqual(s.panels, ['snapgrid'], 'only once')
+destroySnapGrid()
+
+// 1b. Trial over at launch, first thing is a key: keys move nothing, notice once, watch stops
+s.panels.length = 0; s.licence.length = 0
+s.allowed = false
+initSnapGrid()
+svc = getSnapGridService()
+await settle()
 assert.equal(await svc.applyLayout('left'), 'Your trial has ended')
 assert.equal(s.frames, 0)
 assert.deepEqual(s.panels, ['snapgrid'], 'first blocked key opens the trial-ended screen')
+await settle()
+assert.equal(s.watching, false, 'drag watch stops after the notice')
 await svc.applyLayout('right')
 await svc.arrange('grid')
 assert.deepEqual(s.panels, ['snapgrid'], 'only once')
@@ -89,6 +107,7 @@ destroySnapGrid()
 s.panels.length = 0; s.previews = 0; s.frames = 0; s.licence.length = 0
 s.allowed = true
 initSnapGrid()
+svc = getSnapGridService()
 await settle()
 assert.equal(s.watching, true, 'drag watch on with access')
 await drag(true)

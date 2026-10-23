@@ -12,7 +12,7 @@
  *   Windows always has Snap for drags, so SnapGrid adds keys and layouts there.
  * - Without access (trial ended, licence ended) drag-snapping is off: no
  *   preview, no snap. The first blocked key press or drag opens the panel's
- *   "trial ended" screen once per run (S14, 24 Oct 2026).
+ *   "trial ended" screen once per run, then the drag watch stops (S14, 24 Oct 2026).
  */
 
 import { BrowserWindow, screen, shell } from 'electron'
@@ -308,6 +308,8 @@ class SnapGridService {
       } catch (err) {
         console.warn('[SnapGrid] trial-ended notice failed:', err)
       }
+      // Notice shown: the drag watch is no longer needed without access
+      void this.refreshDragWatch()
     }
     return 'Your trial has ended'
   }
@@ -328,7 +330,9 @@ class SnapGridService {
     if (process.platform !== 'darwin') return
     const seq = ++this.dragSeq
     this.osDrag = await windowSnap.osHandlesEdgeDrag()
-    const wanted = this.conf().drag_snap && !this.osDrag && (await this.hasAccess())
+    // Without access the watch stays on only until the one "trial ended"
+    // notice has been shown, so the first drag can explain why nothing snaps.
+    const wanted = this.conf().drag_snap && !this.osDrag && ((await this.hasAccess()) || !this.trialNoticeShown)
     if (seq !== this.dragSeq) return // a newer refresh decides
     if (wanted) windowSnap.startDragWatch((e) => this.onDrag(e))
     else windowSnap.stopDragWatch()
