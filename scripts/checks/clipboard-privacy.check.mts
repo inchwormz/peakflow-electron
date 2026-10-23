@@ -104,8 +104,9 @@ function fakeWin32() {
   let seq = 100
   let isOpen = false
   const names = new Map<string, number>()
-  const fail = { setOnCall: -1, enumShort: false }
+  const fail = { setOnCall: -1, enumShort: false, allocOnCall: -1 }
   let setCalls = 0
+  let allocCalls = 0
   const api = {
     OpenClipboard: () => (isOpen ? false : (isOpen = true)),
     CloseClipboard: () => { isOpen = false; if (pending) { board = pending; pending = null } return true },
@@ -126,7 +127,7 @@ function fakeWin32() {
     },
     RegisterClipboardFormatW: (n: string) => { if (!names.has(n)) names.set(n, 0xc000 + names.size); return names.get(n)! },
     GetClipboardSequenceNumber: () => seq,
-    GlobalAlloc: (_f: number, n: number) => ({ mem: new Uint8Array(n) }),
+    GlobalAlloc: (_f: number, n: number) => (allocCalls++ === fail.allocOnCall ? null : { mem: new Uint8Array(n) }),
     GlobalLock: (h: H) => h,
     GlobalUnlock: () => true,
     GlobalSize: (h: H) => h.mem.length,
@@ -191,6 +192,14 @@ function fakeWin32() {
   win._useFakeWin32ForChecks(f.api, f.koffi)
   f.put(13, 'original')
   f.fail.setOnCall = 2
+  assert.equal(await win.saveAndWriteOwnText(0n, 'dictated'), null)
+  assert.equal(f.text(), 'original')
+}
+{ // Not enough memory to prepare the way back: nothing is touched
+  const f = fakeWin32()
+  win._useFakeWin32ForChecks(f.api, f.koffi)
+  f.put(13, 'original')
+  f.fail.allocOnCall = 5 // our write takes 5 blocks; the 6th is the copy of the original
   assert.equal(await win.saveAndWriteOwnText(0n, 'dictated'), null)
   assert.equal(f.text(), 'original')
 }

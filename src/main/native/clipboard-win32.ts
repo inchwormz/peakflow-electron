@@ -261,12 +261,18 @@ export async function saveAndWriteOwnText(hwnd: bigint, text: string): Promise<{
       ]
     })
     if (!blocks) return null
-    if (!install(blocks)) {
-      // Put the original back; if even that fails, install() has left it empty
-      const back = allocate(saved)
-      if (back) install(back)
+    // Prepare the way back before touching the clipboard
+    const back = allocate(saved)
+    if (!back) {
+      release(blocks)
       return null
     }
+    if (!install(blocks)) {
+      // Put the original back; if even that fails, install() has left it empty
+      install(back)
+      return null
+    }
+    release(back)
     result = { saved }
   } finally {
     w.CloseClipboard()
