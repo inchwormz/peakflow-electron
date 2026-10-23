@@ -26,7 +26,10 @@ installTsHooks({
     getState: () => ({ enabled: ${S}.enabled, opacity: 0.5 }),
     toggle: () => ${S}.calls.push('RAW-TOGGLE'),
     requestToggle: async () => { ${S}.calls.push('requestToggle') },
-    setOpacity: (v) => ${S}.calls.push('opacity:' + v) })`)
+    setOpacity: (v) => ${S}.calls.push('opacity:' + v) })`),
+  './launcher': fake(`export const openLauncher = () => ${S}.calls.push('launcher');
+    export const openLauncherSettings = () => ${S}.calls.push('launcher:settings');
+    export const launcherHotkey = () => 'Control+Alt+Space'`)
 })
 const { buildContextMenu } = await import(srcUrl('src/main/tray.ts'))
 
@@ -46,5 +49,14 @@ for (const name of ['Liquid Focus', 'ScreenSlap', 'QuickBoard']) top.find((i) =>
 assert.ok(!g.__tray.calls.includes('RAW-TOGGLE'), 'tray never calls the unguarded toggle()')
 assert.deepEqual(g.__tray.calls.slice(0, 3), ['requestToggle', 'requestToggle', 'opacity:0.7'])
 assert.deepEqual(g.__tray.calls.slice(3), ['open:liquidfocus', 'open:screenslap', 'open:quickboard'])
+
+// The launcher and its settings are reachable from the menu, whatever its shortcut (Raycast clash)
+g.__tray.calls = []
+const items = buildContextMenu() as Array<Item & { accelerator?: string }>
+const open = items.find((i) => i.label === 'Open Launcher')!
+assert.equal(open.accelerator, 'Control+Alt+Space', 'shows the shortcut in use')
+open.click!()
+items.find((i) => i.label === 'Launcher Settings…')!.click!()
+assert.deepEqual(g.__tray.calls, ['launcher', 'launcher:settings'])
 
 console.log('tray-access: ok')

@@ -10,8 +10,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { PanelToolModule } from '../../types'
 import { invoke, useIpcEvent, useInvoke, formatAccelerator, isMac, builtInKey } from '../../hooks'
-import { AppIcon, Banner, Btn, Empty, Grp, IconBtn, Note, Rec, Row, Seg, SliderRow, TextTabs, Toggle } from '../../kit'
+import { AppIcon, Empty, Grp, IconBtn, Note, Rec, Row, Seg, SliderRow, TextTabs, Toggle } from '../../kit'
 import { useNav } from '../../nav'
+import { PermissionNotice } from '../../permission'
 
 interface FocusDimState {
   enabled: boolean
@@ -96,7 +97,6 @@ function useStatus(): string {
 
 function Main(): React.JSX.Element {
   const [s, patch] = useFocusDim()
-  const [axOk] = useAccessibility()
   if (!s) return <div style={{ height: 200 }} />
   const pct = Math.round(s.opacity * 100)
   const setPct = (v: number): void => {
@@ -105,18 +105,7 @@ function Main(): React.JSX.Element {
   }
   return (
     <>
-      {!axOk ? (
-        <>
-          <Banner icon="shield">
-            <b>Needs Accessibility access</b>
-            <br />
-            FocusDim uses it to see which window you’re in.
-          </Banner>
-          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY).catch(() => {})}>
-            Open System Settings
-          </Btn>
-        </>
-      ) : null}
+      <PermissionNotice kind="accessibility" why="FocusDim uses it to see which window you’re in." />
       <Grp>
         <Row
           label="Dim other windows"
@@ -171,16 +160,6 @@ function Main(): React.JSX.Element {
       </Note>
     </>
   )
-}
-
-/** macOS Accessibility permission (always true elsewhere). */
-function useAccessibility(): [boolean] {
-  const [ok, setOk] = useState(true)
-  useEffect(() => {
-    if (!isMac()) return
-    invoke<boolean>(IPC_INVOKE.APP_CHECK_ACCESSIBILITY).then((v) => setOk(v !== false)).catch(() => setOk(true))
-  }, [])
-  return [ok]
 }
 
 /* ─── settings ───────────────────────────────────────────────────────────── */

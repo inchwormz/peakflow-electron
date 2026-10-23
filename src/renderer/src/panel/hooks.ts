@@ -151,7 +151,7 @@ export const isMac = (): boolean => window.peakflow.platform === 'darwin'
 export const builtInKey = (accel: string): string => builtInAccel(accel, window.peakflow.platform) ?? ''
 
 /** Shown under shortcut lists on Windows, where the Ctrl+Alt letter and number keys are off (review B5). */
-export const ALTGR_NOTE = 'On Windows, Ctrl+Alt with a letter, number or symbol types characters such as €, @ and [ on many keyboards, so PeakFlow leaves those keys alone.'
+export const ALTGR_NOTE = 'On Windows, Ctrl+Alt plus a letter, number or symbol types characters such as €, @ and [ on many keyboards, so PeakFlow doesn’t use those keys.'
 
 /** 'CommandOrControl+Shift+V' → '⌘⇧V' on macOS, 'Ctrl+Shift+V' elsewhere. */
 export function formatAccelerator(accel: string): string {

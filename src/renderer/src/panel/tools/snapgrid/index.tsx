@@ -12,8 +12,9 @@ import { SNAP_LAYOUTS, ARRANGE_LAYOUTS, SNAP_UNDO_ACCEL } from '@shared/snapgrid
 import type { FracRect, SnapGridState, SnapLayout } from '@shared/snapgrid-layouts'
 import type { PanelToolModule } from '../../types'
 import { invoke, useIpcEvent, useInvoke, formatAccelerator, isMac, builtInKey, ALTGR_NOTE } from '../../hooks'
-import { AppIcon, Banner, Btn, Grp, Note, Rec, Row, Toggle } from '../../kit'
+import { AppIcon, Btn, Grp, Note, Rec, Row, Toggle } from '../../kit'
 import { useNav } from '../../nav'
+import { PermissionNotice } from '../../permission'
 import './snapgrid.css'
 
 /** formatAccelerator leaves Enter and Backspace as words; macOS menus use symbols. '' when the layout has no key here. */
@@ -77,7 +78,6 @@ const leavePreview = (e: React.FocusEvent): void => {
 function Main(): React.JSX.Element {
   const [s, reload] = useSnapGrid()
   const nav = useNav()
-  const [axOk] = useAccessibility()
   const [hover, setHover] = useState<SnapLayout | null>(null)
   // Never leave a preview on screen once the panel goes away
   useIpcEvent(IPC_SEND.PANEL_VISIBILITY, (v) => {
@@ -105,18 +105,7 @@ function Main(): React.JSX.Element {
   const mac = isMac()
   return (
     <>
-      {!axOk ? (
-        <>
-          <Banner icon="shield">
-            <b>Needs Accessibility access</b>
-            <br />
-            SnapGrid uses it to move other apps’ windows.
-          </Banner>
-          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY).catch(() => {})}>
-            Open System Settings
-          </Btn>
-        </>
-      ) : null}
+      <PermissionNotice kind="accessibility" why="SnapGrid uses it to move other apps’ windows." />
 
       <div className="sg-cap">
         Front window
@@ -220,16 +209,6 @@ function Main(): React.JSX.Element {
       </Grp>
     </>
   )
-}
-
-/** macOS Accessibility permission (always true elsewhere). */
-function useAccessibility(): [boolean] {
-  const [ok, setOk] = useState(true)
-  useEffect(() => {
-    if (!isMac()) return
-    invoke<boolean>(IPC_INVOKE.APP_CHECK_ACCESSIBILITY).then((v) => setOk(v !== false)).catch(() => setOk(true))
-  }, [])
-  return [ok]
 }
 
 /* ─── settings and shortcuts ─────────────────────────────────────────────── */

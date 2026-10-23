@@ -229,6 +229,14 @@ export const IPC_INVOKE = {
   APP_GET_ICON: 'app:get-icon',
   APP_CHECK_ACCESSIBILITY: 'app:check-accessibility',
   APP_OPEN_ACCESSIBILITY: 'app:open-accessibility',
+  /** macOS permission status with the shared advice text (shared/mac-permissions.ts) */
+  APP_PERMISSION_STATUS: 'app:permission-status',
+  APP_OPEN_PERMISSION: 'app:open-permission',
+  /** macOS set-up page: where PeakFlow runs from, and its permissions */
+  APP_SETUP_INFO: 'app:setup-info',
+  APP_MOVE_TO_APPLICATIONS: 'app:move-to-applications',
+  /** Mac update download progress (UpdateProgress) */
+  APP_UPDATE_STATUS: 'app:update-status',
 
   // Bug Report
   BUGREPORT_SEND_EMAIL: 'bugreport:send-email',
@@ -267,6 +275,8 @@ export const IPC_SEND = {
   // One-app panel (v2): main asks the panel to show a route (e.g. 'quickboard')
   PANEL_NAVIGATE: 'panel:navigate',
   PANEL_VISIBILITY: 'panel:visibility',
+  /** Mac update download progress changed (UpdateProgress) */
+  APP_UPDATE_PROGRESS: 'app:update-progress',
   /** v2 mini timer: its colour changed ('dark' | 'light') */
   LIQUIDFOCUS_MINI_THEME: 'liquidfocus:mini-theme',
   /** v2: the detector's state, forwarded to the mini timer */

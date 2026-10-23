@@ -14,6 +14,7 @@ import type {
   AiChunk, AiProviderId, AiStatus, AiTextAction, CurrencyRates, LauncherItem, LauncherOpenInfo, LauncherProcess,
   LauncherRunResult, LauncherSettings, SelectionResult, DictationHoldKey, DictationSettings
 } from '@shared/launcher/types'
+import type { PermissionStatus } from '@shared/mac-permissions'
 import { rankItems, type Usage } from '@shared/launcher/rank'
 import { calculate, type CalcResult } from '@shared/launcher/calc'
 import { invoke, isMac, formatAccelerator } from '../panel/hooks'
@@ -741,6 +742,18 @@ function LinkForm({ editing, onDone }: { editing: LauncherItem | null; onDone: (
 
 // ─── settings ────────────────────────────────────────────────────────────────
 
+/**
+ * The line under snippet and dictation rows when Accessibility is missing:
+ * the shared "macOS forgot PeakFlow" wording after an update (review S1).
+ */
+function useAccessibilityNote(): string {
+  const [ax, setAx] = useState<PermissionStatus | null>(null)
+  useEffect(() => {
+    if (isMac()) void invoke<PermissionStatus | null>(IPC_INVOKE.APP_PERMISSION_STATUS, 'accessibility').then(setAx).catch(() => {})
+  }, [])
+  return ax?.lost ? ax.advice : 'Needs the Accessibility permission (the same one QuickBoard uses)'
+}
+
 function acceleratorFrom(e: React.KeyboardEvent): string | null {
   const key = e.key
   if (['Meta', 'Control', 'Alt', 'Shift'].includes(key)) return null
@@ -760,6 +773,7 @@ function acceleratorFrom(e: React.KeyboardEvent): string | null {
 
 function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void; onWords: () => void }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
+  const axNote = useAccessibilityNote()
   const set = (key: string, value: unknown): void => void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SET_SETTING, key, value).then(onChange)
   const usable = (aiStatus?.providers ?? []).filter((p) => p.installed && p.signedIn !== false)
   const selectedAi = usable.find((p) => p.id === aiStatus?.selected)
@@ -799,7 +813,7 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
         <div>
           <div className="lbl">Expand snippets as you type</div>
           <div className="sub">
-            {!settings.expansionEnabled ? 'Off' : settings.expansionActive ? 'On in every app' : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
+            {!settings.expansionEnabled ? 'Off' : settings.expansionActive ? 'On in every app' : isMac() ? axNote : 'Starting…'}
           </div>
         </div>
         <span className="row">
@@ -869,6 +883,7 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  const axNote = useAccessibilityNote()
   useEffect(() => {
     void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
   }, [])
@@ -904,7 +919,7 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
         <div>
           <div className="lbl">Dictation</div>
           <div className="sub">
-            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
+            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? axNote : 'Starting…'}
           </div>
         </div>
         <span className="row">
