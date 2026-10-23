@@ -256,6 +256,23 @@ for (let i = 0; i < 14 * 24 * 60 + 10; i++) {
 }
 assert.equal(lic.getLicenceState(), 'lapsed', '20,000 short runs with rollbacks: locked')
 
+// 6b5. Sol round 5: the launch minute is paid in advance, not added on top
+customer(0)
+reply = 'network'
+lic.getLicenceState()
+mono += HOUR; now += HOUR
+lic.getLicenceState()
+assert.equal(store().get('offline_ms'), HOUR, 'one hour running counts exactly one hour')
+customer(0)
+for (let i = 0; i < 7 * 24 * 60; i++) {
+  lic.simulateRestartForChecks()
+  lic.getLicenceState()
+  mono += 60_000; now += 60_000
+  lic.getLicenceState()
+}
+assert.equal(lic.getLicenceState(), 'licensed', 'restart every minute for 7 days: 7 days counted, not 14')
+assert.ok(Math.abs((store().get('offline_ms') as number) - 7 * DAY) <= 2 * 60_000, 'restart every minute: real time only')
+
 // 6c. Clock moved forward a year while online: the check passes, still licensed
 customer(HOUR)
 now += 365 * DAY

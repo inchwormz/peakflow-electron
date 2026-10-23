@@ -264,6 +264,9 @@ function offlineMs(): number {
 
 /** This run's last look: monotonic and wall time together. */
 let lastLook: { mono: number; wall: number } | null = null
+/** Running time this run has already been charged for in advance. */
+let prepaidMs = 0
+const PREPAID_MS = 60 * 1000
 
 /**
  * Add the time since the last look to the offline total.
@@ -282,15 +285,30 @@ function tallyOffline(now: number): number {
   const running = lastLook ? Math.max(0, m - lastLook.mono) : 0
   const expected = lastLook ? lastLook.wall + running : -Infinity
   const extra = high === null ? 0 : now - Math.max(high, expected)
-  // The first look of each run charges at least a minute: running time under
-  // a minute isn't written, so this stops many short runs from adding nothing.
-  const add = running + Math.min(Math.max(0, extra), MAX_STEP_DAYS * DAY_MS) + (lastLook ? 0 : 60 * 1000)
-  if (lastLook && add < 60 * 1000 && now >= lastLook.wall - CLOCK_SKEW_MS) return total
+  const gap = Math.min(Math.max(0, extra), MAX_STEP_DAYS * DAY_MS)
+  let add: number
+  if (!lastLook) {
+    // First look of a run: charge at least a minute, paid in advance, so many
+    // short runs (running time under a minute isn't written) can't add nothing.
+    add = Math.max(gap, PREPAID_MS)
+    prepaidMs = add - gap
+  } else {
+    // Later running time first uses up what was paid in advance
+    const used = Math.min(prepaidMs, running)
+    prepaidMs -= used
+    add = running - used + gap
+    if (add < 60 * 1000 && now >= lastLook.wall - CLOCK_SKEW_MS) {
+      prepaidMs += used // nothing written: keep the advance for next time
+      return total
+    }
+  }
   lastLook = { mono: m, wall: now }
   const next = total + add
   licenseStore.set('offline_ms', next)
   licenseStore.set('last_seen', new Date(now).toISOString())
-  if (high === null || now > high) licenseStore.set('wall_high', new Date(now).toISOString())
+  // Time already paid in advance counts as seen, so the next run's gap starts after it
+  const paidTo = now + prepaidMs
+  if (high === null || paidTo > high) licenseStore.set('wall_high', new Date(paidTo).toISOString())
   return next
 }
 
@@ -302,6 +320,7 @@ function resetOffline(): void {
   const high = readTime('wall_high')
   if (high === null || now > high) licenseStore.set('wall_high', new Date(now).toISOString())
   lastLook = { mono: mono(), wall: now }
+  prepaidMs = 0
 }
 
 /** Statuses only a real Lemon Squeezy answer can set; they lock the tools. */
@@ -362,6 +381,7 @@ function backgroundCheckDue(state: LicenceState, now: number): boolean {
 /** scripts/checks only: forget this run's in-memory state, as if PeakFlow restarted. */
 export function simulateRestartForChecks(): void {
   lastLook = null
+  prepaidMs = 0
   lastAttemptMono = null
   lastLockedAttemptMono = null
 }
