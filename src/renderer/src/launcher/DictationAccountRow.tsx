@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
-import type { DictationAccount } from '@shared/dictation-account'
+import type { DictationAccount, TopupAmount } from '@shared/dictation-account'
 import { invoke } from '../panel/hooks'
 
 // copy: Get dictation
 const GET_DICTATION = 'Get dictation'
-// copy: Add $5
-const ADD_FIVE = 'Add $5'
+// copy: Add $10 (the chosen top-up amount)
+const addAmount = (amount: number): string => `Add $${amount}`
+// copy: Top-up amount
+const AMOUNT_LABEL = 'Top-up amount'
 // copy: Dictation balance
 const BALANCE_LABEL = 'Dictation balance'
 // copy: Dictation
 const DICTATION_LABEL = 'Dictation'
 // copy: $5 buys about 15 hours of talking. Unused time never expires.
 const OFFER = '$5 buys about 15 hours of talking. Unused time never expires.'
-// copy: Dictation is paused. Add $5 to keep going.
-const PAUSED = 'Dictation is paused. Add $5 to keep going.'
+// copy: Dictation is paused. Top up to keep going.
+const PAUSED = 'Dictation is paused. Top up to keep going.'
 // copy: Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.
 const DISABLED = 'Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.'
 // copy: You've used today's 3 hours. Dictation is back within 24 hours.
@@ -26,6 +28,7 @@ export function DictationAccountRow(): React.JSX.Element | null {
   const [account, setAccount] = useState<DictationAccount>({ state: 'hidden' })
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState('')
+  const [chosen, setChosen] = useState<TopupAmount | null>(null)
   useEffect(() => {
     let live = true
     let revision = 0
@@ -64,11 +67,14 @@ export function DictationAccountRow(): React.JSX.Element | null {
     // copy: $4.07 left · about 15 hours (or about 1 hour / 30 minutes / 1 minute)
     balance = `$${dollars} left · about ${hours >= 1 ? `${hours} ${hours === 1 ? 'hour' : 'hours'}` : `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`}`
   }
+  const amounts = 'amounts' in account ? account.amounts ?? [] : []
+  // The smallest offered amount until the person picks another; an amount no longer offered falls back too
+  const amount = chosen !== null && amounts.includes(chosen) ? chosen : amounts[0]
   const open = async (): Promise<void> => {
     setOpening(true)
     setError('')
     try {
-      if (!await invoke<boolean>(IPC_INVOKE.DICTATION_CHECKOUT)) setError(CHECKOUT_ERROR)
+      if (!await invoke<boolean>(IPC_INVOKE.DICTATION_CHECKOUT, amount)) setError(CHECKOUT_ERROR)
     } catch {
       setError(CHECKOUT_ERROR)
     } finally {
@@ -88,8 +94,17 @@ export function DictationAccountRow(): React.JSX.Element | null {
         {!disabled && empty && <div className="sub">{PAUSED}</div>}
         {!disabled && error && <div className="sub" role="alert">{error}</div>}
       </div>
-      {!disabled && (buy || account.state === 'low' || empty) && (
-        <button className="btn" disabled={opening} onClick={() => void open()}>{buy ? GET_DICTATION : ADD_FIVE}</button>
+      {!disabled && amount !== undefined && (buy || account.state === 'low' || empty) && (
+        <div className="lc-buy">
+          {amounts.length > 1 && (
+            <span className="seg" role="group" aria-label={AMOUNT_LABEL}>
+              {amounts.map((a) => (
+                <button key={a} aria-pressed={a === amount} disabled={opening} onClick={() => setChosen(a)}>${a}</button>
+              ))}
+            </span>
+          )}
+          <button className="btn" disabled={opening} onClick={() => void open()}>{buy ? GET_DICTATION : addAmount(amount)}</button>
+        </div>
       )}
     </div>
   )

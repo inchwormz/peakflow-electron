@@ -62,7 +62,7 @@ function fixture(body: unknown = reply) {
   const opened: string[] = []
   let pending: (() => Promise<void>) | undefined
   const client = core.createAccountClient({
-    topupUrl: buyLink,
+    topupUrls: { 5: buyLink },
     readAuth: () => ({ licence: key, deviceId: device }),
     fetchStatus: async (auth) => {
       requests.push({ key: `Licence ${auth.licence}`, device: auth.deviceId })
@@ -80,9 +80,9 @@ for (const disabled of [{ disabled: true, blocked: null }, { disabled: false, bl
     assert.deepEqual(mapBalanceReply(200, body), body)
     const html = render(body)
     assert.ok(html.includes('Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.'))
-    assert.ok(!html.includes('<button') && !html.includes('Add $5') && !html.includes('Get dictation'))
+    assert.ok(!html.includes('<button') && !html.includes('Add $') && !html.includes('Get dictation'))
     const f = fixture(body)
-    assert.equal(await f.client.openDictationCheckout(), false)
+    assert.equal(await f.client.openDictationCheckout(5), false)
     assert.deepEqual(f.opened, [])
   })
 }
@@ -90,18 +90,18 @@ test('daily limit keeps balance, adds the message, and only low/empty offers a p
   for (const state of ['ok', 'low', 'empty']) {
     const body = { ...reply, state, blocked: 'daily_limit' }
     assert.deepEqual(mapBalanceReply(200, body), body)
-    const html = render(body)
+    const html = render({ ...body, amounts: [5] })
     assert.ok(html.includes('$4.07 left'))
     assert.ok(html.includes("You've used today's 3 hours. Dictation is back within 24 hours."))
     assert.equal(html.includes('<button'), state !== 'ok')
   }
 })
-test('negative safe integer balance stays empty with paused message and Add $5, without an amount', () => {
+test('negative safe integer balance stays empty with paused message and an Add button, without an amount', () => {
   for (const balanceMicros of [-500000, Number.MIN_SAFE_INTEGER]) {
     const body = { ...reply, state: 'empty', balanceMicros, minutesLeft: 0 }
     assert.deepEqual(mapBalanceReply(200, body), body)
-    const html = render(mapBalanceReply(200, body))
-    assert.ok(html.includes('Dictation is paused. Add $5 to keep going.'))
+    const html = render({ ...mapBalanceReply(200, body), amounts: [5] })
+    assert.ok(html.includes('Dictation is paused. Top up to keep going.'))
     assert.ok(html.includes('<button') && html.includes('Add $5'))
     assert.ok(!html.includes(' left') && !html.includes('$-'))
   }
@@ -109,7 +109,7 @@ test('negative safe integer balance stays empty with paused message and Add $5, 
 })
 test('checkout uses the same licence for balance headers and account hash', async () => {
   const f = fixture()
-  assert.equal(await f.client.openDictationCheckout(), true)
+  assert.equal(await f.client.openDictationCheckout(5), true)
   assert.deepEqual(f.requests, [{ key: 'Licence abc', device: 'device-a' }])
   assert.equal(new URL(f.opened[0]).searchParams.get('checkout[custom][account]'), accountHash('abc'))
 })
@@ -117,7 +117,7 @@ test('licence change during balance refetches before opening, including disabled
   for (const disabled of [false, true]) {
     const f = fixture()
     f.waitOn(async () => { f.setKey('new-key'); f.setAnswer({ ...reply, disabled }) })
-    assert.equal(await f.client.openDictationCheckout(), !disabled)
+    assert.equal(await f.client.openDictationCheckout(5), !disabled)
     assert.deepEqual(f.requests.map((r) => r.key), ['Licence abc', 'Licence new-key'])
     assert.equal(f.opened.length, disabled ? 0 : 1)
     if (!disabled) assert.equal(new URL(f.opened[0]).searchParams.get('checkout[custom][account]'), accountHash('new-key'))
@@ -130,7 +130,7 @@ test('concurrent callers share one request per licence/device, then fetch afresh
   f.waitOn(() => gate)
   const first = f.client.getDictationAccount()
   const second = f.client.getDictationAccount()
-  const checkout = f.client.openDictationCheckout()
+  const checkout = f.client.openDictationCheckout(5)
   assert.equal(f.requests.length, 1)
   f.setKey('other')
   const other = f.client.getDictationAccount()
@@ -140,7 +140,7 @@ test('concurrent callers share one request per licence/device, then fetch afresh
   assert.equal(f.requests.length, 3)
   release()
   const results = await Promise.all([first, second, other, device])
-  assert.deepEqual(results, [reply, reply, reply, reply])
+  assert.deepEqual(results, Array(4).fill({ ...reply, amounts: [5] }))
   assert.equal(await checkout, true)
   assert.equal(f.requests.length, 3) // checkout shares the replacement licence's in-flight answer
   await f.client.getDictationAccount()
@@ -151,23 +151,23 @@ test('failed balance is hidden and does not leave a stuck in-flight request', as
   f.waitOn(async () => { throw new Error('offline') })
   assert.deepEqual(await f.client.getDictationAccount(), { state: 'hidden' })
   f.waitOn(async () => {})
-  assert.deepEqual(await f.client.getDictationAccount(), reply)
+  assert.deepEqual(await f.client.getDictationAccount(), { ...reply, amounts: [5] })
   assert.equal(f.requests.length, 2)
 })
 
 test('merged prepaid row renders each balance state and purchase action', () => {
   assert.equal(render({ state: 'hidden' }), '')
-  const offer = render({ state: 'no_addon' })
+  const offer = render({ state: 'no_addon', amounts: [5] })
   assert.ok(offer.includes('Dictation</div>'))
   assert.ok(offer.includes('$5 buys about 15 hours of talking. Unused time never expires.'))
   assert.ok(offer.includes('Get dictation</button>'))
   const ok = render(reply)
   assert.ok(ok.includes('Dictation balance') && ok.includes('$4.07 left · about 15 hours'))
   assert.ok(!ok.includes('<button'))
-  assert.ok(render({ ...reply, state: 'low' }).includes('Add $5</button>'))
-  for (const body of [{ ...reply, state: 'empty' }, { ...reply, balanceMicros: -1 }]) {
+  assert.ok(render({ ...reply, state: 'low', amounts: [5] }).includes('Add $5</button>'))
+  for (const body of [{ ...reply, state: 'empty', amounts: [5] }, { ...reply, balanceMicros: -1, amounts: [5] }]) {
     const html = render(body)
-    assert.ok(html.includes('Dictation is paused. Add $5 to keep going.'))
+    assert.ok(html.includes('Dictation is paused. Top up to keep going.'))
     assert.ok(html.includes('Add $5</button>'))
     assert.ok(!html.includes(' left'))
   }
@@ -183,7 +183,7 @@ test('one server client and device source, one add-on settings row, and clip ref
   const index = read('src/main/dictation/index.ts')
   assert.ok(index.includes('createDictationAccountClient(addonAuth)'))
   assert.ok(index.includes('if (auth) void refreshAddon(true)'))
-  assert.ok(index.includes("addon_empty: 'Dictation is paused. Add $5 to keep going.'"))
+  assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in Launcher Settings'"))
   assert.ok(index.includes('webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)'))
   const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
   assert.ok(row.includes('window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)'))

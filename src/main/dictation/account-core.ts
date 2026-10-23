@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { AddonAuth, AddonStatus } from './addon'
-import type { DictationAccount } from '../../shared/dictation-account'
+import type { DictationAccount, TopupAmount } from '../../shared/dictation-account'
+
+/** Offered in this order; each needs its own buy link */
+export const TOPUP_AMOUNTS: readonly TopupAmount[] = [5, 10, 15, 20]
 
 export function accountHash(key: string): string {
   return createHash('sha256').update(key.trim()).digest('hex')
@@ -25,8 +28,19 @@ export function accountFromStatus(status: AddonStatus): DictationAccount {
   return { state: status.state, balanceMicros: status.balanceMicros!, minutesLeft: status.minutesLeft!, disabled: status.disabled!, blocked: status.blocked ?? null }
 }
 
+/** The configured amounts, in order, whose buy link is a valid Lemon Squeezy checkout. */
+export function availableAmounts(topupUrls: Partial<Record<TopupAmount, string | undefined>>, key: string): TopupAmount[] {
+  return TOPUP_AMOUNTS.filter((amount) => checkoutUrl(topupUrls[amount], key) !== null)
+}
+
+/** Only a listed amount, as a number, picks a checkout; anything else from the renderer is refused. */
+export function isTopupAmount(value: unknown): value is TopupAmount {
+  return typeof value === 'number' && (TOPUP_AMOUNTS as readonly number[]).includes(value)
+}
+
 interface AccountDependencies {
-  topupUrl: string | undefined
+  /** One buy link per amount; an unset amount is not offered */
+  topupUrls: Partial<Record<TopupAmount, string | undefined>>
   readAuth: () => AddonAuth | null
   fetchStatus: (auth: AddonAuth) => Promise<AddonStatus>
   openExternal: (url: string) => Promise<unknown>
@@ -34,20 +48,24 @@ interface AccountDependencies {
 
 export function createAccountClient(deps: AccountDependencies): {
   getDictationAccount: () => Promise<DictationAccount>
-  openDictationCheckout: () => Promise<boolean>
+  openDictationCheckout: (amount: unknown) => Promise<boolean>
 } {
   const inFlight = new Map<string, Promise<DictationAccount>>()
   const auth = (): AddonAuth | null => deps.readAuth()
   const licence = (): string => auth()?.licence.trim() || ''
 
   function balance(key: string, device: string): Promise<DictationAccount> {
-    if (!key || !checkoutUrl(deps.topupUrl, key)) return Promise.resolve({ state: 'hidden' })
+    const amounts = availableAmounts(deps.topupUrls, key)
+    if (!key || !amounts.length) return Promise.resolve({ state: 'hidden' })
     const id = JSON.stringify([key, device])
     const pending = inFlight.get(id)
     if (pending) return pending
     const request = (async (): Promise<DictationAccount> => {
       try {
-        return accountFromStatus(await deps.fetchStatus({ licence: key, deviceId: device }))
+        const account = accountFromStatus(await deps.fetchStatus({ licence: key, deviceId: device }))
+        if (account.state === 'no_addon') return { state: 'no_addon', amounts }
+        if ('balanceMicros' in account) return { ...account, amounts }
+        return account
       } catch {
         // Do not log responses or network exceptions that might contain credentials.
         console.warn('[Dictation:Account] Balance unavailable')
@@ -64,7 +82,8 @@ export function createAccountClient(deps: AccountDependencies): {
     return balance(current?.licence.trim() || '', current?.deviceId || '')
   }
 
-  async function openDictationCheckout(): Promise<boolean> {
+  async function openDictationCheckout(amount: unknown): Promise<boolean> {
+    if (!isTopupAmount(amount)) return false
     let key = licence()
     while (key) {
       const account = await balance(key, auth()?.deviceId || '')
@@ -75,7 +94,7 @@ export function createAccountClient(deps: AccountDependencies): {
         continue
       }
       if (account.state === 'hidden' || account.state === 'devices' || ('disabled' in account && (account.disabled || account.blocked === 'disabled'))) return false
-      const url = checkoutUrl(deps.topupUrl, key)
+      const url = checkoutUrl(deps.topupUrls[amount], key)
       if (!url) return false
       try {
         await deps.openExternal(url)

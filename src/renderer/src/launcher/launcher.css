@@ -75,6 +75,7 @@ html, body { background: #0f0f0f; overflow: hidden; }
 .lc .lc-set .lbl { font-size: var(--t-body); color: var(--text); }
 .lc .lc-set .sub { font-size: var(--t-sm); color: var(--text-3); margin-top: 2px; }
 .lc .lc-rec { min-width: 120px; }
+.lc .lc-buy { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .lc .lc-prov { display: flex; flex-direction: column; gap: 8px; padding: 6px 8px 10px; }
 .lc .lc-card { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--line-strong); }
 .lc .lc-card .grow { flex: 1; min-width: 0; }

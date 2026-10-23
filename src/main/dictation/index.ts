@@ -272,8 +272,8 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
   no_speech: 'Didn’t hear anything',
   failed: 'Couldn’t turn that into text',
   model_unavailable: 'Couldn’t turn that into text',
-  // copy: Dictation is paused. Add $5 to keep going.
-  addon_empty: 'Dictation is paused. Add $5 to keep going.',
+  // copy: Dictation is paused. Top up in Launcher Settings
+  addon_empty: 'Dictation is paused. Top up in Launcher Settings',
   addon_devices: 'Dictation is already on two other computers',
   addon_daily: 'That’s 3 hours today. Dictation starts again tomorrow',
   addon_off: 'Dictation isn’t on for this licence',
@@ -477,7 +477,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
   h(IPC_INVOKE.DICTATION_ACCOUNT, (e) => fromLauncher(e) ? getDictationAccount() : { state: 'hidden' })
-  h(IPC_INVOKE.DICTATION_CHECKOUT, (e) => fromLauncher(e) ? openDictationCheckout() : false)
+  h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromLauncher(e) ? openDictationCheckout(amount) : false)
   h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromLauncher(e)) return settings()
