@@ -107,3 +107,20 @@ test('no row text or pill text still promises a fixed $5 top-up', () => {
   assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in Launcher Settings'"))
   assert.ok(index.includes('openDictationCheckout(amount)'))
 })
+
+// ─── review round 1 (24 Oct, Sol app 1 P2; Sol app 2 P3) ────────────────────
+
+test('[AM1] with one amount and no choice shown, Get dictation names the price', () => {
+  for (const a of [5, 10, 20]) {
+    const html = render({ state: 'no_addon', amounts: [a] })
+    assert.ok(html.includes(`Get dictation for $${a}</button>`), String(a))
+    assert.ok(!html.includes('Top-up amount'))
+  }
+  assert.ok(render({ state: 'no_addon', amounts: four }).includes('>Get dictation</button>'), 'the choice shows the price when there are several')
+})
+
+test('[AM2] a chosen amount that is no longer offered falls back to the smallest offered one', () => {
+  const html = render({ ...reply, state: 'low', amounts: [5, 20] }, 15)
+  assert.ok(html.includes('aria-pressed="true">$5</button>') && html.includes('Add $5</button>'))
+  assert.ok(render({ ...reply, state: 'low', amounts: [10, 20] }, 20).includes('Add $20</button>'))
+})

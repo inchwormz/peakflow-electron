@@ -5,6 +5,8 @@ import { invoke } from '../panel/hooks'
 
 // copy: Get dictation
 const GET_DICTATION = 'Get dictation'
+// copy: Get dictation for $10 (only one amount on sale, so no amount choice shows the price)
+const getDictationFor = (amount: number): string => `Get dictation for $${amount}`
 // copy: Add $10 (the chosen top-up amount)
 const addAmount = (amount: number): string => `Add $${amount}`
 // copy: Top-up amount
@@ -103,7 +105,7 @@ export function DictationAccountRow(): React.JSX.Element | null {
               ))}
             </span>
           )}
-          <button className="btn" disabled={opening} onClick={() => void open()}>{buy ? GET_DICTATION : addAmount(amount)}</button>
+          <button className="btn" disabled={opening} onClick={() => void open()}>{buy ? (amounts.length > 1 ? GET_DICTATION : getDictationFor(amount)) : addAmount(amount)}</button>
         </div>
       )}
     </div>

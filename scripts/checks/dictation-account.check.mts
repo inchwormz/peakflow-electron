@@ -160,7 +160,7 @@ test('merged prepaid row renders each balance state and purchase action', () => 
   const offer = render({ state: 'no_addon', amounts: [5] })
   assert.ok(offer.includes('Dictation</div>'))
   assert.ok(offer.includes('$5 buys about 15 hours of talking. Unused time never expires.'))
-  assert.ok(offer.includes('Get dictation</button>'))
+  assert.ok(offer.includes('Get dictation for $5</button>'))
   const ok = render(reply)
   assert.ok(ok.includes('Dictation balance') && ok.includes('$4.07 left · about 15 hours'))
   assert.ok(!ok.includes('<button'))
