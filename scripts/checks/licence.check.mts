@@ -82,6 +82,8 @@ function customer(ago: number): void {
   store().set('license_status', 'active')
   store().set('validation_timestamp', iso(now - ago))
   store().set('last_check_attempt', iso(now - ago))
+  store().set('offline_ms', ago) // offline time since that check
+  store().set('last_seen', iso(now))
   store().set('trial_expires_at', 'enc:' + iso(now - 400 * DAY)) // trial long over
 }
 const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)) }
@@ -163,15 +165,19 @@ for (const [label, r] of [
 async function offlineHours(n: number): Promise<void> {
   for (let i = 0; i < n; i++) { pass(HOUR); await pro(); await settle() }
 }
+/** n days of the app in use offline: one press every 12 hours. */
+async function offlineDays(n: number): Promise<void> {
+  for (let i = 0; i < 2 * n; i++) { pass(12 * HOUR); await pro(); await settle() }
+}
 
-// 5. The 14-day cap: 14 days since the last good check AND a day of failed
-// checks while running. Back online unlocks on the next use.
+// 5. The 14-day cap: 14 days of offline time since the last good check.
+// Back online unlocks on the next use.
 customer(13 * DAY)
 reply = 'network'
 await offlineHours(23)
-assert.equal(await pro(), true, 'day 14, 23 failed hours: in grace')
+assert.equal(await pro(), true, 'day 13 + 23 h offline: in grace')
 await offlineHours(2)
-assert.equal(await pro(), false, 'day 14+, 25 failed hours: locked')
+assert.equal(await pro(), false, 'day 14 + 1 h offline: locked')
 assert.equal((await checkAccess('PeakFlow')).licence, 'offline', 'Plan screen says "can’t check"')
 const before = validates()
 assert.equal(await pro(), false)
@@ -180,15 +186,16 @@ pass(61 * 1000)
 reply = valid()
 assert.equal(await pro(), true, 'back online: unlocked on the same key press')
 assert.equal(store().get('license_status'), 'active')
-assert.equal(store().get('failed_check_hours'), undefined, 'failed hours reset')
-// Offline 30 days with the app barely open: not locked (needs a day of running time)
-customer(30 * DAY)
+assert.equal(store().get('offline_ms'), 0, 'offline time reset')
+// Sparse use can't stretch it far: one gap counts at most 3 days
+customer(0)
 reply = 'network'
-await offlineHours(3)
-assert.equal(await pro(), true, '30 days, 3 failed hours: in grace')
+const weeks: boolean[] = []
+for (let w = 0; w < 6; w++) { pass(7 * DAY); weeks.push(await pro()); await settle() }
+assert.deepEqual(weeks, [true, true, true, true, false, false], 'used weekly offline: locks in week 5 (15 days counted)')
 
 // 6. Clock changes
-// 6a. Clock moved back a year: trusted, re-checked, never locked by a day of failures
+// 6a. Clock moved back a year: licensed, re-checked once, adds no offline time
 customer(HOUR)
 now -= 365 * DAY
 reply = 'network'
@@ -199,10 +206,14 @@ assert.equal(await pro(), true)
 assert.equal(validates(), 1, 'clock back: …but only once an hour (monotonic)')
 await offlineHours(48)
 assert.equal(await pro(), true, 'clock back + 2 days offline: licensed')
-// 6b. …but moving the clock back can't extend the grace forever
-store().set('failed_check_hours', 14 * 24 - 1)
-await offlineHours(2)
-assert.equal(await pro(), false, 'clock back: locked after 14 days of failed hours (2099 timestamp in 2050 case)')
+now += 365 * DAY
+// 6b. …and moving the clock back can't extend the grace: real time still counts
+customer(13 * DAY + 20 * HOUR)
+reply = 'network'
+await pro(); await settle()
+now -= 365 * DAY
+await offlineHours(5)
+assert.equal(await pro(), false, 'clock back: locked once 14 days of real offline time pass')
 now += 365 * DAY
 // 6c. Clock moved forward a year while online: the check passes, still licensed
 customer(HOUR)
@@ -211,11 +222,13 @@ reply = valid()
 assert.equal(await pro(), true, 'clock forward + online: licensed')
 await settle()
 assert.equal(store().get('license_status'), 'active')
-// 6d. Clock forward a year while offline: NOT locked (no false lockout)
-customer(HOUR)
+// 6d. Clock forward a year while offline: NOT locked (Sol round 2 scenario:
+// two days after a good check, after many failed checks)
+customer(2 * DAY)
 reply = 'network'
+await offlineHours(30)
 now += 365 * DAY
-assert.equal(await pro(), true, 'clock forward + offline: still licensed')
+assert.equal(await pro(), true, 'clock forward a year + offline: still licensed (counts 3 days)')
 await offlineHours(5)
 assert.equal(await pro(), true, '…a few hours later too')
 // 6e. Clock forward but expired answer: locks
@@ -228,20 +241,18 @@ assert.equal(store().get('license_status'), 'expired')
 
 // 7. 2.0 -> 2.1 upgrade: an old 2.0 record (good check 90 days ago) gets a fresh grace
 customer(0)
-store().delete('last_check_attempt')
+store().delete('last_check_attempt'); store().delete('offline_ms'); store().delete('last_seen')
 store().set('validation_timestamp', iso(now - 90 * DAY))
 reply = 'network'
 assert.equal(await pro(), true, 'upgraded offline: not locked')
 await settle()
-pass(12 * DAY)
-await offlineHours(30)
-assert.equal(await pro(), true, 'upgrade grace: day 13, 30 failed hours')
-pass(DAY)
-await offlineHours(1)
-assert.equal(await pro(), false, 'upgrade grace ends after 14 days and a day of failed checks')
+await offlineDays(13)
+assert.equal(await pro(), true, 'upgrade grace: day 13')
+await offlineDays(1.5)
+assert.equal(await pro(), false, 'upgrade grace ends after 14 days offline')
 // …and a refunded 2.0 user online at upgrade is locked by the first check
 customer(0)
-store().delete('last_check_attempt')
+store().delete('last_check_attempt'); store().delete('offline_ms'); store().delete('last_seen')
 store().set('validation_timestamp', iso(now - 90 * DAY))
 reply = ls('disabled')
 await pro(); await settle()
@@ -251,6 +262,13 @@ customer(0)
 store().set('license_status', 'unvalidated')
 assert.equal(await pro(), false)
 assert.equal(calls.length, 0)
+// Restarts don't re-check: a saved attempt 10 minutes ago means no request
+customer(2 * DAY)
+store().set('last_check_attempt', iso(now - 10 * 60 * 1000))
+reply = valid()
+assert.equal(await pro(), true)
+await settle()
+assert.equal(validates(), 0, 'saved attempt time throttles re-checks across restarts')
 
 // 8. S6: one shared check in flight
 customer(2 * DAY)
@@ -264,7 +282,6 @@ await settle()
 assert.equal(validates(), 1, '25 presses, one request')
 // …and a locked state shares one awaited request too
 customer(20 * DAY)
-store().set('failed_check_hours', 30)
 reply = valid()
 gate = new Promise((r) => { open = r })
 const waiting = Promise.all(Array.from({ length: 10 }, () => pro()))
@@ -359,7 +376,8 @@ for (const [label, rr] of [
   ['200 deactivated:false', { status: 200, body: { deactivated: false, error: 'nope' } }],
   ['200 captive portal', { status: 200, html: true }],
   ['403', { status: 403, body: { error: 'Forbidden' } }],
-  ['503', { status: 503, body: {} }]
+  ['503', { status: 503, body: {} }],
+  ['gateway 404', { status: 404, body: { error: 'Not Found' } }]
 ] as const) {
   reply = rr as Reply
   r = await lic.deactivateLicense()
@@ -402,5 +420,6 @@ assert.equal(c(404, { valid: false, error: 'license_key not found.', license_key
 assert.equal(c(404, { valid: false, license_key: { status: 'active' }, error: 'not found' }).kind, 'transient', '404 with a key is not "not found"')
 assert.equal(c(404, { error: 'license_key instance not found.' }).kind, 'transient', 'instance not found is not key not found')
 assert.equal(c(404, { error: 'Page missing' }).kind, 'transient', '404 without "not found" is not Lemon Squeezy')
+assert.equal(c(404, { error: 'Not Found' }).kind, 'transient', 'a gateway 404 "Not Found" is not Lemon Squeezy')
 
 console.info('licence: ok')

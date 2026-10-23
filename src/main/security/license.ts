@@ -13,13 +13,13 @@
  * - When Lemon Squeezy really answers expired, disabled or not found, that
  *   status is saved and the tools lock.
  * - Network errors, timeouts and server errors never lock by themselves: a
- *   licence stays good for OFFLINE_GRACE_DAYS after the last good check AND
- *   until the app has seen failed checks spread over a day of running time
- *   (FAILED_HOURS_TO_LOCK). The second condition stops a clock moved forward
- *   from locking anyone; a clock moved back can't extend the grace forever,
- *   because then only the failed-check hours count (CLOCK_BACK_HOURS_TO_LOCK).
- *   Once locked, each use asks the server again (at most once a minute) and
- *   unlocks the moment it answers "valid".
+ *   licence stays good for OFFLINE_GRACE_DAYS of offline time after the last
+ *   good check. Offline time is added up from the clock in steps, and no
+ *   single step (a clock moved forward, a laptop shut for a month) counts for
+ *   more than MAX_STEP_DAYS; a clock moved back adds nothing and takes nothing
+ *   away. So a clock change can neither lock a customer early by more than a
+ *   few days nor extend the grace. Once locked, each use asks the server again
+ *   (at most once a minute) and unlocks the moment it answers "valid".
  * - Every request has a 10 s timeout; checks, activation and removal run one
  *   at a time, and an answer that arrives after the licence changed is dropped.
  * - A key is only saved after Lemon Squeezy activates it on this computer.
@@ -45,10 +45,8 @@ const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
 /** Background re-checks: at most one attempt per hour of running time. */
 const RETRY_MS = HOUR_MS
-/** Failed checks, at most one counted per hour of running time, needed before offline locks. */
-const FAILED_HOURS_TO_LOCK = 24
-/** Same, when the last good check is dated in the future (clock moved back). */
-const CLOCK_BACK_HOURS_TO_LOCK = OFFLINE_GRACE_DAYS * 24
+/** One clock step (between two looks at the licence) adds at most this much offline time. */
+const MAX_STEP_DAYS = 3
 /** When the answer would be "locked": ask again at most once a minute. */
 const LOCKED_RETRY_MS = 60 * 1000
 /** Every Lemon Squeezy request gives up after this long. */
@@ -258,9 +256,40 @@ function readTime(key: string): number | null {
 const nowIso = (): string => new Date(Date.now()).toISOString()
 const mono = (): number => performance.now()
 
-function failedHours(): number {
-  const n = licenseStore.get('failed_check_hours')
+function offlineMs(): number {
+  const n = licenseStore.get('offline_ms')
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/**
+ * Add the time since the last look to the offline total: never negative
+ * (clock moved back), never more than MAX_STEP_DAYS per step (clock moved
+ * forward, long sleep). Writes at most once a minute.
+ */
+function tallyOffline(now: number): number {
+  const total = offlineMs()
+  const lastSeen = readTime('last_seen')
+  if (lastSeen === null) {
+    licenseStore.set('last_seen', new Date(now).toISOString())
+    return total
+  }
+  const step = now - lastSeen
+  if (step < 0) {
+    // Clock moved back: start counting again from the new time, nothing added
+    if (step < -CLOCK_SKEW_MS) licenseStore.set('last_seen', new Date(now).toISOString())
+    return total
+  }
+  if (step < 60 * 1000) return total
+  const next = total + Math.min(step, MAX_STEP_DAYS * DAY_MS)
+  licenseStore.set('offline_ms', next)
+  licenseStore.set('last_seen', new Date(now).toISOString())
+  return next
+}
+
+/** A good answer: the offline total starts again from zero. */
+function resetOffline(): void {
+  licenseStore.set('offline_ms', 0)
+  licenseStore.set('last_seen', nowIso())
 }
 
 /** Statuses only a real Lemon Squeezy answer can set; they lock the tools. */
@@ -277,27 +306,11 @@ const isRevokedStatus = (s: unknown): s is RevokedStatus => (REVOKED_STATUSES as
 export type LicenceState = 'none' | 'licensed' | 'revoked' | 'lapsed' | 'unvalidated'
 
 /**
- * Licences activated before 2.1 get a fresh grace period from the first 2.1
- * launch, so nobody offline on update day is locked by an old timestamp.
+ * Offline grace still running? Licences activated before 2.1 have no offline
+ * total yet, so they start at zero on the first 2.1 launch.
  */
-function migrateGrace(now: number): void {
-  if (licenseStore.has('grace_from') || licenseStore.has('last_check_attempt')) return
-  licenseStore.set('grace_from', new Date(now).toISOString())
-}
-
-/** Offline grace still running? See the header for the two conditions. */
 function withinGrace(now: number): boolean {
-  const lastGood = readTime('validation_timestamp')
-  const graceFrom = readTime('grace_from')
-  const anchor = Math.max(lastGood ?? -Infinity, graceFrom ?? -Infinity)
-  const failed = failedHours()
-  if (Number.isFinite(anchor) && anchor > now + CLOCK_SKEW_MS) {
-    // Last good check dated in the future: the clock moved back. Wall time
-    // can't be trusted either way, so only failed-check hours count.
-    return failed < CLOCK_BACK_HOURS_TO_LOCK
-  }
-  const wallExpired = !Number.isFinite(anchor) || now - anchor >= OFFLINE_GRACE_DAYS * DAY_MS
-  return !(wallExpired && failed >= FAILED_HOURS_TO_LOCK)
+  return tallyOffline(now) < OFFLINE_GRACE_DAYS * DAY_MS
 }
 
 /** Sync licence state from what is stored (no network). */
@@ -306,7 +319,6 @@ export function getLicenceState(now = Date.now()): LicenceState {
   if (!key) return 'none'
   const status = licenseStore.get('license_status') as string | undefined
   if (status === 'active' || status === 'valid') {
-    migrateGrace(now)
     return withinGrace(now) ? 'licensed' : 'lapsed'
   }
   if (isRevokedStatus(status)) return 'revoked'
@@ -321,14 +333,17 @@ function hasActiveLicenseRecord(): boolean {
 /** Monotonic times this run (immune to clock changes). */
 let lastAttemptMono: number | null = null
 let lastLockedAttemptMono: number | null = null
-let lastCountedFailureMono: number | null = null
 
-/** Is a background re-check due? */
+/**
+ * Is a background re-check due? At most once an hour, by both the saved
+ * attempt time (so restarts don't re-check) and this run's monotonic clock
+ * (so a clock moved back doesn't stop checks). A saved time in the future is
+ * ignored.
+ */
 function backgroundCheckDue(state: LicenceState, now: number): boolean {
-  if (state === 'licensed') {
-    const lastGood = readTime('validation_timestamp')
-    if (lastGood !== null && lastGood <= now + CLOCK_SKEW_MS && now - lastGood < RECHECK_HOURS * HOUR_MS) return false
-  }
+  const recent = (t: number | null, ms: number): boolean => t !== null && t <= now + CLOCK_SKEW_MS && now - t < ms
+  if (state === 'licensed' && recent(readTime('validation_timestamp'), RECHECK_HOURS * HOUR_MS)) return false
+  if (recent(readTime('last_check_attempt'), RETRY_MS)) return false
   return lastAttemptMono === null || mono() - lastAttemptMono >= RETRY_MS
 }
 
@@ -389,6 +404,9 @@ async function readJson(response: Response): Promise<Record<string, unknown> | n
   }
 }
 
+/** Lemon Squeezy's own "license_key … not found" text, not a gateway's generic 404. */
+const isLsNotFound = (err: string): boolean => /licen[cs]e[_ ]?key/i.test(err) && /not\s*found/i.test(err)
+
 const errorText = (body: Record<string, unknown> | null): string =>
   body && typeof body.error === 'string' ? body.error.trim() : ''
 
@@ -437,7 +455,7 @@ export function classifyValidation(httpStatus: number, body: Record<string, unkn
   if (status === 'expired') return { kind: 'expired' }
   if (status === 'disabled') return { kind: 'disabled' }
   const err = errorText(body)
-  if (httpStatus === 404 && (lk === null || lk === undefined) && /not\s*found/i.test(err) && !/instance/i.test(err)) {
+  if (httpStatus === 404 && (lk === null || lk === undefined) && isLsNotFound(err) && !/instance/i.test(err)) {
     return { kind: 'not_found' }
   }
   return { kind: 'transient', reason: `HTTP ${httpStatus}, status ${String(status)}` }
@@ -481,17 +499,10 @@ export function refreshLicence(): Promise<void> {
     if (outcome.kind === 'valid') {
       licenseStore.set('validation_timestamp', nowIso())
       licenseStore.set('license_status', 'active')
-      licenseStore.delete('failed_check_hours')
-      lastCountedFailureMono = null
+      resetOffline()
       if (outcome.productId !== null) storeProductId(outcome.productId)
       syncLicensedToolInstalls()
-    } else if (outcome.kind === 'transient') {
-      // Count at most one failed hour per hour of running time
-      if (lastCountedFailureMono === null || mono() - lastCountedFailureMono >= HOUR_MS) {
-        lastCountedFailureMono = mono()
-        licenseStore.set('failed_check_hours', failedHours() + 1)
-      }
-    } else {
+    } else if (outcome.kind !== 'transient') {
       licenseStore.set('license_status', outcome.kind)
       console.warn(`[PeakFlow:License] Licence ${outcome.kind}: tools locked`)
     }
@@ -604,8 +615,7 @@ export function activateLicense(licenseKey: string): Promise<{ success: boolean;
       licenseStore.set('validation_timestamp', nowIso())
       licenseStore.set('last_check_attempt', nowIso())
       licenseStore.set('license_status', 'active')
-      licenseStore.delete('failed_check_hours')
-      licenseStore.delete('grace_from')
+      resetOffline()
       const productId = extractProductId(result)
       if (productId !== null) storeProductId(productId)
       else deleteCredential('license', 'product_id')
@@ -656,7 +666,7 @@ function clearLocalLicence(): void {
   deleteCredential('license', 'key')
   deleteCredential('license', 'product_id')
   deleteCredential('license', 'instance_id')
-  for (const k of ['validation_timestamp', 'license_status', 'last_check_attempt', 'grace_from', 'failed_check_hours']) {
+  for (const k of ['validation_timestamp', 'license_status', 'last_check_attempt', 'offline_ms', 'last_seen']) {
     licenseStore.delete(k)
   }
 }
@@ -686,7 +696,7 @@ export function deactivateLicense(): Promise<{ success: boolean; message: string
       const body = await readJson(response)
       const err = errorText(body)
       const confirmed = response.ok && body?.deactivated === true
-      const alreadyGone = response.status === 404 && /not\s*found/i.test(err)
+      const alreadyGone = response.status === 404 && isLsNotFound(err)
       console.log(`[PeakFlow:License] Deactivate: HTTP ${response.status}, deactivated=${String(body?.deactivated)}`)
       if (!confirmed && !alreadyGone) {
         if (response.status >= 500 || response.status === 429 || !body) return { success: false, message: SERVER_BUSY }
