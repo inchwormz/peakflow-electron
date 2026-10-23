@@ -13,11 +13,12 @@
  */
 
 import { spawn, execFile, type ChildProcess } from 'child_process'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { app } from 'electron'
 import Store from 'electron-store'
+import { cliArgs, CODEX_BASE_INSTRUCTIONS } from './local-ai-args'
 
 export type AiProviderId = 'codex' | 'claude' | 'ollama'
 
@@ -137,6 +138,17 @@ function workDir(): string {
   const dir = join(app.getPath('userData'), 'local-ai')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
+}
+
+/** Our short instructions for Codex, in our own folder (null if it can't be written: Codex then uses its own). */
+function codexInstructionsFile(): string | null {
+  const file = join(workDir(), 'codex-instructions.md')
+  try {
+    if (!existsSync(file) || readFileSync(file, 'utf8') !== CODEX_BASE_INSTRUCTIONS) writeFileSync(file, CODEX_BASE_INSTRUCTIONS)
+    return file
+  } catch {
+    return null
+  }
 }
 
 function run(bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<{ code: number | null; out: string }> {
@@ -292,15 +304,12 @@ function runCli(
 ): Promise<RunLocalAiResult> {
   return new Promise((resolve) => {
     void childEnv(bin).then((env) => {
-      const pick = model ? ['--model', model] : []
-      const args =
-        id === 'claude'
-          ? ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', '--no-session-persistence',
-             '--strict-mcp-config', '--setting-sources', '', ...pick, '--system-prompt', system]
-          : ['exec', '--json', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-c', 'model_reasoning_effort="low"', ...pick, '-']
+      const viaShell = isWin && bin.endsWith('.cmd')
+      // A shell would split a path with spaces, so .cmd installs keep Codex's own instructions
+      const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' && !viaShell ? codexInstructionsFile() : null })
       let child: ChildProcess
       try {
-        child = spawn(bin, args, { env, cwd: workDir(), shell: isWin && bin.endsWith('.cmd'), windowsHide: true })
+        child = spawn(bin, args, { env, cwd: workDir(), shell: viaShell, windowsHide: true })
       } catch {
         resolve({ ok: false, error: 'failed' })
         return
