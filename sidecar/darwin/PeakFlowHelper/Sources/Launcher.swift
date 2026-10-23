@@ -349,17 +349,26 @@ private func fill(_ text: String, clipboard: String) -> String {
 /// main queue would block the very restore that releases it.)
 private let snippetQueue = DispatchQueue(label: "pro.getpeakflow.snippets")
 
+/// Bumped (on the main thread) by every real key press and mouse click, so a
+/// waiting expansion can tell the person has moved on.
+private var inputGeneration = 0
+
 private func expand(keyword: String, text: String) {
+    let generation = inputGeneration
+    let app = NSWorkspace.shared.frontmostApplication?.processIdentifier
     // Runs after the keyword's last key event has been delivered
     snippetQueue.asyncAfter(deadline: .now() + 0.03) {
-        // Another round trip is still running: leave the keyword as typed rather than risk the clipboard
-        guard let lock = lockPasteboard(timeout: 3.0) else { return }
+        // Another round trip is running: leave the keyword as typed rather than risk the clipboard
+        guard let lock = lockPasteboard(timeout: 0.25) else { return }
         defer { unlockPasteboard(lock) }
+        // Typed, clicked or switched app since the keyword: deleting and pasting now would hit the wrong text
+        let current = DispatchQueue.main.sync { (inputGeneration, NSWorkspace.shared.frontmostApplication?.processIdentifier) }
+        guard current.0 == generation, current.1 == app else { return }
         for _ in 0..<keyword.count { postKey(51) } // kVK_Delete (backspace)
         let pb = NSPasteboard.general
         let saved = savePasteboard()
-        let current = pb.string(forType: .string) ?? ""
-        writeOwnText(fill(text, clipboard: current))
+        let previous = pb.string(forType: .string) ?? ""
+        writeOwnText(fill(text, clipboard: previous))
         let ours = pb.changeCount
         usleep(30_000)
         postKey(9, flags: .maskCommand) // kVK_ANSI_V
@@ -378,6 +387,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         return Unmanaged.passUnretained(event)
     }
     if type == .leftMouseDown || type == .rightMouseDown {
+        inputGeneration &+= 1
         typed = ""
         return Unmanaged.passUnretained(event)
     }
@@ -408,6 +418,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         return Unmanaged.passUnretained(event)
     }
     guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+    inputGeneration &+= 1
     if holdDown {
         holdDown = false
         emit(["e": "hold-cancel"])
