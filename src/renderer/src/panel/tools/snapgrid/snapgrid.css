@@ -1,0 +1,23 @@
+/* SnapGrid panel: layout tiles, ported from the approved prototype
+   (artifacts/2026-10-23-snapgrid/snapgrid-prototype.html). */
+
+.pf .sg-cap { display: flex; align-items: center; gap: 6px; font-size: var(--t-cap); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; margin-bottom: 8px; }
+.pf .sg-cap .nm { color: var(--text-2); text-transform: none; letter-spacing: 0; font-size: var(--t-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf .sg-cap .nm.dim { color: var(--text-3); }
+.pf .sg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pf .sg-tile { position: relative; display: block; width: 100%; height: 42px; border-radius: 7px; border: 0.5px solid var(--line); background: var(--surface); padding: 5px 6px; transition: background .12s var(--ease), border-color .12s var(--ease); }
+.pf button.sg-tile:hover, .pf .sg-atile:hover .sg-tile { background: var(--hover); border-color: var(--line-strong); }
+/* The screen: a thin outline so you can see how much of it a layout takes */
+.pf .sg-mini { position: relative; display: block; width: 100%; height: 100%; border-radius: 3px; background: #0c0c0c; border: 1px solid rgba(255, 255, 255, 0.28); }
+.pf .sg-mini i { position: absolute; border-radius: 2px; background: #4a4a4a; display: grid; place-items: center; transition: background .12s var(--ease); }
+.pf .sg-mini i.o { background: #262626; }
+.pf button.sg-tile:hover .sg-mini i, .pf button.sg-tile:focus-visible .sg-mini i, .pf .sg-atile:hover .sg-mini i { background: var(--text); }
+.pf button.sg-tile:hover .sg-mini i.o { background: #5a5a5a; }
+.pf .sg-mini i .logo { border-radius: 2px !important; }
+.pf .sg-hint { margin-top: 8px; height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px; border-radius: 6px; background: var(--surface); border: 0.5px solid var(--line); color: var(--text-2); font-size: var(--t-sm); }
+.pf .sg-hint span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf .sg-arr { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pf .sg-atile { display: flex; flex-direction: column; gap: 5px; align-items: stretch; background: transparent; border: 0; padding: 0; color: var(--text-3); font-size: 11px; text-align: center; white-space: nowrap; }
+.pf .sg-atile .sg-tile { height: 48px; }
+.pf .sg-atile:hover { color: var(--text); }
+.pf .sg-atile:disabled { opacity: 0.45; }

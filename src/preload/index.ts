@@ -6,6 +6,9 @@ const allowedInvokes = new Set(Object.values(IPC_INVOKE))
 const allowedSends = new Set(Object.values(IPC_SEND))
 
 const peakflowAPI = {
+  /** Host OS (e.g. 'win32', 'darwin') so the UI can hide tools the OS can't run */
+  platform: process.platform as string,
+
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> => {
     if (!allowedInvokes.has(channel as any)) {
       console.error(`Blocked unauthorized IPC invoke: ${channel}`)

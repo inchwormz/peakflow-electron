@@ -19,8 +19,10 @@ import { BrowserWindow, screen, powerMonitor, globalShortcut } from 'electron'
 import { ToolId } from '@shared/tool-ids'
 import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig, setConfig } from './config-store'
+import { checkAccess } from '../security/access-check'
+import { withToolAccess } from '../security/access-guard'
 import type { FocusDimConfig } from '@shared/config-schemas'
-import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, type WindowRect, type DisplayBounds } from '../native/active-window'
+import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, raiseAppWindows, type WindowRect, type DisplayBounds } from '../native/active-window'
 
 // ─── Legacy color key → hex migration map ────────────────────────────────────
 
@@ -47,6 +49,7 @@ export interface FocusDimState {
   autoRevealDesktop: boolean
   highlightMode: 'active' | 'app' | 'all'
   dragEscape: boolean
+  raiseAppWindows: boolean
   excludedApps: Array<{ exe: string; name: string }>
 }
 
@@ -61,8 +64,9 @@ interface OverlayEntry {
   window: BrowserWindow
   displayId: number
   bounds: Electron.Rectangle
+  /** native-API units per DIP: display scale on Windows, 1 on macOS (helper returns points) */
   scaleFactor: number
-  /** Physical pixel bounds (bounds * scaleFactor) for matching against Win32 coords */
+  /** Display bounds in native-API units (physical px on Windows, points on macOS) */
   physicalBounds: { x: number; y: number; width: number; height: number }
 }
 
@@ -81,6 +85,8 @@ class FocusDimService {
   private _dragStableTicks = 0
   private _dragging = false
   private _lastTrackWindowId = ''
+  /** PID whose windows were last brought forward (raise_app_windows). */
+  private _lastRaisedPid = 0
   private _lastTrackX = 0
   private _lastTrackY = 0
   private peekTimer: ReturnType<typeof setTimeout> | null = null
@@ -146,6 +152,7 @@ class FocusDimService {
       autoRevealDesktop: conf.auto_reveal_desktop,
       highlightMode: conf.highlight_mode,
       dragEscape: conf.drag_escape,
+      raiseAppWindows: conf.raise_app_windows ?? false,
       excludedApps: conf.excluded_apps ?? []
     }
   }
@@ -158,6 +165,15 @@ class FocusDimService {
       this.enable()
     }
     return this.getState()
+  }
+
+  /**
+   * Toggle from a user action (panel switch, shortcut). Turning dimming on
+   * needs FocusDim access; turning it off never does.
+   */
+  requestToggle(): Promise<FocusDimState> {
+    if (this._enabled) return Promise.resolve(this.toggle())
+    return withToolAccess(checkAccess, ToolId.FocusDim, () => this.toggle(), () => this.getState())
   }
 
   /** Enable the dim overlay */
@@ -182,6 +198,7 @@ class FocusDimService {
   disable(): void {
     this.cancelPeek()
     this._enabled = false
+    this._lastRaisedPid = 0
     this._lastRect = { x: 0, y: 0, w: 0, h: 0 }
     this._lastRectsHash = ''
     this.setConf('enabled', false)
@@ -301,13 +318,13 @@ class FocusDimService {
     // Try registering new
     let ok = false
     try {
-      ok = globalShortcut.register(newElectronAccel, () => this.toggle())
+      ok = globalShortcut.register(newElectronAccel, () => void this.requestToggle())
     } catch (err) {
       console.warn(`[FocusDim] Invalid accelerator: ${newElectronAccel}`, err)
     }
     if (!ok) {
       // Re-register old
-      try { globalShortcut.register(oldAccelerator, () => this.toggle()) } catch { /* best effort */ }
+      try { globalShortcut.register(oldAccelerator, () => void this.requestToggle()) } catch { /* best effort */ }
       return false
     }
 
@@ -503,10 +520,17 @@ class FocusDimService {
       win.setAlwaysOnTop(true, 'screen-saver')
       win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(overlayHtml)}`)
 
-      const sf = display.scaleFactor || 1
+      // Window rects arrive in the native API's units. Win32 returns physical
+      // pixels, so we keep a physical copy of each display to match against.
+      // macOS (Swift helper: AX/CGWindowList) returns points, which are the
+      // same units as Electron's DIP screen coordinates on every display,
+      // Retina or not — so no scaling there (and screen.dipToScreenPoint
+      // does not exist on macOS).
+      const nativeIsDip = process.platform === 'darwin'
+      const sf = nativeIsDip ? 1 : (display.scaleFactor || 1)
       // DPI origin: screen.dipToScreenPoint handles multi-monitor offsets correctly.
       // Simple `x * sf` only works for the primary monitor at (0,0).
-      const physOrigin = screen.dipToScreenPoint({ x, y })
+      const physOrigin = nativeIsDip ? { x, y } : screen.dipToScreenPoint({ x, y })
       const entry: OverlayEntry = {
         window: win,
         displayId: display.id,
@@ -576,7 +600,7 @@ class FocusDimService {
 <div id="dim-right" style="${dimStyle} right:0; top:0; width:0; height:100%;"></div>
 <div id="dim-bottom" style="${dimStyle} left:0; bottom:0; right:0; height:0;"></div>
 <canvas id="dim-canvas" style="position:fixed; inset:0; pointer-events:none; z-index:1; display:none;" width="1" height="1"></canvas>
-<div id="border-frame" style="position:fixed; border:3px solid rgba(168,85,247,0.9); border-radius:4px; pointer-events:none; z-index:2; transition:all 0.05s linear; display:${showBorder ? 'block' : 'none'}; box-shadow:0 0 12px rgba(168,85,247,0.3);"></div>
+<div id="border-frame" style="position:fixed; border:1.5px solid rgba(255,255,255,0.9); border-radius:10px; pointer-events:none; z-index:2; transition:all 0.05s linear; display:${showBorder ? 'block' : 'none'};"></div>
 </body></html>`
   }
 
@@ -938,11 +962,22 @@ class FocusDimService {
     const conf = this.getConf()
     const activeWin = getActiveWindow()
 
+    // PeakFlow in front with none of its windows focused: the panel has just
+    // hidden and focus is on its way back to the previous app. Keep the
+    // current dim instead of drawing the hidden panel or revealing the desktop.
+    if (activeWin && activeWin.pid === process.pid && !BrowserWindow.getFocusedWindow()) {
+      this._desktopNullTicks = 0
+      return
+    }
+
     if (activeWin) {
       this._desktopNullTicks = 0
 
       // ── Drag detection ──────────────────────────────────────────────
-      if (conf.drag_escape) {
+      // PeakFlow's own panel moves while it opens and closes; that is not the
+      // user dragging a window, and treating it as one faded the dim out and
+      // back in (a grey flash) every time the panel closed.
+      if (conf.drag_escape && activeWin.pid !== process.pid) {
         const windowId = `${activeWin.pid}:${activeWin.title}`
         const sameWindow = windowId === this._lastTrackWindowId
         const posChanged = activeWin.x !== this._lastTrackX || activeWin.y !== this._lastTrackY
@@ -973,6 +1008,13 @@ class FocusDimService {
         this._lastTrackY = activeWin.y
 
         if (this._dragging) return
+      }
+
+      // Bring the app's other windows forward once each time a different app
+      // comes to the front, in App windows and All windows modes.
+      if (conf.raise_app_windows && conf.highlight_mode !== 'active' && activeWin.pid !== this._lastRaisedPid) {
+        this._lastRaisedPid = activeWin.pid
+        if (activeWin.pid !== process.pid) raiseAppWindows(activeWin.pid, activeWin.hwnd)
       }
 
       const wasDesktopRevealed = this._desktopRevealed
@@ -1049,10 +1091,12 @@ class FocusDimService {
       }
 
       if (rects.length === 0) {
-        // Fallback to single active window
-        this.hideCanvas()
-        this.sendOverlayUpdate({ x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h })
-        return
+        // The window list for a newly focused app arrives a moment later (on
+        // Mac it waits behind the helper's other commands, such as raise-app).
+        // Cut out just the active window on the canvas until then. Switching
+        // to the 4 divs here hid the canvas at once and faded the divs in
+        // from zero, which washed the whole screen grey.
+        rects = [{ x: activeWin.x, y: activeWin.y, w: activeWin.w, h: activeWin.h }]
       }
 
       // Dirty check: hash rects + active window (so border follows focus changes)

@@ -7,6 +7,7 @@
 
 import { useCallback, type CSSProperties } from 'react'
 import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
+import { isToolSupportedOn } from '@shared/platform-tools'
 import { IPC_INVOKE } from '@shared/ipc-types'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ const SHARE_LINKS = [
 const MAILTO_URL =
   'mailto:contact@getpeakflow.pro?subject=PeakFlow%20Share%20%26%20Earn&body=Hi!%20I%20shared%20PeakFlow%20on%20%5Bplatform%5D.%20I%27d%20like%20%5Btool%20name%5D%20for%20free.%20Screenshot%20attached.'
 
-const ALL_TOOLS = Object.values(ToolId)
+const ALL_TOOLS = Object.values(ToolId).filter((id) => isToolSupportedOn(id, window.peakflow.platform))
 
 // ─── Tool accent colors ─────────────────────────────────────────────────────
 
@@ -48,7 +49,8 @@ const TOOL_ACCENTS: Record<ToolId, string> = {
   [ToolId.QuickBoard]: '#ffe17c',
   [ToolId.ScreenSlap]: '#ffe17c',
   [ToolId.MeetReady]: '#ffe17c',
-  [ToolId.SoundSplit]: '#ffe17c'
+  [ToolId.SoundSplit]: '#ffe17c',
+  [ToolId.SnapGrid]: '#ffe17c'
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────

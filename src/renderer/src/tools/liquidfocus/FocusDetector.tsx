@@ -18,10 +18,12 @@ import * as tf from '@tensorflow/tfjs'
 import * as blazeface from '@tensorflow-models/blazeface'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import { DS } from './LiquidFocus'
+import { stopStream } from './camera'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type FocusStatus = 'loading' | 'focused' | 'away' | 'no-camera' | 'error'
+/** 'absent': no face yet, still under the away threshold (counting toward it) */
+export type FocusStatus = 'loading' | 'focused' | 'absent' | 'away' | 'no-camera' | 'error'
 
 interface FocusDetectorProps {
   /** Whether the timer is in a work session and running */
@@ -86,12 +88,9 @@ export function FocusDetector({
   useEffect(() => {
     if (!active) {
       // Clean up when not active
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-      }
+      streamRef.current = stopStream(streamRef.current)
       if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current)
+        clearTimeout(rafRef.current)
         rafRef.current = null
       }
       awayStartRef.current = null
@@ -119,7 +118,7 @@ export function FocusDetector({
           video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 5 } }
         })
         if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop())
+          stopStream(stream)
           return
         }
         streamRef.current = stream
@@ -149,10 +148,13 @@ export function FocusDetector({
 
       function detect(): void {
         if (cancelled) return
-        rafRef.current = requestAnimationFrame(detect)
+        // A plain timer, not requestAnimationFrame: the v2 panel that hosts the
+        // detector is hidden during sessions, and macOS can pause animation
+        // frames in hidden windows (timers keep running: backgroundThrottling off)
+        rafRef.current = window.setTimeout(detect, DETECT_INTERVAL)
 
         const now = performance.now()
-        if (now - lastDetectTime < DETECT_INTERVAL) return
+        if (now - lastDetectTime < DETECT_INTERVAL - 20) return
         lastDetectTime = now
 
         const video = videoRef.current
@@ -180,6 +182,7 @@ export function FocusDetector({
             const awayDuration = (currentTime - awayStartRef.current) / 1000
             const threshold = thresholdRef.current
 
+            if (awayDuration < threshold) updateStatus('absent')
             if (awayDuration >= threshold) {
               updateStatus('away')
               // Record interruption once per away episode
@@ -202,13 +205,10 @@ export function FocusDetector({
     return () => {
       cancelled = true
       if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current)
+        clearTimeout(rafRef.current)
         rafRef.current = null
       }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-      }
+      streamRef.current = stopStream(streamRef.current)
       if (modelRef.current) {
         modelRef.current.dispose()
         modelRef.current = null

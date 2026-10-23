@@ -10,6 +10,7 @@ import { ToolId } from '@shared/tool-ids'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { aiSuggest, checkAiAccess } from './clipboard-ai'
 import type { AiSuggestion, HistoryStats } from './clipboard-ai'
+import { redactPersonalInfo } from '../security/secret-detection'
 
 // ─── Clipboard capture counter ───────────────────────────────────────────────
 
@@ -53,6 +54,9 @@ export async function checkShouldSuggest(): Promise<boolean> {
 
 // ─── Build stats from history ────────────────────────────────────────────────
 
+/** Blanked 50-character preview (what the AI saw) → the clip's full text */
+const fullTexts = new Map<string, string>()
+
 export function buildHistoryStats(): HistoryStats {
   const svc = getClipboardService()
   const history = svc.getHistory()
@@ -60,6 +64,7 @@ export function buildHistoryStats(): HistoryStats {
   const contentTypes: Record<string, number> = {}
   const sourceApps: Record<string, number> = {}
   const textCounts = new Map<string, { preview: string; count: number }>()
+  fullTexts.clear()
 
   for (const item of history) {
     // Content types
@@ -82,6 +87,7 @@ export function buildHistoryStats(): HistoryStats {
           preview: item.text.slice(0, 50),
           count: item.copyCount || 1
         })
+        fullTexts.set(redactPersonalInfo(item.text.slice(0, 50)), item.text)
       }
     }
   }
@@ -126,6 +132,11 @@ export async function getSuggestions(): Promise<AiSuggestion[]> {
   const result = await aiSuggest(stats)
 
   if (result.ok && result.suggestions) {
+    // The AI only saw short, blanked previews: pin the real clip instead
+    for (const sug of result.suggestions) {
+      const text = sug.type === 'pin_template' ? sug.action.text : undefined
+      if (typeof text === 'string' && fullTexts.has(text)) sug.action.text = fullTexts.get(text)
+    }
     // Update last suggestion date
     setConfig(ToolId.QuickBoard, 'ai_last_suggestion_date', new Date().toISOString())
     return result.suggestions

@@ -7,17 +7,22 @@
 
 import { ipcMain, BrowserWindow, shell, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { IPC_INVOKE } from '@shared/ipc-types'
-import type { AccessStatus, LicenseActivationResult, WindowInfo } from '@shared/ipc-types'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
+import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
-import type { ToolConfig } from '@shared/config-schemas'
-import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import type { ToolConfig, LiquidFocusConfig } from '@shared/config-schemas'
+import { ToolId, SystemWindowId, TODOIST_ENABLED } from '@shared/tool-ids'
 import type { WindowId } from '@shared/tool-ids'
 import { createToolWindow, openToolWithAccessCheck, getToolWindow, closeToolWindow } from './windows'
 import { rebuildTray } from './tray'
+import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool, panelRendererReady } from './panel'
+import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
+import { getAppIcon } from './services/app-icons'
+import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
+import { checkForUpdates } from './services/auto-updater'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
-import { startQueue, pasteNext, cancelQueue, getQueueStatus } from './services/clipboard-sequential'
+import { cancelQueue, getQueueStatus } from './services/clipboard-sequential'
 import {
   getSavedPipelines,
   AVAILABLE_TRANSFORMS,
@@ -35,7 +40,6 @@ import {
   saveWorkflow,
   deleteWorkflow,
   startWorkflow,
-  workflowPasteNext,
   cancelWorkflow,
   saveBulkWorkflows
 } from './services/clipboard-workflows'
@@ -44,17 +48,21 @@ import {
   saveFormProfile,
   deleteFormProfile,
   startFormFill,
-  formPasteNext,
   cancelFormFill,
   saveBulkFormProfiles
 } from './services/clipboard-forms'
 import { runOcr } from './services/clipboard-ocr'
 import { checkAccess } from './security/access-check'
+import { withToolAccess } from './security/access-guard'
+import { guardedQueueStart, guardedQueueNext, guardedWorkflowPasteNext, guardedFormPasteNext } from './quickboard-paste'
 import { activateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService, initFocusDim } from './services/focus-dim'
 import type { FocusDimState, DisplayInfo } from './services/focus-dim'
+import { getSnapGridService, initSnapGrid } from './services/snapgrid'
+import { isSnapLayoutKey, isArrangeKey } from '@shared/snapgrid-layouts'
+import type { SnapGridState } from '@shared/snapgrid-layouts'
 import { getClipboardService, initClipboard } from './services/clipboard'
 import type { ClipboardItem } from './services/clipboard'
 import { getCalendarService, initCalendar } from './services/google-calendar'
@@ -64,6 +72,7 @@ import type { ScreenSlapState } from './services/screenslap'
 import { getLiquidFocusService, initLiquidFocus } from './services/liquidfocus'
 import type { LiquidFocusFullState, LiquidFocusTask, TimerState, SessionStats } from './services/liquidfocus'
 import { getSoundSplitBridge, initSoundSplit } from './sidecar/soundsplit-bridge'
+import { isToolSupportedOn } from '@shared/platform-tools'
 import type { AudioSession, MasterAudio } from './sidecar/soundsplit-bridge'
 import { getTodoistService } from './services/todoist'
 import type { TodoistStatus, TodoistTask, TodoistProject } from './services/todoist'
@@ -94,6 +103,9 @@ function startToolService(toolId: string): void {
       break
     case ToolId.SoundSplit:
       initSoundSplit()
+      break
+    case ToolId.SnapGrid:
+      initSnapGrid()
       break
   }
 }
@@ -138,7 +150,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SECURITY_ACTIVATE_LICENSE,
     async (_event, key: string): Promise<LicenseActivationResult> => {
-      return activateLicense(key)
+      const result = await activateLicense(key)
+      // ScreenSlap doesn't monitor without access; a new licence switches it on now
+      if (result.success && isToolInstalled(ToolId.ScreenSlap)) void getScreenSlapService().start()
+      return result
     }
   )
 
@@ -203,9 +218,20 @@ export function registerIpcHandlers(): void {
         // Propagate config changes to running services
         if (payload.tool === ToolId.LiquidFocus) {
           getLiquidFocusService().refreshConfig()
+          const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
+          if (payload.key === 'mini_size') refreshMiniSize(mini)
+          if (payload.key === 'mini_theme' && mini && !mini.isDestroyed()) {
+            applyMiniTheme(mini, payload.value)
+            mini.webContents.send(IPC_SEND.LIQUIDFOCUS_MINI_THEME, payload.value === 'light' ? 'light' : 'dark')
+          }
         }
         if (payload.tool === ToolId.ScreenSlap) {
           getScreenSlapService().refreshConfig()
+        }
+        // The panel's background jobs (focus detection) follow settings at once
+        const panelWin = getPanel()
+        if (panelWin && !panelWin.webContents.isDestroyed() && !panelWin.webContents.isLoading()) {
+          panelWin.webContents.send(IPC_SEND.CONFIG_CHANGED, { tool: payload.tool, key: payload.key, value: payload.value })
         }
         return true
       } catch (error) {
@@ -264,8 +290,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.FOCUSDIM_TOGGLE,
-    (): FocusDimState => {
-      return getFocusDimService().toggle()
+    (): Promise<FocusDimState> => {
+      return getFocusDimService().requestToggle()
     }
   )
 
@@ -371,6 +397,33 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ─── SnapGrid ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_GET_STATE, (): Promise<SnapGridState> => getSnapGridService().getState())
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_APPLY, (_event, key: unknown): Promise<string> | string => {
+    if (!isSnapLayoutKey(key)) return 'Unknown layout'
+    return getSnapGridService().applyLayout(key, { fromPanel: true })
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_ARRANGE, (_event, key: unknown): Promise<string> | string => {
+    if (!isArrangeKey(key)) return 'Unknown layout'
+    return getSnapGridService().arrange(key)
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_PREVIEW, (_event, kind: unknown, key: unknown): Promise<void> => {
+    const k = kind === 'layout' || kind === 'arrange' ? kind : null
+    return getSnapGridService().preview(k, typeof key === 'string' ? key : undefined)
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_UNDO, (): Promise<string> => getSnapGridService().undo({ fromPanel: true }))
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_SET_DRAG, (_event, on: unknown): void => {
+    if (typeof on === 'boolean') getSnapGridService().setDragSnap(on)
+  })
+
+  ipcMain.handle(IPC_INVOKE.SNAPGRID_OPEN_OS_SETTINGS, (): void => getSnapGridService().openOsWindowSettings())
+
   // ─── QuickBoard / Clipboard ────────────────────────────────────────────────
 
   ipcMain.handle(
@@ -389,8 +442,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_SIMULATE_PASTE,
-    (_event, itemId: string, plainText?: boolean, textOverride?: string): void => {
-      getClipboardService().simulatePaste(itemId, plainText ?? false, textOverride)
+    (_event, itemId: string, plainText?: boolean, textOverride?: string): Promise<void> => {
+      return withToolAccess(checkAccess, ToolId.QuickBoard, () => getClipboardService().simulatePaste(itemId, plainText ?? false, textOverride), () => {})
     }
   )
 
@@ -464,15 +517,16 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_START,
-    (_event, itemIds: string[]): void => {
-      startQueue(itemIds)
+    (_event, itemIds: unknown): Promise<void> => {
+      if (!Array.isArray(itemIds) || !itemIds.every((id) => typeof id === 'string')) return Promise.resolve()
+      return guardedQueueStart(itemIds)
     }
   )
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_QUEUE_NEXT,
-    (): boolean => {
-      return pasteNext()
+    (): Promise<boolean> => {
+      return guardedQueueNext()
     }
   )
 
@@ -515,7 +569,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_PASTE_WITH_TRANSFORM,
-    (_event, itemId: string, steps: TransformStep[]) => {
+    (_event, itemId: string, steps: TransformStep[]) => withToolAccess(checkAccess, ToolId.QuickBoard, () => {
       const clipService = getClipboardService()
       const history = clipService.getHistory()
       const item = history.find((h: ClipboardItem) => h.id === itemId)
@@ -523,7 +577,7 @@ export function registerIpcHandlers(): void {
       const text = item.editedText ?? item.text ?? ''
       const transformed = applyPipeline(steps, text)
       clipService.simulatePaste(itemId, false, transformed)
-    }
+    }, () => {})
   )
 
   // ─── QuickBoard: AI ──────────────────────────────────────────────────────────
@@ -643,7 +697,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_WORKFLOW_PASTE_NEXT,
     () => {
-      return workflowPasteNext()
+      return guardedWorkflowPasteNext()
     }
   )
 
@@ -687,7 +741,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_FORM_PASTE_NEXT,
     () => {
-      return formPasteNext()
+      return guardedFormPasteNext()
     }
   )
 
@@ -697,6 +751,17 @@ export function registerIpcHandlers(): void {
       cancelFormFill()
     }
   )
+
+  // v2 quickboard: one status for the panel's "Pasting 2 of 3" banner (no input)
+  ipcMain.handle(IPC_INVOKE.CLIPBOARD_PASTE_STATUS, async () => {
+    const { getWorkflowStatus } = await import('./services/clipboard-workflows')
+    const { getFormFillStatus } = await import('./services/clipboard-forms')
+    const wf = getWorkflowStatus()
+    if (wf.active) return { kind: 'workflow' as const, ...wf }
+    const ff = getFormFillStatus()
+    if (ff.active) return { kind: 'form' as const, ...ff }
+    return { kind: 'queue' as const, label: '', ...getQueueStatus() }
+  })
 
   // ─── QuickBoard: OCR ───────────────────────────────────────────────────────
 
@@ -791,8 +856,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.SCREENSLAP_START,
-    (): void => {
-      getScreenSlapService().start()
+    (): Promise<void> => {
+      return getScreenSlapService().start()
     }
   )
 
@@ -805,8 +870,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.SCREENSLAP_TEST_ALERT,
-    (): void => {
-      getScreenSlapService().testAlert()
+    (): Promise<void> => {
+      return getScreenSlapService().testAlert()
     }
   )
 
@@ -821,8 +886,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_INVOKE.LIQUIDFOCUS_START,
-    (): TimerState => {
-      return getLiquidFocusService().start()
+    (): Promise<TimerState> => {
+      // Start also resumes a paused session
+      const lf = getLiquidFocusService()
+      return withToolAccess(checkAccess, ToolId.LiquidFocus, () => lf.start(), () => lf.getTimerState())
     }
   )
 
@@ -892,15 +959,40 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.LIQUIDFOCUS_RECORD_INTERRUPTION,
     (): void => {
-      getLiquidFocusService().recordInterruption()
+      const lf = getLiquidFocusService()
+      lf.recordInterruption()
+      const cfg = getConfig(ToolId.LiquidFocus) as LiquidFocusConfig
+      if ((cfg.focus_away_action ?? 'reset') === 'reset' && lf.isFocusRunning()) {
+        // The reset itself carries the notice (TimerState.awayReset), so a mini that
+        // is created or still loading reads it with its first state. The panel gets a toast.
+        const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
+        lf.resetFocusAfterAway()
+        const panelWin = getPanel()
+        if (panelWin && !panelWin.webContents.isLoading()) panelWin.webContents.send(IPC_SEND.LIQUIDFOCUS_AWAY_RESET)
+        // Keep (or put) the mini on screen with the notice, unless the panel shows Liquid Focus
+        if (!(isPanelVisible() && visiblePanelTool() === ToolId.LiquidFocus)) {
+          layoutMini(mini ?? createToolWindow(SystemWindowId.LiquidFocusMini), true)
+        }
+      }
     }
   )
 
+  // v2: forward the panel's detector state to the mini timer (eye icon)
+  const DETECTOR_STATES = new Set(['off', 'loading', 'focused', 'absent', 'away', 'no-camera', 'error'])
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_DETECTOR_STATUS, (_event, status: unknown): void => {
+    if (typeof status !== 'string' || !DETECTOR_STATES.has(status)) return
+    const mini = getToolWindow(SystemWindowId.LiquidFocusMini)
+    if (mini && !mini.isDestroyed()) mini.webContents.send(IPC_SEND.LIQUIDFOCUS_DETECTOR, status)
+  })
+
   // ─── SoundSplit ──────────────────────────────────────────────────────────
+  // Windows-only (PowerShell/WASAPI sidecar); other platforms get inert results
+  const soundSplitAvailable = isToolSupportedOn(ToolId.SoundSplit, process.platform)
 
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_GET_SESSIONS,
     (): AudioSession[] => {
+      if (!soundSplitAvailable) return []
       return getSoundSplitBridge().getSessions()
     }
   )
@@ -908,6 +1000,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_VOLUME,
     (_event, pid: number, volume: number): boolean => {
+      if (!soundSplitAvailable) return false
       return getSoundSplitBridge().setVolume(pid, volume)
     }
   )
@@ -915,6 +1008,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_MUTE,
     (_event, pid: number, muted: boolean): boolean => {
+      if (!soundSplitAvailable) return false
       return getSoundSplitBridge().setMute(pid, muted)
     }
   )
@@ -922,6 +1016,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_GET_MASTER,
     (): MasterAudio => {
+      if (!soundSplitAvailable) return { volume: 0, peak: 0 }
       return getSoundSplitBridge().getMaster()
     }
   )
@@ -929,53 +1024,56 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_INVOKE.SOUNDSPLIT_SET_MASTER,
     (_event, volume: number): boolean => {
+      if (!soundSplitAvailable) return false
       return getSoundSplitBridge().setMaster(volume)
     }
   )
 
-  // ─── Todoist ──────────────────────────────────────────────────────────────
+  // ─── Todoist (off in v2: TODOIST_ENABLED) ────────────────────────────────
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_AUTHENTICATE,
-    async (): Promise<TodoistStatus> => {
-      return getTodoistService().authenticate()
-    }
-  )
+  if (TODOIST_ENABLED) {
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_AUTHENTICATE,
+      async (): Promise<TodoistStatus> => {
+        return getTodoistService().authenticate()
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_DISCONNECT,
-    (): TodoistStatus => {
-      return getTodoistService().disconnect()
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_DISCONNECT,
+      (): TodoistStatus => {
+        return getTodoistService().disconnect()
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_GET_STATUS,
-    (): TodoistStatus => {
-      return getTodoistService().getStatus()
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_GET_STATUS,
+      (): TodoistStatus => {
+        return getTodoistService().getStatus()
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_GET_TASKS,
-    async (_event, projectId?: string): Promise<TodoistTask[]> => {
-      return getTodoistService().getTasks(projectId)
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_GET_TASKS,
+      async (_event, projectId?: string): Promise<TodoistTask[]> => {
+        return getTodoistService().getTasks(projectId)
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_COMPLETE_TASK,
-    async (_event, taskId: string): Promise<boolean> => {
-      return getTodoistService().completeTask(taskId)
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_COMPLETE_TASK,
+      async (_event, taskId: string): Promise<boolean> => {
+        return getTodoistService().completeTask(taskId)
+      }
+    )
 
-  ipcMain.handle(
-    IPC_INVOKE.TODOIST_GET_PROJECTS,
-    async (): Promise<TodoistProject[]> => {
-      return getTodoistService().getProjects()
-    }
-  )
+    ipcMain.handle(
+      IPC_INVOKE.TODOIST_GET_PROJECTS,
+      async (): Promise<TodoistProject[]> => {
+        return getTodoistService().getProjects()
+      }
+    )
+  }
 
   // ─── Mic Mute ─────────────────────────────────────────────────────────────
 
@@ -1013,6 +1111,75 @@ export function registerIpcHandlers(): void {
       }
     }
   )
+
+  ipcMain.handle(
+    IPC_INVOKE.LIQUIDFOCUS_SET_MINI,
+    (_event, payload: { open: boolean; card?: boolean }): void => {
+      if (!payload?.open) {
+        closeToolWindow(SystemWindowId.LiquidFocusMini)
+        return
+      }
+      const win = getToolWindow(SystemWindowId.LiquidFocusMini) ?? createToolWindow(SystemWindowId.LiquidFocusMini)
+      layoutMini(win, !!payload.card)
+    }
+  )
+
+  // v2 mini timer: the renderer drags the window (so a plain click can still open the panel)
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_MINI_MOVE, (event, p: { x: number; y: number; done?: boolean }): void => {
+    const win = getToolWindow(SystemWindowId.LiquidFocusMini)
+    if (!win || event.sender !== win.webContents) return
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || Math.abs(p.x) > 1e5 || Math.abs(p.y) > 1e5) return
+    moveMini(win, Math.round(p.x), Math.round(p.y), !!p.done)
+  })
+
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_DISMISS_AWAY, (): TimerState => getLiquidFocusService().dismissAwayNotice())
+
+  // v2 liquidfocus: restart the current phase (no input)
+  ipcMain.handle(IPC_INVOKE.LIQUIDFOCUS_RESTART_PHASE, (): Promise<TimerState> => {
+    const lf = getLiquidFocusService()
+    return withToolAccess(checkAccess, ToolId.LiquidFocus, () => lf.restartPhase(), () => lf.getTimerState())
+  })
+
+  // ─── One-app panel (v2) ───────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_INVOKE.PANEL_RESIZE, (_event, h: number): void => {
+    if (typeof h === 'number') resizePanel(h)
+  })
+  ipcMain.handle(IPC_INVOKE.PANEL_HIDE, (): void => hidePanel())
+  ipcMain.handle(IPC_INVOKE.PANEL_READY, (event): string | null => panelRendererReady(event.sender))
+  ipcMain.handle(IPC_INVOKE.PANEL_ROUTE, (_event, route: unknown): void => {
+    if (typeof route === 'string' && /^[a-z0-9/_:.-]{1,120}$/i.test(route)) setPanelRoute(route)
+  })
+  ipcMain.handle(IPC_INVOKE.PANEL_SHOW, (_event, route?: string): void => {
+    showPanel(typeof route === 'string' && /^[a-z0-9/_-]{1,80}$/.test(route) ? route : undefined)
+  })
+  ipcMain.handle(IPC_INVOKE.APP_QUIT, (): void => app.quit())
+  ipcMain.handle(
+    IPC_INVOKE.APP_GET_INFO,
+    (): { version: string; platform: string; arch: string; isDev: boolean } => ({
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      isDev: is.dev
+    })
+  )
+  ipcMain.handle(IPC_INVOKE.APP_CHECK_UPDATES, async (): Promise<void> => {
+    await checkForUpdates(false)
+  })
+  ipcMain.handle(IPC_INVOKE.APP_CHECK_ACCESSIBILITY, (): boolean => checkAccessibility())
+  ipcMain.handle(IPC_INVOKE.APP_OPEN_ACCESSIBILITY, (): void => {
+    hidePanel()
+    requestAccessibility()
+  })
+  ipcMain.handle(IPC_INVOKE.APP_GET_ICON, async (_event, q: AppIconQuery): Promise<string | null> => {
+    if (!q || typeof q !== 'object') return null
+    const clean: AppIconQuery = {}
+    if (typeof q.bundleId === 'string' && q.bundleId.length < 200) clean.bundleId = q.bundleId
+    if (typeof q.name === 'string' && q.name.length < 120) clean.name = q.name
+    if (typeof q.url === 'string' && q.url.length < 2000) clean.url = q.url
+    if (typeof q.path === 'string' && q.path.endsWith('.app') && !q.path.includes('..')) clean.path = q.path
+    return getAppIcon(clean)
+  })
 
   // ─── Window Management (open tool from Dashboard) ─────────────────────────
 
@@ -1079,3 +1246,5 @@ export function registerIpcHandlers(): void {
 
   console.log('[PeakFlow] IPC handlers registered')
 }
+
+/** The mini timer is a 220×64 pill; the break prompt grows it into a card in the same corner. */

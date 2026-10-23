@@ -17,6 +17,7 @@ export interface FocusDimConfig {
   disabled_displays: number[]
   highlight_mode: 'active' | 'app' | 'all'
   drag_escape: boolean
+  raise_app_windows: boolean
   excluded_apps: Array<{ exe: string; name: string }>
 }
 
@@ -63,6 +64,14 @@ export interface LiquidFocusConfig {
   focus_detection_enabled: boolean
   /** Seconds of looking away before counting as a distraction (default: 5) */
   focus_away_threshold_secs: number
+  /** What a detected distraction does during focus: reset the timer (default) or just count it */
+  focus_away_action: 'reset' | 'count'
+  /** v2 mini timer: size as a multiple of its 220x64 base (resizing changes it) */
+  mini_size: number
+  /** v2 mini timer colour */
+  mini_theme: 'dark' | 'light'
+  /** v2 mini timer: last top-left position, or null for the bottom-right corner */
+  mini_position: { x: number; y: number } | null
 }
 
 export interface SoundSplitConfig {
@@ -72,6 +81,11 @@ export interface SoundSplitConfig {
   remember_volumes: boolean
 }
 
+export interface SnapGridConfig {
+  /** macOS: snap a window dragged to a screen edge (off when macOS tiles on drag itself) */
+  drag_snap: boolean
+}
+
 export type ToolConfig =
   | FocusDimConfig
   | QuickBoardConfig
@@ -79,6 +93,7 @@ export type ToolConfig =
   | MeetReadyConfig
   | LiquidFocusConfig
   | SoundSplitConfig
+  | SnapGridConfig
 
 /** Default values matching Python app config.json defaults */
 export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
@@ -94,6 +109,7 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     disabled_displays: [],
     highlight_mode: 'active' as const,
     drag_escape: true,
+    raise_app_windows: false,
     excluded_apps: []
   },
   [ToolId.QuickBoard]: {
@@ -105,7 +121,7 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     plain_text_mode: false,
     ai_onboarding_complete: false,
     ai_translate_default_lang: '',
-    ai_suggestions_enabled: true,
+    ai_suggestions_enabled: false,
     ai_last_suggestion_date: '',
     ai_dismissed_suggestions: []
   },
@@ -115,7 +131,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     alert_check_seconds: 30,
     alert_duration_seconds: 60,
     alert_sound: true,
-    monitor_index: 0
+    // v2 screenslap: -1 = every display (what the alert has always done); 0+ = that display
+    monitor_index: -1
   },
   [ToolId.MeetReady]: {
     auto_popup_minutes_before: 2,
@@ -133,6 +150,10 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     todoist_project_filter: '',
     focus_detection_enabled: false,
     focus_away_threshold_secs: 5,
+    focus_away_action: 'reset' as const,
+    mini_size: 1.4,
+    mini_theme: 'dark' as const,
+    mini_position: null,
     distraction_sites: [
       'youtube.com',
       'facebook.com',
@@ -149,5 +170,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     auto_show_new_apps: true,
     hide_on_startup: true,
     remember_volumes: true
+  },
+  [ToolId.SnapGrid]: {
+    drag_snap: true
   }
 }

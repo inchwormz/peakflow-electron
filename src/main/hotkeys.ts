@@ -10,13 +10,16 @@
  */
 
 import { globalShortcut } from 'electron'
-import { ToolId, DEFAULT_HOTKEYS } from '@shared/tool-ids'
+import { ToolId, DEFAULT_HOTKEYS, PANEL_TOOLS, HIDDEN_TOOLS, isPanelTool } from '@shared/tool-ids'
+import { hidePanel, visiblePanelTool } from './panel'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
 import { toggleMicMute } from './services/mic-mute'
 import { isToolInstalled } from './security/trial'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
+import { SNAP_LAYOUTS, SNAP_UNDO_ACCEL } from '@shared/snapgrid-layouts'
+import { getSnapGridService } from './services/snapgrid'
 
 /** Registry of all active hotkeys: accelerator → label (for conflict detection) */
 const hotkeyRegistry = new Map<string, string>()
@@ -25,7 +28,13 @@ const hotkeyRegistry = new Map<string, string>()
  * Toggle a tool window: close it if open, create it if not.
  */
 function toggleTool(toolId: ToolId): void {
-  const existing = getToolWindow(toolId)
+  // v2: panel tools use the one-app panel. Its shortcut hides the panel only
+  // when the panel is already showing that tool; otherwise it switches to it.
+  if (isPanelTool(toolId) && visiblePanelTool() === toolId) {
+    hidePanel()
+    return
+  }
+  const existing = isPanelTool(toolId) ? undefined : getToolWindow(toolId)
   if (existing) {
     closeToolWindow(toolId)
   } else {
@@ -59,6 +68,7 @@ export function registerHotkeys(): void {
   for (const [toolId, accelerator] of Object.entries(DEFAULT_HOTKEYS)) {
     if (!accelerator) continue
     if (!isToolInstalled(toolId)) continue
+    if ((HIDDEN_TOOLS as readonly string[]).includes(toolId)) continue
 
     // For FocusDim, use the config hotkey instead of default
     if (toolId === ToolId.FocusDim) {
@@ -77,6 +87,21 @@ export function registerHotkeys(): void {
 
   // QuickBoard sequential paste queue hotkeys
   registerQueueHotkeys()
+
+  // SnapGrid window layouts (⌃⌥ + arrows / letters)
+  registerSnapGridHotkeys()
+
+  // v2 switcher: ⌥⌘1–5 open the panel on FocusDim, Liquid Focus, ScreenSlap, QuickBoard, SnapGrid
+  registerSwitcherHotkeys()
+}
+
+function registerSwitcherHotkeys(): void {
+  PANEL_TOOLS.forEach((toolId, i) => {
+    const accel = `Alt+CommandOrControl+${i + 1}`
+    if (globalShortcut.isRegistered(accel)) return
+    // Same rule as the tool shortcuts: hide if this tool is already showing, else switch to it
+    registerSingleHotkey(`switch:${toolId}`, accel, () => toggleTool(toolId))
+  })
 }
 
 /**
@@ -84,6 +109,7 @@ export function registerHotkeys(): void {
  * so the hotkey works immediately without restarting the app.
  */
 export function registerToolHotkey(toolId: ToolId): void {
+  if ((HIDDEN_TOOLS as readonly string[]).includes(toolId)) return
   let accelerator: string | undefined
   if (toolId === ToolId.FocusDim) {
     const conf = getConfig(ToolId.FocusDim) as FocusDimConfig
@@ -104,11 +130,27 @@ export function registerToolHotkey(toolId: ToolId): void {
   }
 }
 
+/**
+ * SnapGrid layout keys. Registered after FocusDim's, so if a key is already
+ * taken (FocusDim, or another app) SnapGrid skips it rather than stealing it.
+ */
+function registerSnapGridHotkeys(): void {
+  if (!isToolInstalled(ToolId.SnapGrid)) return
+  const svc = getSnapGridService()
+  for (const layout of SNAP_LAYOUTS) {
+    if (globalShortcut.isRegistered(layout.accel)) continue
+    registerSingleHotkey(`snapgrid:${layout.key}`, layout.accel, () => void svc.applyLayout(layout.key))
+  }
+  if (!globalShortcut.isRegistered(SNAP_UNDO_ACCEL)) {
+    registerSingleHotkey('snapgrid:undo', SNAP_UNDO_ACCEL, () => void svc.undo())
+  }
+}
+
 /** Internal: register a single accelerator → tool binding. */
 function registerSingleHotkey(toolId: string, accelerator: string, callback?: () => void): void {
   const handler = callback ?? (() => {
     if (toolId === ToolId.FocusDim) {
-      getFocusDimService().toggle()
+      void getFocusDimService().requestToggle()
     } else if (toolId === ToolId.MeetReady) {
       toggleMicMute()
     } else {
@@ -183,18 +225,9 @@ function registerQueueHotkeys(): void {
       accel: 'CommandOrControl+Shift+N',
       id: 'quickboard:paste-next',
       action: () => {
-        const { getWorkflowStatus, workflowPasteNext } = require('./services/clipboard-workflows')
-        if (getWorkflowStatus().active) {
-          workflowPasteNext()
-          return
-        }
-        const { getFormFillStatus, formPasteNext } = require('./services/clipboard-forms')
-        if (getFormFillStatus().active) {
-          formPasteNext()
-          return
-        }
-        const { pasteNext } = require('./services/clipboard-sequential')
-        pasteNext()
+        // Same access check as the panel's paste buttons
+        const { guardedPasteNextAny } = require('./quickboard-paste')
+        void guardedPasteNextAny()
       }
     },
     {

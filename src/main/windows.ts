@@ -9,9 +9,13 @@
 import { app, BrowserWindow, dialog, nativeImage, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { ToolId, SystemWindowId } from '@shared/tool-ids'
+import { ToolId, SystemWindowId, isPanelTool, HIDDEN_TOOLS } from '@shared/tool-ids'
 import { checkAccess } from './security/access-check'
 import { getConfig } from './services/config-store'
+import { isToolSupportedOn } from '@shared/platform-tools'
+import { ensureMediaAccess } from './services/permissions-darwin'
+import { getPanel, showPanel } from './panel'
+import { layoutMini } from './mini-window'
 
 /** Cached app icon shared across all windows */
 let _appIcon: Electron.NativeImage | undefined
@@ -148,7 +152,7 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
       const ssConfig = getConfig(ToolId.ScreenSlap) as { monitor_index?: number } | null
       if (ssConfig?.monitor_index !== undefined) {
         const displays = screen.getAllDisplays()
-        if (ssConfig.monitor_index < displays.length) {
+        if (ssConfig.monitor_index >= 0 && ssConfig.monitor_index < displays.length) {
           targetDisplay = displays[ssConfig.monitor_index]
         }
       }
@@ -199,10 +203,12 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
 
   // Show when the renderer has painted its first frame
   win.once('ready-to-show', () => {
-    if (!overrides.fullscreen && overrides.width && overrides.height) {
+    const isMini = toolId === SystemWindowId.LiquidFocusMini
+    if (!isMini && !overrides.fullscreen && overrides.width && overrides.height) {
       win.setContentSize(overrides.width, overrides.height)
     }
-    win.show()
+    // The mini timer is sized, placed and shown (without taking focus) by layoutMini
+    if (!isMini) win.show()
     // 'screen-saver' level keeps windows above fullscreen apps (Chrome, etc.).
     // Re-assert on blur/show/restore because Windows can silently drop it.
     if (toolId === ToolId.LiquidFocus || toolId === SystemWindowId.ScreenSlapAlert || toolId === SystemWindowId.LiquidFocusMini) {
@@ -215,11 +221,8 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
       win.on('restore', pinAbove)
     }
 
-    // Position mini widget at bottom-right of primary display
-    if (toolId === SystemWindowId.LiquidFocusMini) {
-      const workArea = screen.getPrimaryDisplay().workArea
-      win.setPosition(workArea.x + workArea.width - 220 - 16, workArea.y + workArea.height - 64 - 16)
-    }
+    // Mini timer: remembered size and spot (or the bottom-right corner)
+    if (isMini) layoutMini(win, false)
   })
 
   // Dashboard: hide to tray instead of closing (app stays resident)
@@ -253,7 +256,8 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
 
   // Clean up on close
   win.on('closed', () => {
-    windowMap.delete(toolId)
+    // A replacement may already be registered (closeToolWindow unregisters first)
+    if (windowMap.get(toolId) === win) windowMap.delete(toolId)
   })
 
   // Load the renderer
@@ -348,6 +352,25 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
     return createToolWindow(toolId)
   }
 
+  // Tools the OS can't run (SoundSplit on macOS) are hidden, never opened.
+  // v2: MeetReady and SoundSplit are hidden everywhere for now (code kept).
+  if (!isToolSupportedOn(toolId, process.platform) || (HIDDEN_TOOLS as readonly string[]).includes(toolId)) {
+    console.log(`[PeakFlow] ${toolId} is not available on ${process.platform}`)
+    return null
+  }
+
+  // v2: the four tools live in the one-app panel. The panel checks access
+  // itself and shows the turn-on or trial-ended screen when needed.
+  if (isPanelTool(toolId)) {
+    showPanel(toolId)
+    if (process.platform === 'darwin' && toolId === ToolId.LiquidFocus) {
+      ensureMediaAccess('LiquidFocus', ['camera']).catch((err) => {
+        console.warn('[PeakFlow] Media access check failed for LiquidFocus:', err)
+      })
+    }
+    return getPanel()
+  }
+
   // Check trial/license status (pass toolId for per-tool gating)
   const access = await checkAccess(toolId)
   if (!access.allowed) {
@@ -362,7 +385,16 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
     return null
   }
 
-  return createToolWindow(toolId)
+  const win = createToolWindow(toolId)
+  if (process.platform === 'darwin' && (toolId === ToolId.MeetReady || toolId === ToolId.LiquidFocus)) {
+    // macOS: let the OS ask for camera/mic, or explain how to re-enable it.
+    // Not awaited: the tool window opens at once and the prompt shows over it.
+    const needs: Array<'camera' | 'microphone'> = toolId === ToolId.MeetReady ? ['camera', 'microphone'] : ['camera']
+    ensureMediaAccess(toolId === ToolId.MeetReady ? 'MeetReady' : 'LiquidFocus', needs).catch((err) => {
+      console.warn(`[PeakFlow] Media access check failed for ${toolId}:`, err)
+    })
+  }
+  return win
 }
 
 /**
@@ -371,8 +403,9 @@ export async function openToolWithAccessCheck(toolId: WindowId): Promise<Browser
  */
 export function closeToolWindow(toolId: string): void {
   const win = windowMap.get(toolId)
-  if (win && !win.isDestroyed()) {
-    win.close()
-    // The 'closed' handler will remove it from windowMap
-  }
+  // The mini timer always really closes, and closing finishes asynchronously:
+  // unregister it now so a reopen in the meantime gets a new window rather than
+  // the one about to disappear. (Other windows may veto close and hide instead.)
+  if (toolId === SystemWindowId.LiquidFocusMini) windowMap.delete(toolId)
+  if (win && !win.isDestroyed()) win.close()
 }

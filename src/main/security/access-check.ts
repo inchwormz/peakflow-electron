@@ -13,7 +13,7 @@
 
 import type { AccessStatus } from '@shared/ipc-types'
 import { isLicensed, isToolLicensed as isLicenseForTool, isSuiteLicense } from './license'
-import { isToolInstalled, getToolTrialDaysRemaining, getTrialDaysRemaining } from './trial'
+import { isToolInstalled, getTrialDaysRemaining } from './trial'
 
 /**
  * Determine whether the user has access to a PeakFlow tool.
@@ -21,7 +21,7 @@ import { isToolInstalled, getToolTrialDaysRemaining, getTrialDaysRemaining } fro
  * Check order:
  *   1. Tool not installed          → blocked (storefront gate)
  *   2. Licensed AND covers tool    → full access
- *   3. Per-tool trial still active → access with countdown
+ *   3. App-wide trial still active → access with countdown
  *   4. Trial expired + licensed    → blocked (wrong tool)
  *   5. Trial expired + no license  → blocked
  *
@@ -68,13 +68,11 @@ export async function checkAccess(toolId = 'PeakFlow'): Promise<AccessStatus> {
       }
     }
 
-    const daysRemaining =
-      toolId === 'PeakFlow'
-        ? Math.max(getToolTrialDaysRemaining('PeakFlow'), getTrialDaysRemaining())
-        : getToolTrialDaysRemaining(toolId)
+    // v2: one app-wide 30-day trial for every tool (trial.ts)
+    const daysRemaining = getTrialDaysRemaining()
     const trialActive = daysRemaining > 0
 
-    // Per-tool trial still running → access with countdown
+    // Trial still running → access with countdown
     if (trialActive) {
       return {
         allowed: true,
@@ -85,7 +83,7 @@ export async function checkAccess(toolId = 'PeakFlow'): Promise<AccessStatus> {
       }
     }
 
-    // 4. Licensed but for a different tool (per-tool trial expired)
+    // 4. Licensed but for a different tool (trial expired)
     if (licensed) {
       return {
         allowed: false,

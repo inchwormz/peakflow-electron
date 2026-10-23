@@ -24,10 +24,11 @@
  * terminating, so a single anomalous tick can never kill the app.
  */
 
-import { app, powerMonitor } from 'electron'
+import { app, powerMonitor, dialog } from 'electron'
 import { Worker } from 'worker_threads'
 import { join } from 'path'
 import { getLogPath } from './logger'
+import { guardModal } from './modal-guard'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ const HEARTBEAT_INTERVAL_MS = 5_000
 const FREEZE_THRESHOLD_MS = 30_000
 /** Gaps longer than this are sleep/hibernate, not a live freeze — reset instead of killing. */
 const SLEEP_GAP_MS = 2 * 60_000
+/** macOS: a dialog promise that has not settled after this long stops pausing the watchdog. */
+const MODAL_MAX_OPEN_MS = 10 * 60_000
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,9 @@ let checkInterval = null;
 let systemSuspended = false;
 let lastTick = Date.now();
 let missedChecks = 0;
+let modalDepth = 0;
+let modalOpenedAt = 0;
+let modalMaxMs = 600000;
 
 const CHECK_INTERVAL_MS = 5000;
 // A tick arriving this late means the worker itself was frozen — i.e. the
@@ -80,6 +86,7 @@ parentPort.on('message', (msg) => {
     freezeThreshold = msg.freezeThreshold;
     sleepGapMs = msg.sleepGapMs;
     mainPid = msg.pid;
+    if (msg.modalMaxMs) modalMaxMs = msg.modalMaxMs;
     lastHeartbeat = Date.now();
     lastTick = Date.now();
     systemSuspended = false;
@@ -91,6 +98,16 @@ parentPort.on('message', (msg) => {
       const tickGap = now - lastTick;
       lastTick = now;
       const elapsed = now - lastHeartbeat;
+
+      // A native dialog is open (macOS runs it modally on the main thread,
+      // which pauses heartbeats). Waiting on the user is not a freeze.
+      // The pause is a lease: a native call that never returns must not
+      // switch freeze recovery off for good.
+      if (modalDepth > 0 && now - modalOpenedAt < modalMaxMs) {
+        lastHeartbeat = now;
+        missedChecks = 0;
+        return;
+      }
 
       // Worker timers freeze during system suspend. A late tick proves the
       // system slept — reset instead of killing, even when no suspend event
@@ -149,6 +166,19 @@ parentPort.on('message', (msg) => {
     missedChecks = 0;
   }
 
+  if (msg.type === 'modal-open') {
+    if (modalDepth === 0) modalOpenedAt = Date.now();
+    modalDepth++;
+    lastHeartbeat = Date.now();
+    missedChecks = 0;
+  }
+
+  if (msg.type === 'modal-close') {
+    modalDepth = Math.max(0, modalDepth - 1);
+    lastHeartbeat = Date.now();
+    missedChecks = 0;
+  }
+
   if (msg.type === 'shutdown') {
     if (checkInterval) clearInterval(checkInterval);
     process.exit(0);
@@ -195,7 +225,8 @@ export function initWatchdog(): void {
       logPath: getLogPath(),
       freezeThreshold: FREEZE_THRESHOLD_MS,
       sleepGapMs: SLEEP_GAP_MS,
-      pid: process.pid
+      pid: process.pid,
+      modalMaxMs: MODAL_MAX_OPEN_MS
     })
 
     // Send heartbeats on a regular interval
@@ -211,9 +242,27 @@ export function initWatchdog(): void {
       if (worker) worker.postMessage({ type: 'heartbeat' })
     })
 
+    if (process.platform === 'darwin') pauseDuringNativeDialogs()
+
     console.log('[Watchdog] Main process heartbeat monitor started')
   } catch (err) {
     console.error('[Watchdog] Failed to start:', err)
+  }
+}
+
+/**
+ * Run a synchronous call that can block on a system prompt, without the
+ * watchdog counting the wait as a freeze. On macOS the first Keychain read
+ * (safeStorage) can show a password prompt that holds the main thread until
+ * the user answers; the watchdog used to kill PeakFlow after 30 s of it.
+ */
+export function withWatchdogPaused<T>(fn: () => T): T {
+  if (!worker || process.platform !== 'darwin') return fn()
+  worker.postMessage({ type: 'modal-open' })
+  try {
+    return fn()
+  } finally {
+    worker?.postMessage({ type: 'modal-close' })
   }
 }
 
@@ -227,6 +276,36 @@ export function destroyWatchdog(): void {
 }
 
 // ─── Internal ───────────────────────────────────────────────────────────────
+
+/**
+ * macOS: native dialogs without a parent window run modally on the main
+ * thread, so heartbeats stop while the user reads them. Without this, any
+ * dialog left open for 30s (first-run permissions, update offer, even the
+ * crash-recovery dialog itself) got the app killed — and the crash dialog
+ * then repeated on every launch. Wrap every dialog call so the worker knows
+ * a dialog is open. Not applied on Windows, whose behaviour is unchanged.
+ */
+function pauseDuringNativeDialogs(): void {
+  const methods = [
+    'showMessageBox', 'showMessageBoxSync',
+    'showOpenDialog', 'showOpenDialogSync',
+    'showSaveDialog', 'showSaveDialogSync',
+    'showErrorBox', 'showCertificateTrustDialog'
+  ] as const
+  const target = dialog as unknown as Record<string, (...args: unknown[]) => unknown>
+
+  for (const name of methods) {
+    const original = target[name]
+    if (typeof original !== 'function') continue
+    target[name] = guardModal(
+      original,
+      dialog,
+      () => worker?.postMessage({ type: 'modal-open' }),
+      () => worker?.postMessage({ type: 'modal-close' }),
+      MODAL_MAX_OPEN_MS
+    )
+  }
+}
 
 function cleanup(): void {
   if (heartbeatTimer) {

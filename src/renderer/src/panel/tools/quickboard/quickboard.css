@@ -1,0 +1,4 @@
+/* QuickBoard-only rules (the setup wizard's step bars, from the prototype's full.css). */
+.pf .qb-steps { display: flex; gap: 4px; justify-content: center; margin-bottom: 10px; }
+.pf .qb-steps i { width: 18px; height: 2px; border-radius: 2px; background: var(--active); }
+.pf .qb-steps i.on { background: var(--text); }

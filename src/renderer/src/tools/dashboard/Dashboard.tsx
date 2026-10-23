@@ -9,6 +9,7 @@ import { useState, useCallback, useEffect, useRef, type CSSProperties, type Form
 import { TitleBar } from '@renderer/components/layout/TitleBar'
 import { StatusBar } from '@renderer/components/layout/StatusBar'
 import { ToolId, TOOL_DISPLAY_NAMES } from '@shared/tool-ids'
+import { isToolSupportedOn } from '@shared/platform-tools'
 import { ShareAndEarn } from '@renderer/components/sharing/ShareAndEarn'
 import peakflowLogo from '@renderer/assets/peakflow-logo.png'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
@@ -87,6 +88,9 @@ const TOOLS: ToolMeta[] = [
     ]
   }
 ]
+
+/** Tools this OS can run (SoundSplit is Windows-only and hidden on macOS) */
+const VISIBLE_TOOLS = TOOLS.filter((t) => isToolSupportedOn(t.id, window.peakflow.platform))
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -263,7 +267,7 @@ export function Dashboard(): React.JSX.Element {
         </div>
 
         <div style={grid}>
-          {TOOLS.map((tool) => (
+          {VISIBLE_TOOLS.map((tool) => (
             <ToolCard
               key={tool.id}
               tool={tool}
@@ -497,7 +501,8 @@ function ToolCard({
           onMouseEnter={(e) => { e.currentTarget.style.background = tool.accent + '35' }}
           onMouseLeave={(e) => { e.currentTarget.style.background = tool.accent + '20' }}
         >
-          {toolLicensed ? 'Open' : 'Try Free — 14 days'}
+          {/* v2: no trial to start (one 30-day trial runs from first launch) */}
+          {toolLicensed ? 'Open' : 'Turn on'}
         </button>
       )}
     </div>

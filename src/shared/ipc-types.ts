@@ -7,6 +7,7 @@
  */
 
 import type { ToolId } from './tool-ids'
+import { LAUNCHER_INVOKE, LAUNCHER_SEND } from './launcher/ipc'
 
 // ─── Security / Licensing ────────────────────────────────────────────────────
 
@@ -86,6 +87,15 @@ export const IPC_INVOKE = {
   FOCUSDIM_ADD_EXCLUDED_APP: 'focusdim:add-excluded-app',
   FOCUSDIM_REMOVE_EXCLUDED_APP: 'focusdim:remove-excluded-app',
 
+  // SnapGrid
+  SNAPGRID_GET_STATE: 'snapgrid:get-state',
+  SNAPGRID_APPLY: 'snapgrid:apply',
+  SNAPGRID_ARRANGE: 'snapgrid:arrange',
+  SNAPGRID_PREVIEW: 'snapgrid:preview',
+  SNAPGRID_UNDO: 'snapgrid:undo',
+  SNAPGRID_SET_DRAG: 'snapgrid:set-drag',
+  SNAPGRID_OPEN_OS_SETTINGS: 'snapgrid:open-os-settings',
+
   // App-level
   APP_GET_AUTO_START: 'app:get-auto-start',
   APP_SET_AUTO_START: 'app:set-auto-start',
@@ -135,6 +145,8 @@ export const IPC_INVOKE = {
   CLIPBOARD_START_FORM_FILL: 'clipboard:start-form-fill',
   CLIPBOARD_FORM_PASTE_NEXT: 'clipboard:form-paste-next',
   CLIPBOARD_CANCEL_FORM_FILL: 'clipboard:cancel-form-fill',
+  // v2 quickboard: which paste sequence (queue, workflow or form) is running, for the panel's banner
+  CLIPBOARD_PASTE_STATUS: 'clipboard:v2-paste-status',
 
   // SoundSplit
   SOUNDSPLIT_GET_SESSIONS: 'soundsplit:get-sessions',
@@ -174,6 +186,19 @@ export const IPC_INVOKE = {
   LIQUIDFOCUS_GET_STATS: 'liquidfocus:get-stats',
   LIQUIDFOCUS_RECORD_INTERRUPTION: 'liquidfocus:record-interruption',
   LIQUIDFOCUS_TOGGLE_MINI: 'liquidfocus:toggle-mini',
+  LIQUIDFOCUS_SET_MINI: 'liquidfocus:set-mini',
+  /** v2 mini timer: move it while you drag ({x, y, done}) */
+  LIQUIDFOCUS_MINI_MOVE: 'liquidfocus:mini-move',
+  /** v2 panel: the renderer reports its current route (so hotkeys know which tool is showing) */
+  PANEL_ROUTE: 'panel:route',
+  /** v2: the panel page has mounted; returns the route asked for while it loaded (or null) */
+  PANEL_READY: 'panel:ready',
+  /** v2: the panel's focus detector reports its state ('focused' | 'absent' | 'away' | 'off' …) for the mini */
+  LIQUIDFOCUS_DETECTOR_STATUS: 'liquidfocus:detector-status',
+  // v2 liquidfocus: restart the current phase (panel "Reset")
+  LIQUIDFOCUS_RESTART_PHASE: 'liquidfocus:restart-phase',
+  /** v2: Close on the mini's "Looked away" card clears main's notice */
+  LIQUIDFOCUS_DISMISS_AWAY: 'liquidfocus:dismiss-away',
 
   // Shell
   SHELL_OPEN_EXTERNAL: 'shell:open-external',
@@ -194,10 +219,24 @@ export const IPC_INVOKE = {
   // Hotkeys
   HOTKEY_GET_REGISTERED: 'hotkey:get-registered',
 
+  // One-app panel (v2)
+  PANEL_RESIZE: 'panel:resize',
+  PANEL_HIDE: 'panel:hide',
+  PANEL_SHOW: 'panel:show',
+  APP_QUIT: 'app:quit',
+  APP_GET_INFO: 'app:get-info',
+  APP_CHECK_UPDATES: 'app:check-updates',
+  APP_GET_ICON: 'app:get-icon',
+  APP_CHECK_ACCESSIBILITY: 'app:check-accessibility',
+  APP_OPEN_ACCESSIBILITY: 'app:open-accessibility',
+
   // Bug Report
   BUGREPORT_SEND_EMAIL: 'bugreport:send-email',
   BUGREPORT_COPY_TO_CLIPBOARD: 'bugreport:copy-to-clipboard',
-  BUGREPORT_REVEAL_LOG: 'bugreport:reveal-log'
+  BUGREPORT_REVEAL_LOG: 'bugreport:reveal-log',
+
+  // Launcher (⌥Space command bar)
+  ...LAUNCHER_INVOKE
 } as const
 
 /** Send channels (main → renderer, push notifications) */
@@ -207,6 +246,7 @@ export const IPC_SEND = {
   CLIPBOARD_QUEUE_STATUS: 'clipboard:queue-status',
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',
+  SNAPGRID_STATE_CHANGED: 'snapgrid:state-changed',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
   CALENDAR_STATUS_CHANGED: 'calendar:status-changed',
@@ -222,5 +262,28 @@ export const IPC_SEND = {
   TODOIST_STATUS_CHANGED: 'todoist:status-changed',
 
   // Mic Mute
-  MIC_MUTE_CHANGED: 'mic:mute-changed'
+  MIC_MUTE_CHANGED: 'mic:mute-changed',
+
+  // One-app panel (v2): main asks the panel to show a route (e.g. 'quickboard')
+  PANEL_NAVIGATE: 'panel:navigate',
+  PANEL_VISIBILITY: 'panel:visibility',
+  /** v2 mini timer: its colour changed ('dark' | 'light') */
+  LIQUIDFOCUS_MINI_THEME: 'liquidfocus:mini-theme',
+  /** v2: the detector's state, forwarded to the mini timer */
+  LIQUIDFOCUS_DETECTOR: 'liquidfocus:detector',
+  /** v2: a focus session was reset because you looked away */
+  LIQUIDFOCUS_AWAY_RESET: 'liquidfocus:away-reset',
+  /** v2: a tool setting changed ({ tool, key, value }), so every screen and the background detector follow it at once */
+  CONFIG_CHANGED: 'config:changed',
+
+  // Launcher (⌥Space command bar)
+  ...LAUNCHER_SEND
 } as const
+
+/** What the renderer asks APP_GET_ICON for: an app bundle id, an app name, a file path or a link. */
+export interface AppIconQuery {
+  bundleId?: string
+  name?: string
+  path?: string
+  url?: string
+}

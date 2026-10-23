@@ -2,20 +2,23 @@
  * System tray icon and context menu.
  *
  * PeakFlow lives in the system tray — there is no main window.
- * Double-clicking the tray icon opens the Dashboard hub.
+ * v2: clicking the tray icon toggles the one-app panel; right-clicking shows
+ * this native menu.
  */
 
 import { Tray, Menu, app, nativeImage } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { ToolId, SystemWindowId, TOOL_DISPLAY_NAMES, DEFAULT_HOTKEYS } from '@shared/tool-ids'
-import { createToolWindow, openToolWithAccessCheck } from './windows'
+import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS } from '@shared/tool-ids'
+import { openToolWithAccessCheck } from './windows'
+import { setPanelAnchor, showPanel, togglePanel } from './panel'
 import { checkForUpdates } from './services/auto-updater'
 import { isToolInstalled } from './security/trial'
 import { sendViaEmail, revealLogFile } from './services/bug-report'
 import { getFocusDimService } from './services/focus-dim'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
+import { isToolSupportedOn } from '@shared/platform-tools'
 
 let tray: Tray | null = null
 
@@ -23,6 +26,18 @@ let tray: Tray | null = null
  * Load the PeakFlow tray icon from resources.
  */
 function getTrayIcon(): Electron.NativeImage {
+  if (process.platform === 'darwin') {
+    // macOS menu bar: monochrome template image (+ @2x picked up automatically)
+    // so the system tints it for light/dark menu bars.
+    const base = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
+    const template = nativeImage.createFromPath(join(base, 'trayTemplate.png'))
+    if (!template.isEmpty()) {
+      template.setTemplateImage(true)
+      return template
+    }
+    console.warn('[PeakFlow] Template tray icon not found in', base, '— using colour icon')
+  }
+
   const iconPath = join(app.getAppPath(), 'resources', 'tray-icon.png')
   const icon = nativeImage.createFromPath(iconPath)
   if (icon.isEmpty()) {
@@ -43,29 +58,35 @@ function getTrayIcon(): Electron.NativeImage {
  * e.g. "CommandOrControl+Shift+D" -> "Ctrl+Shift+D"
  */
 function formatHotkeyLabel(hotkey: string): string {
+  // macOS menus render CommandOrControl as the Cmd symbol themselves
+  if (process.platform === 'darwin') return hotkey
   return hotkey.replace('CommandOrControl', 'Ctrl')
 }
 
 /**
- * Ordered list of tools for tray menu (display order).
+ * Ordered list of tools for tray menu (display order): the four v2 tools.
+ * MeetReady and SoundSplit are hidden for now (John, 19 Oct 2026).
  */
-const TRAY_TOOL_ORDER: ToolId[] = [
-  ToolId.ScreenSlap,
-  ToolId.FocusDim,
-  ToolId.QuickBoard,
-  ToolId.LiquidFocus,
-  ToolId.MeetReady,
-  ToolId.SoundSplit
-]
+const TRAY_TOOL_ORDER: readonly ToolId[] = PANEL_TOOLS
+
+/** ⌥⌘1–4 open the panel on a tool (shown next to each tool in this menu). */
+const SWITCH_ACCELERATORS: Partial<Record<ToolId, string>> = {
+  [ToolId.FocusDim]: 'Alt+CommandOrControl+1',
+  [ToolId.LiquidFocus]: 'Alt+CommandOrControl+2',
+  [ToolId.ScreenSlap]: 'Alt+CommandOrControl+3',
+  [ToolId.QuickBoard]: 'Alt+CommandOrControl+4',
+  [ToolId.SnapGrid]: 'Alt+CommandOrControl+5'
+}
 
 /**
  * Build the tray context menu — only shows installed tools.
  */
-function buildContextMenu(): Electron.Menu {
+export function buildContextMenu(): Electron.Menu {
   const toolItems: Electron.MenuItemConstructorOptions[] = []
 
   for (const id of TRAY_TOOL_ORDER) {
     if (!isToolInstalled(id)) continue
+    if (!isToolSupportedOn(id, process.platform)) continue
 
     if (id === ToolId.FocusDim) {
       // FocusDim gets a submenu with toggle + intensity presets + settings
@@ -93,7 +114,8 @@ function buildContextMenu(): Electron.Menu {
           {
             label: fdState.enabled ? 'Disable' : 'Enable',
             accelerator: hotkeyLabel,
-            click: (): void => { svc.toggle() }
+            // Same access check as the panel and the shortcut: a locked FocusDim can't be turned on here
+            click: (): void => { void svc.requestToggle() }
           },
           { type: 'separator' },
           ...intensityPresets.map((p) => ({
@@ -104,18 +126,19 @@ function buildContextMenu(): Electron.Menu {
           })),
           { type: 'separator' as const },
           {
-            label: 'Settings...',
-            click: (): void => { openToolWithAccessCheck(ToolId.FocusDim) }
+            label: 'Settings…',
+            click: (): void => { showPanel('focusdim/settings') }
           }
         ]
       })
       continue
     }
 
-    const hotkey = DEFAULT_HOTKEYS[id]
+    const hotkey = SWITCH_ACCELERATORS[id]
     toolItems.push({
       label: TOOL_DISPLAY_NAMES[id],
       accelerator: hotkey ? formatHotkeyLabel(hotkey) : undefined,
+      registerAccelerator: false,
       click: (): void => {
         openToolWithAccessCheck(id)
       }
@@ -180,12 +203,14 @@ export function createTray(): void {
   const icon = getTrayIcon()
   tray = new Tray(icon)
 
-  tray.setToolTip('PeakFlow \u2014 Mac-level productivity for Windows')
-  tray.setContextMenu(buildContextMenu())
+  tray.setToolTip(process.platform === 'darwin' ? 'PeakFlow' : 'PeakFlow \u2014 Mac-level productivity for Windows')
+  tray.setIgnoreDoubleClickEvents(true)
+  setPanelAnchor(() => (tray && !tray.isDestroyed() ? tray.getBounds() : null))
 
-  // Double-click opens the Dashboard hub
-  tray.on('double-click', () => {
-    createToolWindow(SystemWindowId.Dashboard)
+  // Click: the one-app panel. Right-click: the native menu.
+  tray.on('click', () => togglePanel())
+  tray.on('right-click', () => {
+    if (tray && !tray.isDestroyed()) tray.popUpContextMenu(buildContextMenu())
   })
 
   console.log('[PeakFlow] System tray created')
@@ -195,10 +220,14 @@ export function createTray(): void {
  * Rebuild the tray context menu (e.g. after a tool is installed).
  */
 export function rebuildTray(): void {
-  if (tray && !tray.isDestroyed()) {
-    tray.setContextMenu(buildContextMenu())
-    console.log('[PeakFlow] Tray menu rebuilt')
-  }
+  // The menu is built fresh on every right-click, so there is nothing to cache.
+  if (tray && !tray.isDestroyed()) console.log('[PeakFlow] Tray menu will rebuild on next open')
+}
+
+/** Text next to the menu-bar icon (macOS), e.g. the Liquid Focus countdown. */
+export function setTrayTitle(text: string): void {
+  if (!tray || tray.isDestroyed() || process.platform !== 'darwin') return
+  tray.setTitle(text, { fontType: 'monospacedDigit' })
 }
 
 /**

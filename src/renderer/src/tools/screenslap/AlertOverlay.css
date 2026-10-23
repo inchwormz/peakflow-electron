@@ -1,0 +1,82 @@
+/* ScreenSlap full takeover (approved round 5, John 19 Oct: "that screen slaps fine").
+   Solid black, white and grey type, the meeting app's real icon is the only colour.
+   Rules copied from the prototype's .slap3 (full/full.css), scoped to .ssa because
+   the alert window is not inside the panel's .pf. Fade in and out only. */
+
+.ssa {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Be Vietnam Pro', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  cursor: default;
+  user-select: none;
+  transition: opacity 200ms ease-out;
+}
+.ssa.in { animation: ssaIn 240ms ease-out both; }
+.ssa.out { opacity: 0; }
+@keyframes ssaIn { from { opacity: 0; } to { opacity: 1; } }
+
+.ssa .wrap { width: min(1500px, 84vw); display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ssa .when { display: flex; gap: 10px; font-size: clamp(16px, 1.5vw, 22px); color: #8a8a8a; font-variant-numeric: tabular-nums; }
+.ssa .when b { font-weight: 500; color: #8a8a8a; }
+.ssa .when .dot { color: #5a5a5a; }
+.ssa.urgent .when b { color: #fff; }
+.ssa h1 {
+  margin: 18px 0 0;
+  font-size: clamp(48px, min(5.6vw, 8vh), 128px);
+  line-height: 1.06;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.ssa .acts { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 28px; margin-top: 48px; }
+.ssa .big {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  color: #000;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+.ssa .big:hover { background: #e6e6e6; }
+.ssa .big:focus-visible { box-shadow: 0 0 0 2px #000, 0 0 0 4px #fff; }
+.ssa .tx {
+  background: none;
+  border: 0;
+  padding: 8px 2px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  color: #8a8a8a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  outline: none;
+}
+.ssa .tx:hover, .ssa .tx:focus-visible { color: #fff; }
+.ssa .also { display: flex; align-items: center; gap: 14px; margin-top: 56px; padding-top: 22px; border-top: 1px solid #1f1f1f; font-size: 15px; color: #8a8a8a; max-width: 100%; }
+.ssa .also .at { color: #e6e6e6; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ssa .also .aw { white-space: nowrap; }
+.ssa .foot { position: absolute; bottom: 32px; left: 0; right: 0; text-align: center; font-size: 13px; color: #5a5a5a; }
+.ssa .logo { display: block; flex: none; }
+.ssa .logo.ph { display: none; }
