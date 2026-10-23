@@ -51,6 +51,19 @@ export function storeCredential(tool: string, type: string, value: string): bool
 }
 
 /**
+ * Is this stored value safeStorage output (base64)? macOS and Linux prefix
+ * the ciphertext with "v10"/"v11"; Windows uses the same prefix or, on
+ * older builds, a raw DPAPI blob (01 00 00 00 D0 8C 9D DF …).
+ */
+export function looksEncrypted(raw: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return false
+  const head = Buffer.from(raw.slice(0, 12), 'base64')
+  const v = head.subarray(0, 3).toString('latin1')
+  if (v === 'v10' || v === 'v11') return true
+  return head.length >= 8 && head.subarray(0, 8).equals(Buffer.from([1, 0, 0, 0, 0xd0, 0x8c, 0x9d, 0xdf]))
+}
+
+/**
  * Retrieve a previously stored credential.
  * Returns `null` if the key doesn't exist or decryption fails.
  */
@@ -64,8 +77,15 @@ export function getCredential(tool: string, type: string): string | null {
     if (isAvailable()) {
       const decrypted = decryptString(raw)
       if (decrypted === null) {
-        // May be a plaintext fallback from a previous run — try returning as-is
-        console.warn(`[PeakFlow:Credentials] Decrypt failed for ${key}, returning raw`)
+        // Encrypted but unreadable: the Keychain refused (Deny on the "PeakFlow
+        // Safe Storage" prompt after an unsigned update), or the key changed.
+        // Return nothing, never the scrambled text (review S2).
+        if (looksEncrypted(raw)) {
+          console.warn(`[PeakFlow:Credentials] Can't decrypt ${key}: treating it as not saved`)
+          return null
+        }
+        // A plaintext fallback saved when encryption wasn't available
+        console.warn(`[PeakFlow:Credentials] ${key} is stored unencrypted, returning it as-is`)
         return raw
       }
       return decrypted
