@@ -930,13 +930,23 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
           </div>
         </>
       )}
-      <div className="lc-set">
-        <div>
-          <div className="lbl">OpenAI key</div>
-          <div className="sub">Saved encrypted on this computer</div>
+      {d.viaAddon && (
+        <div className="lc-set">
+          <div>
+            <div className="lbl">Dictation add-on</div>
+            <div className="sub">{d.usage}</div>
+          </div>
         </div>
-        <button className="btn" onClick={() => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then(setD)}>Remove</button>
-      </div>
+      )}
+      {d.ownKey && (
+        <div className="lc-set">
+          <div>
+            <div className="lbl">OpenAI key</div>
+            <div className="sub">Saved encrypted on this computer</div>
+          </div>
+          <button className="btn" onClick={() => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then(setD)}>Remove</button>
+        </div>
+      )}
     </>
   )
 }

@@ -7,7 +7,10 @@
 /** gpt-transcribe: OpenAI's current speech-to-text model; gpt-4o-mini-transcribe: fallback for keys without it */
 export type DictationModel = 'gpt-transcribe' | 'gpt-4o-mini-transcribe'
 
-export type TranscribeError = 'no_key' | 'bad_key' | 'network' | 'no_speech' | 'failed' | 'model_unavailable'
+export type TranscribeError =
+  | 'no_key' | 'bad_key' | 'network' | 'no_speech' | 'failed' | 'model_unavailable'
+  // The $5 add-on (addon.ts): balance used up, a third computer, 3 hours today, or switched off
+  | 'addon_empty' | 'addon_devices' | 'addon_daily' | 'addon_off'
 
 export interface TranscribeResult {
   ok: boolean
