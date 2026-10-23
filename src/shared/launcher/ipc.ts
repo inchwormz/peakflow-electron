@@ -44,7 +44,9 @@ export const LAUNCHER_INVOKE = {
   /** Microphone and Accessibility state (DictationPermissions) */
   DICTATION_PERMISSIONS: 'dictation:permissions',
   /** Ask for the first missing permission; returns DictationPermissions */
-  DICTATION_ALLOW: 'dictation:allow'
+  DICTATION_ALLOW: 'dictation:allow',
+  /** Try the kept clip again (it failed to turn into text); types into the app underneath */
+  DICTATION_RETRY: 'dictation:retry'
 } as const
 
 export const LAUNCHER_SEND = {

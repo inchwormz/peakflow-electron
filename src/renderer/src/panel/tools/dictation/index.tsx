@@ -35,10 +35,14 @@ function useDictation(): {
   perms: DictationPermissions | undefined
   setPerms: (v: DictationPermissions) => void
 } {
-  const [s, , setS] = useInvoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS)
+  const [s, reloadS, setS] = useInvoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS)
   const [account, reloadAccount] = useInvoke<DictationAccount>(IPC_INVOKE.DICTATION_ACCOUNT)
   const [perms, reloadPerms, setPerms] = useInvoke<DictationPermissions>(IPC_INVOKE.DICTATION_PERMISSIONS)
-  useIpcEvent(IPC_SEND.DICTATION_ACCOUNT_CHANGED, reloadAccount)
+  useIpcEvent(IPC_SEND.DICTATION_ACCOUNT_CHANGED, () => {
+    reloadAccount()
+    // A purchase can make dictation usable (the switch and the how-to line follow)
+    reloadS()
+  })
   useIpcEvent(IPC_SEND.LICENSE_STATUS_CHANGED, reloadAccount)
   // While a permission is missing, look again every few seconds so the page
   // catches up when it's switched on in System Settings
@@ -72,6 +76,7 @@ function Main(): React.JSX.Element {
   const mac = isMac()
   const missing = missingPermission(perms)
   const keyName = holdKeyName(s.holdKey, mac)
+  const pay = payView(account)
   return (
     <>
       {missing ? (
@@ -87,10 +92,23 @@ function Main(): React.JSX.Element {
         </>
       ) : null}
 
+      {s.kept ? (
+        <>
+          <Banner icon="refresh">
+            <b>Your last dictation didn’t go through</b>
+            <br />
+            {s.kept} {s.kept === 1 ? 'second' : 'seconds'} of talking is saved. Try again types it into the app you were using.
+          </Banner>
+          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => invoke<boolean>(IPC_INVOKE.DICTATION_RETRY).catch(() => {})}>
+            Try again
+          </Btn>
+        </>
+      ) : null}
+
       <Grp>
         <Row
           label="Dictation"
-          sub={s.hasKey ? howTo(keyName) : 'To turn it on, buy time below or add your OpenAI key.'}
+          sub={s.hasKey ? howTo(keyName) : pay.kind === 'own-key' ? 'To turn it on, add your OpenAI key below.' : 'To turn it on, buy time below or add your OpenAI key.'}
           right={<Toggle label="Dictation" checked={s.enabled} disabled={!s.hasKey} onChange={(v) => void setting('enabled', v).then(setS)} />}
         />
         <Row
@@ -101,7 +119,7 @@ function Main(): React.JSX.Element {
       {s.enabled && s.hint ? <Note style={{ marginTop: 8 }}>{s.hint}</Note> : null}
 
       <Gap h={14} />
-      <Paying view={payView(account)} ownKey={!!s.ownKey} />
+      <Paying view={pay} ownKey={!!s.ownKey} />
     </>
   )
 }

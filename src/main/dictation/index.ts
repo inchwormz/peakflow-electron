@@ -22,12 +22,13 @@ import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationHoldKey, DictationSettings, DictationState } from '@shared/launcher/types'
 import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
 import { ensureMediaAccess, checkAccessibility, requestAccessibility, openMediaSettings } from '../services/permissions-darwin'
-import { getPanel } from '../panel'
+import { getPanel, hidePanel } from '../panel'
 import { missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
 import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { saveClipboard, restoreClipboard } from '../launcher/selection'
 import { simulateCtrlV } from '../native/keyboard'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
+import { KEEP_CLIP_MS, keepsClip, pasteKeys, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
@@ -41,6 +42,8 @@ const MIN_HOLD_MS = 300
 /** Longest recording (OpenAI takes up to 25 MB; ~10 minutes of opus is far below) */
 const MAX_HOLD_MS = 5 * 60_000
 const PILL_W = 220
+/** Wide enough for an error message with where to try again */
+const PILL_ERROR_W = 380
 const PILL_H = 44
 
 const MAC_KEYS: DictationHoldKey[] = ['fn', 'ropt', 'rcmd', 'rctrl']
@@ -79,6 +82,9 @@ let model: DictationModel = 'gpt-transcribe'
 let context: Promise<DictationContext> = Promise.resolve({})
 /** The last dictation as spoken and as typed, for "Paste last dictation as spoken" */
 let last: { raw: string; typed: string; at: number } | null = null
+/** A clip that couldn't be turned into text, kept so it can be tried again (S11) */
+interface Clip { buf: ArrayBuffer; mime: string; durationMs: number; ctx: DictationContext; at: number }
+let keptClip: Clip | null = null
 /** Keep recording this long after the key comes up, so the last word isn't clipped */
 const RELEASE_PAD_MS = 150
 
@@ -90,6 +96,8 @@ let addon: AddonStatus = { state: 'none' }
 let addonCheckedAt = 0
 let addonRefresh: Promise<void> | null = null
 let addonRetry: ReturnType<typeof setTimeout> | null = null
+/** Last time the Dictation page made the add-on check early (after a purchase) */
+let catchUpAt = 0
 
 function addonAuth(): AddonAuth | null {
   const licence = getCredential('license', 'key')?.trim()
@@ -147,7 +155,8 @@ function settings(): DictationSettings {
     model,
     cleanup: store.get('tidy'),
     wordCount: parseMyWords(store.get('words')).hints.length,
-    active: store.get('enabled') && key && isExpansionActive()
+    active: store.get('enabled') && key && isExpansionActive(),
+    kept: getKeptDictation()?.seconds
   }
 }
 
@@ -246,12 +255,12 @@ function sendPill(channel: string, ...args: unknown[]): void {
   } catch { /* reloading */ }
 }
 
-function showPill(): void {
+function showPill(width = PILL_W): void {
   const w = getPill()
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = null
   const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-  w.setBounds({ x: Math.round(wa.x + (wa.width - PILL_W) / 2), y: Math.round(wa.y + wa.height - PILL_H - 28), width: PILL_W, height: PILL_H })
+  w.setBounds({ x: Math.round(wa.x + (wa.width - width) / 2), y: Math.round(wa.y + wa.height - PILL_H - 28), width, height: PILL_H })
   if (!w.isVisible()) w.showInactive()
 }
 
@@ -282,13 +291,14 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
   mic_none: 'No microphone found'
 }
 
-function fail(code: keyof typeof ERROR_TEXT): void {
+function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
   clearShowTimer()
   recording = false
   busy = false
-  showPill()
-  state({ phase: 'error', message: ERROR_TEXT[code] })
-  hidePill(2600)
+  const tryAgain = kept && sayTryAgain(code)
+  showPill(PILL_ERROR_W)
+  state({ phase: 'error', message: tryAgain ? `${ERROR_TEXT[code]}. Try again in PeakFlow › Dictation` : ERROR_TEXT[code] })
+  hidePill(tryAgain ? 4500 : 2600)
 }
 
 // ─── hold → record → let go → type ───────────────────────────────────────────
@@ -362,31 +372,43 @@ function cancel(): void {
 }
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
+  const ctx = await context
+  await runClip({ buf, mime, durationMs: releasedAt - downAt + RELEASE_PAD_MS, ctx, at: Date.now() })
+}
+
+/** Speech to text, clean-up and typing for one clip (a new recording, or a kept one tried again). */
+async function runClip(clip: Clip): Promise<void> {
+  const { buf, mime, durationMs, ctx } = clip
   const key = getCredential(CRED_TOOL, CRED_TYPE)
   const words = parseMyWords(store.get('words'))
-  const ctx = await context
   const prompt = transcriptionPrompt(words, ctx)
+  // Long clips get longer to upload and come back (S11: a fixed 30 s lost long dictations on slow connections)
+  const timeoutMs = transcribeTimeoutMs(durationMs)
   let auth = viaAddon() ? addonAuth() : null
   let r = auth
-    ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs: releasedAt - downAt + RELEASE_PAD_MS })
-    : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
+    ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) })
+    : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
   if (auth) void refreshAddon(true)
   // The add-on couldn't do it (switched off, used up, offline …) but they have their own key: don't lose what they said
   if (auth && !r.ok && r.error !== 'no_speech' && key) {
     console.warn(`[Dictation] add-on: ${r.error}${r.detail ? ` (${r.detail})` : ''}; using your own key for this one`)
     auth = null
-    r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
+    r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
   }
   if (!auth && r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
     console.warn(`[Dictation] ${model} not available on this key (${r.detail}); using gpt-4o-mini-transcribe`)
     model = 'gpt-4o-mini-transcribe'
-    r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true })
+    r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
   }
   const sttMs = Date.now() - releasedAt
   if (!r.ok || !r.text) {
     if (r.detail) console.warn(`[Dictation] ${r.error}: ${r.detail}`)
-    return fail(r.error ?? 'failed')
+    // Keep the audio so nothing said is lost; it can be tried again for 30 minutes
+    const kept = keepsClip(r.error)
+    keptClip = kept ? { ...clip, at: Date.now() } : null
+    return fail(r.error ?? 'failed', kept)
   }
+  keptClip = null
   let text = r.text
   let tidyNote = 'off'
   // With the add-on the clean-up goes through PeakFlow's server too (and is metered there)
@@ -405,8 +427,32 @@ async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
   )
   busy = false
-  state({ phase: ok ? 'done' : 'error', message: ok ? undefined : 'Copied: press ⌘V to paste' })
+  state({ phase: ok ? 'done' : 'error', message: ok ? undefined : `Copied: press ${pasteKeys(isMac)} to paste` })
   hidePill(ok ? 500 : 2600)
+}
+
+/** A kept clip that can still be tried again: how long it was, in seconds. */
+export function getKeptDictation(): { seconds: number } | null {
+  if (!keptClip || Date.now() - keptClip.at > KEEP_CLIP_MS) {
+    keptClip = null
+    return null
+  }
+  return { seconds: Math.max(1, Math.round(keptClip.durationMs / 1000)) }
+}
+
+/**
+ * Try the kept clip again and type the result into the app in front. The
+ * caller has already put that app back in front (panel or launcher hidden).
+ */
+export async function retryDictation(): Promise<boolean> {
+  const clip = getKeptDictation() ? keptClip : null
+  if (!clip || recording || busy) return false
+  busy = true
+  releasedAt = Date.now()
+  showPill()
+  state({ phase: 'transcribing' })
+  await runClip(clip)
+  return true
 }
 
 /** The last dictation, for the launcher's "Paste last dictation" commands (kept for 30 minutes). */
@@ -461,6 +507,11 @@ async function saveKey(key: unknown): Promise<{ ok: boolean; error?: string; set
 /** Microphone and Accessibility on a Mac; everything is allowed elsewhere. */
 function permissions(): DictationPermissions {
   if (!isMac) return { microphone: 'granted', accessibility: true }
+  // Development screenshots only: PEAKFLOW_DICTATION_PERMS=granted | no-mic | no-ax (never in packaged builds)
+  const fake = app.isPackaged ? undefined : process.env['PEAKFLOW_DICTATION_PERMS']
+  if (fake === 'granted' || fake === 'no-mic' || fake === 'no-ax') {
+    return { microphone: fake === 'no-mic' ? 'denied' : 'granted', accessibility: fake !== 'no-ax' }
+  }
   const mic = systemPreferences.getMediaAccessStatus('microphone')
   const known: MediaStatus[] = ['granted', 'denied', 'not-determined', 'restricted']
   const p: DictationPermissions = { microphone: known.includes(mic as MediaStatus) ? (mic as MediaStatus) : 'unknown', accessibility: checkAccessibility() }
@@ -503,11 +554,29 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
-  h(IPC_INVOKE.DICTATION_ACCOUNT, (e) => fromUi(e) ? getDictationAccount() : { state: 'hidden' })
+  h(IPC_INVOKE.DICTATION_ACCOUNT, async (e) => {
+    if (!fromUi(e)) return { state: 'hidden' }
+    const account = await getDictationAccount()
+    // Just bought (the balance shows but dictation doesn't run on it yet): catch up now, not within the minute.
+    // One direction only, so a build without buy links (account hidden, add-on usable) can't loop.
+    // At most every 10 s, so a server that answers the two requests differently can't keep it busy.
+    if ('balanceMicros' in account && !account.disabled && account.blocked !== 'disabled' && !viaAddon() && Date.now() - catchUpAt > 10_000) {
+      catchUpAt = Date.now()
+      void refreshAddon(true)
+    }
+    return account
+  })
   h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromUi(e) ? openDictationCheckout(amount) : false)
   h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_PERMISSIONS, () => permissions())
   h(IPC_INVOKE.DICTATION_ALLOW, (e) => (fromUi(e) ? allowNext() : permissions()))
+  // "Try again" on the Dictation page: give the app underneath the keyboard back, then type into it
+  h(IPC_INVOKE.DICTATION_RETRY, async (e) => {
+    if (!fromUi(e) || !getKeptDictation()) return false
+    hidePanel()
+    await new Promise((r) => setTimeout(r, 400))
+    return retryDictation()
+  })
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromUi(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
@@ -544,6 +613,8 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
 
 export function initDictation(getLauncherContents: () => Electron.WebContents | undefined): void {
   if (!app.isPackaged) allowServerOverride()
+  // Development screenshots only: a tiny kept clip (too short to send anywhere, so trying it again ends as "Didn't hear anything")
+  if (!app.isPackaged && process.env['PEAKFLOW_DICTATION_KEPT_DEMO'] === '1') keptClip = { buf: new ArrayBuffer(10), mime: 'audio/webm', durationMs: 12_000, ctx: {}, at: Date.now() }
   registerIpc(getLauncherContents)
   onHoldKey((e) => {
     if (e === 'down') onDown()

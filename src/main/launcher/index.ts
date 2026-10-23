@@ -35,7 +35,7 @@ import {
 } from './window'
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
-import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation } from '../dictation'
+import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation, getKeptDictation, retryDictation } from '../dictation'
 import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier } from '../services/local-ai'
 
 const isMac = process.platform === 'darwin'
@@ -96,10 +96,16 @@ function userItems(): LauncherItem[] {
 
 /** The last dictation, and the same words as spoken when the clean-up changed them. */
 function dictationItems(): LauncherItem[] {
+  // A clip that didn't go through (no connection …) is kept to try again (S11)
+  const kept = getKeptDictation()
+  const retry: LauncherItem[] = kept
+    ? [{ id: 'dictation:retry', kind: 'command', title: 'Try Last Dictation Again', subtitle: `${kept.seconds} s of talking that didn’t go through`, keywords: ['dictation', 'voice', 'again', 'retry'], glyph: 'dictation' }]
+    : []
   const d = getLastDictation()
-  if (!d) return []
+  if (!d) return retry
   const preview = (t: string): string => t.replace(/\s+/g, ' ').slice(0, 80)
   const items: LauncherItem[] = [
+    ...retry,
     { id: 'dictation:paste', kind: 'command', title: 'Paste Last Dictation', subtitle: preview(d.typed), keywords: ['dictation', 'voice', 'again'], glyph: 'text' }
   ]
   if (d.raw !== d.typed) {
@@ -160,6 +166,12 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
     const p = id.slice(4)
     if (!isIndexedApp(p)) return { ok: false }
     return done(await openPath(p, !!opts.alt))
+  }
+  if (id === 'dictation:retry') {
+    if (!getKeptDictation()) return { ok: false, message: 'Nothing to try again', keepOpen: true }
+    hideLauncher({ restoreFocus: true })
+    await new Promise((r) => setTimeout(r, 250)) // the app underneath takes the keyboard back
+    return done({ ok: await retryDictation() })
   }
   if (id === 'dictation:paste' || id === 'dictation:paste-raw') {
     const d = getLastDictation()

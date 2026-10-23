@@ -179,6 +179,8 @@ export interface DictationSettings {
   viaAddon?: boolean
   /** Their own OpenAI key is saved (it can be removed even while the add-on is in use) */
   ownKey?: boolean
+  /** A clip that couldn't be turned into text is kept to try again: its length in seconds */
+  kept?: number
 }
 
 export interface DictationState {
