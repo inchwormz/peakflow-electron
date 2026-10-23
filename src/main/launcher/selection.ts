@@ -4,12 +4,17 @@
  *          else copies in that app and puts the clipboard back.
  *   Windows: the bar steps aside, Ctrl+C goes to the app underneath, the
  *          clipboard is read and then put back exactly as it was.
+ * Also pasteAndRestore: the one way dictation, snippets and launcher answers
+ * paste, so the clipboard (password-manager markers, images) always comes back.
  */
 
-import { clipboard } from 'electron'
+import { BrowserWindow, clipboard } from 'electron'
 import type { SelectionResult } from '@shared/launcher/types'
 import { runMacHelper } from '../native/mac-helper'
 import { simulateCtrlV } from '../native/keyboard'
+import { clipboardSequence, restoreWinClipboard, saveWinClipboard, writeOwnWinText } from '../native/clipboard-win32'
+import { withCapturePaused } from '../services/clipboard-own-writes'
+import { notifyAccessibilityNeeded } from '../services/permissions-darwin'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -34,55 +39,91 @@ function winKeys(): (vks: Array<[number, boolean]>) => boolean {
 }
 /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 
-export interface SavedClipboard {
-  formats: Array<{ format: string; data: Buffer }>
-}
+// ─── Clipboard round trips ──────────────────────────────────────────────────
 
-export function saveClipboard(): SavedClipboard {
-  const formats: SavedClipboard['formats'] = []
-  for (const f of clipboard.availableFormats()) {
+/** A window handle for the Windows clipboard (it needs an owner window to write). */
+function ownerHwnd(): bigint {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue
     try {
-      formats.push({ format: f, data: clipboard.readBuffer(f) })
-    } catch { /* format can't be read raw */ }
+      const b = w.getNativeWindowHandle()
+      return b.length >= 8 ? b.readBigUInt64LE(0) : BigInt(b.readUInt32LE(0))
+    } catch { /* try the next window */ }
   }
-  return { formats }
+  return 0n
 }
 
-export function restoreClipboard(saved: SavedClipboard, fallbackText: string): void {
-  clipboard.clear()
-  let wrote = false
-  for (const { format, data } of saved.formats) {
-    try {
-      if (data.length) {
-        clipboard.writeBuffer(format, data)
-        wrote = true
+/**
+ * Paste `text` into the app in front, then put the clipboard back exactly as
+ * it was: every format, so a password manager's "don't record this" marker
+ * and copied images survive. The text is marked as PeakFlow's own, so
+ * QuickBoard (and clipboard managers that honour the standard markers) never
+ * record it, and QuickBoard doesn't poll during the round trip. If someone
+ * copies something meanwhile, that copy is kept.
+ * Resolves false if the paste couldn't be sent; the text is then left on the
+ * clipboard for a manual paste.
+ */
+export function pasteAndRestore(text: string): Promise<boolean> {
+  return withCapturePaused(async () => {
+    if (process.platform === 'darwin') {
+      const r = await runMacHelper(['paste-text'], 4000, text)
+      if (!r) {
+        clipboard.writeText(text)
+        return false
       }
-    } catch { /* skip */ }
-  }
-  if (!wrote && fallbackText) clipboard.writeText(fallbackText)
+      if (r.trusted === false) {
+        notifyAccessibilityNeeded('paste')
+        return false
+      }
+      return r.ok === true
+    }
+    if (process.platform === 'win32') {
+      const hwnd = ownerHwnd()
+      // If the clipboard can't be read we can't put it back: paste anyway and
+      // leave our text there, rather than restore plain text without its markers
+      const saved = await saveWinClipboard(hwnd).catch(() => null)
+      const seq = await writeOwnWinText(hwnd, text).catch(() => null)
+      if (seq === null) clipboard.writeText(text)
+      const ok = await simulateCtrlV()
+      if (ok && saved && seq !== null) {
+        await sleep(400) // give the app time to read the clipboard
+        if (clipboardSequence() === seq) await restoreWinClipboard(hwnd, saved).catch(() => false)
+      }
+      return ok
+    }
+    clipboard.writeText(text)
+    return simulateCtrlV()
+  })
 }
 
 async function winSelection(stepAside: () => void, comeBack: () => void): Promise<SelectionResult> {
-  const before = clipboard.readText()
-  const saved = saveClipboard()
-  stepAside()
-  await sleep(150)
-  clipboard.writeText('') // so we can tell whether the copy happened
-  const VK_CONTROL = 0x11
-  const VK_C = 0x43
-  try {
-    winKeys()([[VK_CONTROL, false], [VK_C, false], [VK_C, true], [VK_CONTROL, true]])
-  } catch (err) {
-    console.warn('[Launcher] Ctrl+C failed:', err)
-  }
-  let text = ''
-  for (let i = 0; i < 25 && !text; i++) {
-    await sleep(20)
-    text = clipboard.readText()
-  }
-  restoreClipboard(saved, before)
-  comeBack()
-  return { text, trusted: true }
+  return withCapturePaused(async () => {
+    const hwnd = ownerHwnd()
+    const saved = await saveWinClipboard(hwnd).catch(() => null)
+    stepAside()
+    await sleep(150)
+    // Clear first so we can tell whether the copy happened
+    let seq = await writeOwnWinText(hwnd, '').catch(() => null)
+    if (seq === null) {
+      clipboard.writeText('')
+      seq = clipboardSequence()
+    }
+    const VK_CONTROL = 0x11
+    const VK_C = 0x43
+    try {
+      winKeys()([[VK_CONTROL, false], [VK_C, false], [VK_C, true], [VK_CONTROL, true]])
+    } catch (err) {
+      console.warn('[Launcher] Ctrl+C failed:', err)
+    }
+    let text = ''
+    for (let i = 0; i < 25 && !text; i++) {
+      await sleep(20)
+      if (clipboardSequence() !== seq) text = clipboard.readText()
+    }
+    if (saved) await restoreWinClipboard(hwnd, saved).catch(() => false)
+    comeBack()
+    return { text, trusted: true }
+  })
 }
 
 export async function getSelectedText(stepAside: () => void, comeBack: () => void, holdOpen: (on: boolean) => void): Promise<SelectionResult> {
@@ -97,7 +138,8 @@ export async function getSelectedText(stepAside: () => void, comeBack: () => voi
     stepAside()
     try {
       await sleep(80)
-      const r = await runMacHelper(['selection'], 3000)
+      // The helper copies and then puts the whole pasteboard back; QuickBoard waits
+      const r = await withCapturePaused(() => runMacHelper(['selection'], 3000))
       return { text: typeof r?.text === 'string' ? r.text : '', trusted: r?.trusted !== false }
     } finally {
       holdOpen(false)
@@ -108,10 +150,9 @@ export async function getSelectedText(stepAside: () => void, comeBack: () => voi
   return { text: '', trusted: true }
 }
 
-/** Put text on the clipboard and paste it into the app underneath the bar. */
+/** Paste text into the app underneath the bar, then put the clipboard back. */
 export async function pasteText(text: string, hideBar: () => void): Promise<boolean> {
-  clipboard.writeText(text)
   hideBar()
   await sleep(120)
-  return simulateCtrlV()
+  return pasteAndRestore(text)
 }

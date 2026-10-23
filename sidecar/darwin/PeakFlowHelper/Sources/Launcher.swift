@@ -4,6 +4,8 @@
  *
  * One-shot commands (see runOneShot in main.swift):
  *   activate-previous      → {"ok": bool}       bring back the app the user was in
+ *   paste-text             → {"ok": bool, "trusted": bool, "restored": bool}
+ *                            paste the text read from stdin, then put the pasteboard back
  *   selection [ax]         → {"text": "...", "via": "ax"|"copy"|"none", "trusted": bool}
  *                            ("ax": Accessibility only, never touches the clipboard or focus)
  *   quit-app <pid>         → {"ok": bool}       NSRunningApplication.terminate()
@@ -81,6 +83,50 @@ private func restorePasteboard(_ saved: [[NSPasteboard.PasteboardType: Data]]) {
         return item
     }
     if !items.isEmpty { pb.writeObjects(items) }
+}
+
+/// Types added to every clip PeakFlow puts on the pasteboard for a moment
+/// (dictation, snippets, launcher answers). Clipboard managers skip
+/// TransientType (nspasteboard.org); QuickBoard also skips its own marker.
+/// Keep the marker name in step with OWN_WRITE_MARK_MAC in clipboard-own-writes.ts.
+private let ownWriteTypes: [NSPasteboard.PasteboardType] = [
+    NSPasteboard.PasteboardType("org.nspasteboard.TransientType"),
+    NSPasteboard.PasteboardType("pro.getpeakflow.own-write")
+]
+
+/// Replace the pasteboard with `text`, marked as PeakFlow's own short-lived write.
+private func writeOwnText(_ text: String) {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    let item = NSPasteboardItem()
+    item.setString(text, forType: .string)
+    for t in ownWriteTypes { item.setData(Data(), forType: t) }
+    pb.writeObjects([item])
+}
+
+/// `paste-text`: text arrives on stdin (never on the command line, where
+/// other processes could read it). Saves every pasteboard item and type,
+/// writes the text (marked as our own), sends Cmd+V, waits for the app to
+/// read it, then puts back exactly what was there, password-manager markers
+/// and images included. If someone copies something in the meantime, that
+/// copy is kept. Without Accessibility nothing is pasted and the text stays
+/// on the pasteboard so the person can paste it by hand.
+func pasteTextRestoring() -> String {
+    let input = FileHandle.standardInput.readDataToEndOfFile()
+    guard let text = String(data: input, encoding: .utf8), !text.isEmpty else {
+        return jsonLine(["ok": false, "trusted": true, "error": "no text"])
+    }
+    let pb = NSPasteboard.general
+    let saved = savePasteboard()
+    writeOwnText(text)
+    let ours = pb.changeCount
+    var result = sendPaste()
+    guard result["ok"] as? Bool == true else { return jsonLine(result) }
+    usleep(400_000) // give the app time to read the pasteboard
+    let restored = pb.changeCount == ours
+    if restored { restorePasteboard(saved) }
+    result["restored"] = restored
+    return jsonLine(result)
 }
 
 /// Our own synthetic key events carry this tag so the keyword watcher ignores them.
@@ -274,13 +320,13 @@ private func expand(keyword: String, text: String) {
         let pb = NSPasteboard.general
         let saved = savePasteboard()
         let current = pb.string(forType: .string) ?? ""
-        pb.clearContents()
-        pb.setString(fill(text, clipboard: current), forType: .string)
+        writeOwnText(fill(text, clipboard: current))
+        let ours = pb.changeCount
         usleep(30_000)
         postKey(9, flags: .maskCommand) // kVK_ANSI_V
         // Give the app time to read the clipboard before putting the old one back
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            restorePasteboard(saved)
+            if pb.changeCount == ours { restorePasteboard(saved) }
         }
         emit(["e": "expanded", "keyword": keyword])
     }
