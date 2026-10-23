@@ -273,6 +273,16 @@ for (let i = 0; i < 7 * 24 * 60; i++) {
 assert.equal(lic.getLicenceState(), 'licensed', 'restart every minute for 7 days: 7 days counted, not 14')
 assert.ok(Math.abs((store().get('offline_ms') as number) - 7 * DAY) <= 2 * 60_000, 'restart every minute: real time only')
 
+// 6b6. Sol round 6: 119-second runs with the clock rolled back count all their running time
+customer(0)
+for (let i = 0; i < 100; i++) {
+  lic.simulateRestartForChecks()
+  lic.getLicenceState()
+  mono += 119_000
+  lic.getLicenceState()
+}
+assert.ok((store().get('offline_ms') as number) >= 100 * 118_000, '100 runs of 119 s: about 11,900 s counted')
+
 // 6c. Clock moved forward a year while online: the check passes, still licensed
 customer(HOUR)
 now += 365 * DAY

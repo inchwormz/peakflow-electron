@@ -276,7 +276,7 @@ const PREPAID_MS = 60 * 1000
  *   app closed, clock moved forward) counts, but at most MAX_STEP_DAYS per
  *   step. Steps back count nothing, and going forward again to a time already
  *   seen counts nothing, so clock corrections can't pile up offline days.
- * Writes at most once a minute; each run is charged at least a minute.
+ * Writes at most once a second; each run is charged at least a minute.
  */
 function tallyOffline(now: number): number {
   const total = offlineMs()
@@ -289,7 +289,7 @@ function tallyOffline(now: number): number {
   let add: number
   if (!lastLook) {
     // First look of a run: charge at least a minute, paid in advance, so many
-    // short runs (running time under a minute isn't written) can't add nothing.
+    // short runs (running time under a second isn't written) can't add nothing.
     add = Math.max(gap, PREPAID_MS)
     prepaidMs = add - gap
   } else {
@@ -297,7 +297,7 @@ function tallyOffline(now: number): number {
     const used = Math.min(prepaidMs, running)
     prepaidMs -= used
     add = running - used + gap
-    if (add < 60 * 1000 && now >= lastLook.wall - CLOCK_SKEW_MS) {
+    if (add < 1000 && now >= lastLook.wall - CLOCK_SKEW_MS) {
       prepaidMs += used // nothing written: keep the advance for next time
       return total
     }
