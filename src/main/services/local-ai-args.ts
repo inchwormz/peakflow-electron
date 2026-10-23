@@ -42,9 +42,8 @@ export const CODEX_LEAN_CONFIG: readonly string[] = [
  * Codex has no shell and no code runner, so copied text can't make it read
  * or run anything (checked with Codex 0.162.1 on 24 Oct 2026: a copied "run
  * ls and cat a file" ran both before, and nothing after). The person's MCP
- * servers are kept out by `--ignore-user-config` (or, on a Codex too old for
- * it, by switching each one off). Claude is locked down the same way with
- * `--tools ''`.
+ * servers are kept out by `--ignore-user-config` (below). Claude is locked
+ * down the same way with `--tools ''`.
  */
 export const CODEX_NO_TOOLS_CONFIG: readonly string[] = [
   'features.shell_tool=false',
@@ -59,49 +58,16 @@ export const CODEX_NO_TOOLS_CONFIG: readonly string[] = [
 ]
 
 /**
- * How a Codex call keeps the person's MCP servers (their own tools, which can
- * read files or run code) out of reach:
- * - ignoreUserConfig: Codex 0.16x and later skip ~/.codex/config.toml with
- *   `--ignore-user-config` (sign-in still works). Their servers never load.
- *   This also skips a custom model provider set there; ChatGPT sign-in is unaffected.
- * - mcpServers: an older Codex lists the servers before every call and each is
- *   switched off. If the list can't be read, the call doesn't run.
+ * The person's MCP servers (their own tools, which can read files or run
+ * code) are kept out with `--ignore-user-config`: Codex skips
+ * ~/.codex/config.toml, so none of them load, and still signs in from its own
+ * folder. A custom model provider set in that file is skipped too. A Codex
+ * too old for the flag isn't run at all (local-ai.ts asks the person to
+ * update), because switching servers off one by one leaves a gap if one is
+ * added between listing and running (Sol review, 24 Oct 2026).
  */
-export type CodexIsolation = { ignoreUserConfig: true } | { ignoreUserConfig: false; mcpServers: readonly string[] }
-
-/** Whether `codex exec --help` offers --ignore-user-config. */
 export function supportsIgnoreUserConfig(execHelp: string): boolean {
   return /--ignore-user-config\b/.test(execHelp)
-}
-
-/**
- * The person's MCP servers as our calls would load them (older Codex only):
- * listed with the same overrides, because naming a server that isn't in their
- * config (one a plugin adds) makes Codex refuse the whole config.
- */
-export function codexMcpListArgs(): string[] {
-  return ['mcp', 'list', '--json', ...[...CODEX_LEAN_CONFIG, ...CODEX_NO_TOOLS_CONFIG].flatMap((c) => ['-c', c])]
-}
-
-/**
- * Enabled MCP server names from `codex mcp list --json`. Null when the list
- * can't be read, or names a server we can't switch off (a name that isn't a
- * plain TOML key): the call must not run then.
- */
-export function codexMcpNames(listJson: string): string[] | null {
-  try {
-    const list = JSON.parse(listJson.slice(listJson.indexOf('['))) as unknown
-    if (!Array.isArray(list)) return null
-    const names: string[] = []
-    for (const s of list as Array<{ name?: unknown; enabled?: unknown }>) {
-      if (s?.enabled === false) continue
-      if (typeof s?.name !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(s.name)) return null
-      if (!names.includes(s.name)) names.push(s.name)
-    }
-    return names
-  } catch {
-    return null
-  }
 }
 
 /** Replaces Codex's long coding-agent instructions; written once to our own folder. */
@@ -114,17 +80,15 @@ function tomlString(s: string): string {
 
 export function cliArgs(
   id: 'codex' | 'claude',
-  opts: { model: string | null; system: string; codexInstructionsFile?: string | null; codexIsolation?: CodexIsolation }
+  opts: { model: string | null; system: string; codexInstructionsFile?: string | null }
 ): string[] {
   const pick = opts.model ? ['--model', opts.model] : []
   if (id === 'claude') {
     return ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', '--no-session-persistence',
       '--strict-mcp-config', '--setting-sources', '', ...pick, '--system-prompt', opts.system]
   }
-  const iso = opts.codexIsolation
-  const mcpOff = iso && !iso.ignoreUserConfig ? iso.mcpServers.map((n) => `mcp_servers.${n}.enabled=false`) : []
-  const lean = [...CODEX_LEAN_CONFIG, ...CODEX_NO_TOOLS_CONFIG, ...mcpOff].flatMap((c) => ['-c', c])
+  const lean = [...CODEX_LEAN_CONFIG, ...CODEX_NO_TOOLS_CONFIG].flatMap((c) => ['-c', c])
   const base = opts.codexInstructionsFile ? ['-c', `model_instructions_file=${tomlString(opts.codexInstructionsFile)}`] : []
-  return ['exec', ...(iso?.ignoreUserConfig ? ['--ignore-user-config'] : []), '--json', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-c', 'model_reasoning_effort="low"',
+  return ['exec', '--ignore-user-config', '--json', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-c', 'model_reasoning_effort="low"',
     ...lean, ...base, ...pick, '-']
 }

@@ -104,7 +104,8 @@ const ERR: Record<string, string> = {
   timeout: 'It took too long. Try again.',
   not_licensed: 'AI setup needs a PeakFlow licence.',
   no_provider: 'QuickBoard’s AI runs on your own ChatGPT or Claude. Connect one, then try again.',
-  not_signed_in: 'You’re signed out of ChatGPT or Claude. Connect signs you back in, then try again.'
+  not_signed_in: 'You’re signed out of ChatGPT or Claude. Connect signs you back in, then try again.',
+  codex_outdated: 'Your Codex app is too old for PeakFlow. Update it in Terminal with “npm install -g @openai/codex”, then try again.'
 }
 
 export function SetupGenerating(): React.JSX.Element {

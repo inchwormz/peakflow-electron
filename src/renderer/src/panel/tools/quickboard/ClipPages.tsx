@@ -188,6 +188,7 @@ const ERRORS: Record<string, [string, string]> = {
   not_licensed: ['AI needs a PeakFlow licence', 'AI actions are part of the paid plan.'],
   no_provider: ['Connect ChatGPT or Claude', 'QuickBoard’s AI runs on your own ChatGPT or Claude. Connect one, then try again.'],
   not_signed_in: ['Sign in to ChatGPT or Claude', 'You’re signed out of ChatGPT or Claude. Connect signs you back in, then try again.'],
+  codex_outdated: ['Update Codex', 'Your Codex app is too old for PeakFlow. Update it in Terminal with “npm install -g @openai/codex”, then try again.'],
   too_long: ['Too long for AI', `This clip is longer than ${(10_000).toLocaleString('en')} characters, the limit for AI actions. Copy a shorter part and try again.`]
 }
 

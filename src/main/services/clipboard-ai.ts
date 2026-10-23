@@ -30,6 +30,7 @@ export type AiError =
   | 'parse_error'
   | 'unknown_transform_type'
   | 'too_long'
+  | 'codex_outdated'
 
 // ─── Access check ────────────────────────────────────────────────────────────
 

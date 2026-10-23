@@ -4,6 +4,7 @@
  *   once AI is used, and as `-lc` (never interactive `-i`, which runs .zshrc).
  * - "Signed out" isn't trusted while the Connect AI screen is open (fresh), so
  *   it turns to Connected straight after sign-in.
+ * - A Codex too old for --ignore-user-config is refused, never run.
  * - The Mac setup command checks for npm, installs into ~/.npm-global when
  *   npm's own folder needs an admin password, and signs in by full path.
  * Uses fake CLIs in a scratch home folder; nothing real is installed or run.
@@ -90,6 +91,26 @@ exe(join(home, 'nonpm/open'), `echo "open $@"`)
 const none = setup(`${join(home, 'nonpm')}:/usr/bin:/bin`)
 assert.ok(none.startsWith('1 ') && none.includes('needs Node.js') && none.includes('open https://nodejs.org'), none)
 chmodSync(join(sys, 'lib/node_modules'), 0o755)
+
+// A Codex too old for --ignore-user-config is never run with the person's text (their MCP tools would load)
+const fakeCodex = (help: string): void =>
+  exe(join(home, '.local/bin/codex'), `echo "$@" >> "${home}/codex-args"
+if [ "$1" = exec ] && [ "$2" = --help ]; then echo "${help}"; exit 0; fi
+if [ "$1" = exec ]; then cat >/dev/null; echo '{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}'; exit 0; fi
+exit 1`)
+fakeCodex('  --json   Print events')
+ai.refreshAiProviders()
+writeFileSync(join(home, 'codex-args'), '')
+assert.deepEqual(await ai.runLocalAi({ prompt: 'copied text', provider: 'codex', tier: 'best' }), { ok: false, error: 'codex_outdated' })
+assert.deepEqual(readFileSync(join(home, 'codex-args'), 'utf8').trim().split('\n'), ['exec --help'])
+// Updated Codex: runs, with the person's config skipped
+fakeCodex('  --ignore-user-config   Do not load config.toml')
+ai.refreshAiProviders()
+writeFileSync(join(home, 'codex-args'), '')
+assert.deepEqual(await ai.runLocalAi({ prompt: 'copied text', provider: 'codex', tier: 'best' }), { ok: true, text: 'hi' })
+const runs = readFileSync(join(home, 'codex-args'), 'utf8').trim().split('\n')
+assert.equal(runs.length, 2)
+assert.ok(runs[1].startsWith('exec --ignore-user-config --json'), runs[1])
 
 // Claude on a Mac signs in by full path
 assert.ok(ai.aiSetupCommand('claude').includes('~/.local/bin/claude auth login'))

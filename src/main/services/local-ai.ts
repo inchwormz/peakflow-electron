@@ -19,7 +19,7 @@ import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { app } from 'electron'
 import Store from 'electron-store'
-import { cliArgs, codexMcpListArgs, codexMcpNames, supportsIgnoreUserConfig, CODEX_BASE_INSTRUCTIONS, type CodexIsolation } from './local-ai-args'
+import { cliArgs, supportsIgnoreUserConfig, CODEX_BASE_INSTRUCTIONS } from './local-ai-args'
 import { winCommand } from './local-ai-spawn'
 
 export type AiProviderId = 'codex' | 'claude' | 'ollama'
@@ -50,7 +50,8 @@ export interface RunLocalAiOptions {
 export interface RunLocalAiResult {
   ok: boolean
   text?: string
-  error?: 'no_provider' | 'not_signed_in' | 'timeout' | 'failed'
+  /** codex_outdated: the Codex CLI is too old to keep the person's MCP tools out, so it isn't run */
+  error?: 'no_provider' | 'not_signed_in' | 'timeout' | 'failed' | 'codex_outdated'
 }
 
 /**
@@ -344,21 +345,16 @@ async function codexLightModel(bin: string): Promise<string | null> {
   return model
 }
 
-// Whether this Codex can skip the person's config (and so their MCP servers): see CodexIsolation
+// Whether this Codex offers --ignore-user-config, which keeps the person's MCP servers out (local-ai-args.ts)
 let codexIgnoreConfig: { bin: string; ok: boolean } | null = null
 
-/** How to keep the person's MCP servers out of this call; null if that can't be confirmed (don't run). */
-async function codexIsolation(bin: string): Promise<CodexIsolation | null> {
-  if (codexIgnoreConfig?.bin !== bin) {
-    const help = await run(bin, ['exec', '--help'], await childEnv(bin), 8000)
-    if (help.code !== 0) return null
-    codexIgnoreConfig = { bin, ok: supportsIgnoreUserConfig(help.out) }
-  }
-  if (codexIgnoreConfig.ok) return { ignoreUserConfig: true }
-  // Older Codex: list the servers now (the person may have added one since) and switch each off
-  const r = await run(bin, codexMcpListArgs(), await childEnv(bin), 8000)
-  const names = r.code === 0 ? codexMcpNames(r.out) : null
-  return names ? { ignoreUserConfig: false, mcpServers: names } : null
+/** True: safe to run. False: too old. Null: couldn't tell (not remembered, asked again next time). */
+async function codexCanIsolate(bin: string): Promise<boolean | null> {
+  if (codexIgnoreConfig?.bin === bin) return codexIgnoreConfig.ok
+  const help = await run(bin, ['exec', '--help'], await childEnv(bin), 8000)
+  if (help.code !== 0) return null
+  codexIgnoreConfig = { bin, ok: supportsIgnoreUserConfig(help.out) }
+  return codexIgnoreConfig.ok
 }
 
 /** Forget cached sign-in answers (after the person signs in from the setup screen). */
@@ -391,14 +387,13 @@ function runCli(
   system: string,
   signal: AbortSignal | undefined,
   onChunk: ((t: string) => void) | undefined,
-  model: string | null,
-  isolation: CodexIsolation | undefined
+  model: string | null
 ): Promise<RunLocalAiResult> {
   return new Promise((resolve) => {
     void childEnv(bin).then((env) => {
       let child: ChildProcess
       try {
-        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' ? codexInstructionsFile() : null, codexIsolation: isolation })
+        const args = cliArgs(id, { model, system, codexInstructionsFile: id === 'codex' ? codexInstructionsFile() : null })
         child = launch(bin, args, env)
       } catch {
         resolve({ ok: false, error: 'failed' })
@@ -550,21 +545,21 @@ export async function runLocalAi(opts: RunLocalAiOptions): Promise<RunLocalAiRes
     const bin = await findBinary(provider, { deep: true })
     if (!bin) return { ok: false, error: 'no_provider' }
     // Light: Claude's Haiku tier; Codex's smallest listed model. Best: the CLI's own default.
-    const [model, isolation] = await Promise.all([
+    const [model, isolated] = await Promise.all([
       tier === 'best' ? null : provider === 'claude' ? 'haiku' : codexLightModel(bin),
-      provider === 'codex' ? codexIsolation(bin) : undefined
+      provider === 'codex' ? codexCanIsolate(bin) : true
     ])
-    // Fail closed: never send copied text to a Codex whose MCP tools might be reachable
-    if (isolation === null) {
-      console.warn("[LocalAI] couldn't confirm Codex's MCP servers are off; not running")
-      return { ok: false, error: 'failed' }
+    // Fail closed: never send copied text to a Codex that would load the person's MCP tools
+    if (isolated !== true) {
+      console.warn(`[LocalAI] codex ${isolated === false ? 'is too old for --ignore-user-config' : "--help failed"}; not running`)
+      return { ok: false, error: isolated === false ? 'codex_outdated' : 'failed' }
     }
-    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model, isolation)
+    result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, model)
     // The plan doesn't offer that model (or this CLI doesn't know it): use the default instead
     if (!result.ok && model && result.error === 'failed' && !opts.signal?.aborted) {
       console.warn(`[LocalAI] ${provider} light model ${model} failed; using the default model`)
       if (provider === 'codex') codexLight = { bin, model: null }
-      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null, isolation)
+      result = await runCli(provider, bin, opts.prompt, system, opts.signal, opts.onChunk, null)
     }
   }
   if (result.ok && opts.json && result.text) result = { ...result, text: extractJson(result.text) }

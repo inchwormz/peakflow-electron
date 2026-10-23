@@ -263,6 +263,7 @@ const MAX_AI_TEXT = 60_000
 const AI_ERRORS: Record<string, string> = {
   no_provider: 'No AI is connected yet. Choose “Connect ChatGPT or Claude”.',
   not_signed_in: 'You’re signed out of that AI. Choose “Connect ChatGPT or Claude” to sign in again.',
+  codex_outdated: 'Your Codex app is too old for PeakFlow. Update it in Terminal with “npm install -g @openai/codex”, then try again.',
   timeout: 'The AI took too long to answer. Try again.',
   failed: 'The AI couldn’t answer that. Try again, or switch to another AI.'
 }
