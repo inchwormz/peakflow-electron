@@ -103,9 +103,8 @@ ai.refreshAiProviders()
 writeFileSync(join(home, 'codex-args'), '')
 assert.deepEqual(await ai.runLocalAi({ prompt: 'copied text', provider: 'codex', tier: 'best' }), { ok: false, error: 'codex_outdated' })
 assert.deepEqual(readFileSync(join(home, 'codex-args'), 'utf8').trim().split('\n'), ['exec --help'])
-// Updated Codex: runs, with the person's config skipped
+// The person updates Codex and presses Try again (no restart, no refresh): it runs, with their config skipped
 fakeCodex('  --ignore-user-config   Do not load config.toml')
-ai.refreshAiProviders()
 writeFileSync(join(home, 'codex-args'), '')
 assert.deepEqual(await ai.runLocalAi({ prompt: 'copied text', provider: 'codex', tier: 'best' }), { ok: true, text: 'hi' })
 const runs = readFileSync(join(home, 'codex-args'), 'utf8').trim().split('\n')

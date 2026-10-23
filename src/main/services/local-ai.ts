@@ -346,15 +346,19 @@ async function codexLightModel(bin: string): Promise<string | null> {
 }
 
 // Whether this Codex offers --ignore-user-config, which keeps the person's MCP servers out (local-ai-args.ts)
-let codexIgnoreConfig: { bin: string; ok: boolean } | null = null
+let codexIgnoreConfig: string | null = null
 
-/** True: safe to run. False: too old. Null: couldn't tell (not remembered, asked again next time). */
+/**
+ * True: safe to run. False: too old. Null: couldn't tell. Only a yes is
+ * remembered, so after the person updates Codex, Try again works.
+ */
 async function codexCanIsolate(bin: string): Promise<boolean | null> {
-  if (codexIgnoreConfig?.bin === bin) return codexIgnoreConfig.ok
+  if (codexIgnoreConfig === bin) return true
   const help = await run(bin, ['exec', '--help'], await childEnv(bin), 8000)
   if (help.code !== 0) return null
-  codexIgnoreConfig = { bin, ok: supportsIgnoreUserConfig(help.out) }
-  return codexIgnoreConfig.ok
+  if (!supportsIgnoreUserConfig(help.out)) return false
+  codexIgnoreConfig = bin
+  return true
 }
 
 /** Forget cached sign-in answers (after the person signs in from the setup screen). */
