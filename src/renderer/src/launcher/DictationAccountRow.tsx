@@ -15,6 +15,10 @@ const DICTATION_LABEL = 'Dictation'
 const OFFER = '$5 buys about 15 hours of talking. Unused time never expires.'
 // copy: Dictation is paused. Add $5 to keep going.
 const PAUSED = 'Dictation is paused. Add $5 to keep going.'
+// copy: Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.
+const DISABLED = 'Dictation is switched off for this licence. Email contact@getpeakflow.pro for help.'
+// copy: You've used today's 3 hours. Dictation is back within 24 hours.
+const DAILY_LIMIT = "You've used today's 3 hours. Dictation is back within 24 hours."
 // copy: Couldn’t open the checkout. Try again.
 const CHECKOUT_ERROR = 'Couldn’t open the checkout. Try again.'
 
@@ -45,10 +49,12 @@ export function DictationAccountRow(): React.JSX.Element | null {
     }
   }, [])
   if (account.state === 'hidden') return null
+  const disabled = 'disabled' in account && (account.disabled || account.blocked === 'disabled')
+  const dailyLimit = 'blocked' in account && account.blocked === 'daily_limit'
   const buy = account.state === 'no_addon'
   const empty = account.state === 'empty'
   let balance = ''
-  if ('balanceMicros' in account) {
+  if ('balanceMicros' in account && account.balanceMicros >= 0 && !disabled) {
     const dollars = (account.balanceMicros / 1_000_000).toFixed(2)
     const hours = Math.round(account.minutesLeft / 60)
     const minutes = Math.round(account.minutesLeft)
@@ -70,12 +76,14 @@ export function DictationAccountRow(): React.JSX.Element | null {
     <div className="lc-set">
       <div aria-live="polite">
         <div className="lbl">{buy ? DICTATION_LABEL : BALANCE_LABEL}</div>
-        {buy && <div className="sub">{OFFER}</div>}
+        {disabled && <div className="sub">{DISABLED}</div>}
+        {!disabled && buy && <div className="sub">{OFFER}</div>}
         {balance && <div className="sub">{balance}</div>}
-        {empty && <div className="sub">{PAUSED}</div>}
-        {error && <div className="sub" role="alert">{error}</div>}
+        {!disabled && dailyLimit && <div className="sub">{DAILY_LIMIT}</div>}
+        {!disabled && empty && <div className="sub">{PAUSED}</div>}
+        {!disabled && error && <div className="sub" role="alert">{error}</div>}
       </div>
-      {(buy || account.state === 'low' || empty) && (
+      {!disabled && (buy || account.state === 'low' || empty) && (
         <button className="btn" disabled={opening} onClick={() => void open()}>{buy ? GET_DICTATION : ADD_FIVE}</button>
       )}
     </div>
