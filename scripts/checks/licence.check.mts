@@ -76,6 +76,7 @@ const notFound = (): Reply => ({ status: 404, body: { valid: false, error: 'lice
 /** A 2.1 customer whose last good check was `ago` ms ago. */
 function customer(ago: number): void {
   mono += 2 * HOUR // scenarios are hours of running time apart
+  lic.simulateRestartForChecks() // each scenario is a fresh launch
   store().clear(); g.__pf.creds.clear(); calls.length = 0
   g.__pf.creds.set('license:key', 'KEY')
   g.__pf.creds.set('license:product_id', String(PRO))
@@ -191,8 +192,14 @@ assert.equal(store().get('offline_ms'), 0, 'offline time reset')
 customer(0)
 reply = 'network'
 const weeks: boolean[] = []
-for (let w = 0; w < 6; w++) { pass(7 * DAY); weeks.push(await pro()); await settle() }
-assert.deepEqual(weeks, [true, true, true, true, false, false], 'used weekly offline: locks in week 5 (15 days counted)')
+for (let w = 0; w < 6; w++) { lic.simulateRestartForChecks(); pass(7 * DAY); weeks.push(await pro()); await settle() }
+assert.deepEqual(weeks, [true, true, true, true, false, false], 'opened once a week offline: locks in week 5 (15 days counted)')
+// Left running offline: real running time counts in full
+customer(0)
+reply = 'network'
+await pro(); await settle()
+pass(13 * DAY); assert.equal(await pro(), true, 'running 13 days offline')
+pass(DAY + HOUR); mono += 61_000; assert.equal(await pro(), false, 'running 14 days offline: locked')
 
 // 6. Clock changes
 // 6a. Clock moved back a year: licensed, re-checked once, adds no offline time
@@ -215,6 +222,29 @@ now -= 365 * DAY
 await offlineHours(5)
 assert.equal(await pro(), false, 'clock back: locked once 14 days of real offline time pass')
 now += 365 * DAY
+// 6b2. Sol round 3: moving the clock back before every use can't stop the count
+customer(0)
+reply = 'network'
+await pro(); await settle()
+for (let i = 0; i < 40 * 24; i++) { pass(HOUR); now -= 2 * HOUR; await lic.isLicensed() }
+mono += 61_000
+assert.equal(await pro(), false, '40 days of hourly rollbacks while running: locked')
+now += 40 * 24 * 2 * HOUR
+// 6b3. Sol round 3: forward/back clock corrections don't pile up offline days
+customer(DAY)
+reply = 'network'
+await pro(); await settle()
+for (let i = 0; i < 10; i++) { now += 365 * DAY; await lic.isLicensed(); now -= 365 * DAY; await lic.isLicensed() }
+assert.equal(await pro(), true, '10 forward/back clock cycles: still licensed')
+assert.ok((store().get('offline_ms') as number) < 5 * DAY, 'counted at most one 3-day step')
+// …and across restarts too
+for (let i = 0; i < 10; i++) {
+  lic.simulateRestartForChecks(); now += 365 * DAY; await lic.isLicensed()
+  lic.simulateRestartForChecks(); now -= 365 * DAY; await lic.isLicensed()
+}
+assert.equal(await pro(), true, '10 forward/back cycles with restarts: still licensed')
+assert.ok((store().get('offline_ms') as number) < 5 * DAY, 'still at most one 3-day step')
+
 // 6c. Clock moved forward a year while online: the check passes, still licensed
 customer(HOUR)
 now += 365 * DAY

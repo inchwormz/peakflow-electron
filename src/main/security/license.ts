@@ -14,11 +14,12 @@
  *   status is saved and the tools lock.
  * - Network errors, timeouts and server errors never lock by themselves: a
  *   licence stays good for OFFLINE_GRACE_DAYS of offline time after the last
- *   good check. Offline time is added up from the clock in steps, and no
- *   single step (a clock moved forward, a laptop shut for a month) counts for
- *   more than MAX_STEP_DAYS; a clock moved back adds nothing and takes nothing
- *   away. So a clock change can neither lock a customer early by more than a
- *   few days nor extend the grace. Once locked, each use asks the server again
+ *   good check (see tallyOffline). Running time always counts; time the app
+ *   was closed or asleep, or a clock moved forward, counts at most
+ *   MAX_STEP_DAYS per step and only past the latest time already seen. So
+ *   moving the clock back can't extend the grace, and only a forward change
+ *   to a new date while offline can lock early (by at most MAX_STEP_DAYS per
+ *   change; it unlocks as soon as it is online). Once locked, each use asks the server again
  *   (at most once a minute) and unlocks the moment it answers "valid".
  * - Every request has a 10 s timeout; checks, activation and removal run one
  *   at a time, and an answer that arrives after the licence changed is dropped.
@@ -261,35 +262,44 @@ function offlineMs(): number {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0
 }
 
+/** This run's last look: monotonic and wall time together. */
+let lastLook: { mono: number; wall: number } | null = null
+
 /**
- * Add the time since the last look to the offline total: never negative
- * (clock moved back), never more than MAX_STEP_DAYS per step (clock moved
- * forward, long sleep). Writes at most once a minute.
+ * Add the time since the last look to the offline total.
+ * - While the app runs, real running time always counts (monotonic clock), so
+ *   moving the clock back again and again can't stop the count.
+ * - On top of that, a wall-clock step past the highest time ever seen (sleep,
+ *   app closed, clock moved forward) counts, but at most MAX_STEP_DAYS per
+ *   step. Steps back count nothing, and going forward again to a time already
+ *   seen counts nothing, so clock corrections can't pile up offline days.
+ * Writes at most once a minute.
  */
 function tallyOffline(now: number): number {
   const total = offlineMs()
-  const lastSeen = readTime('last_seen')
-  if (lastSeen === null) {
-    licenseStore.set('last_seen', new Date(now).toISOString())
-    return total
-  }
-  const step = now - lastSeen
-  if (step < 0) {
-    // Clock moved back: start counting again from the new time, nothing added
-    if (step < -CLOCK_SKEW_MS) licenseStore.set('last_seen', new Date(now).toISOString())
-    return total
-  }
-  if (step < 60 * 1000) return total
-  const next = total + Math.min(step, MAX_STEP_DAYS * DAY_MS)
+  const m = mono()
+  const high = readTime('wall_high') ?? readTime('last_seen')
+  const running = lastLook ? Math.max(0, m - lastLook.mono) : 0
+  const expected = lastLook ? lastLook.wall + running : -Infinity
+  const extra = high === null ? 0 : now - Math.max(high, expected)
+  const add = running + Math.min(Math.max(0, extra), MAX_STEP_DAYS * DAY_MS)
+  if (lastLook && add < 60 * 1000 && now >= lastLook.wall - CLOCK_SKEW_MS) return total
+  lastLook = { mono: m, wall: now }
+  const next = total + add
   licenseStore.set('offline_ms', next)
   licenseStore.set('last_seen', new Date(now).toISOString())
+  if (high === null || now > high) licenseStore.set('wall_high', new Date(now).toISOString())
   return next
 }
 
 /** A good answer: the offline total starts again from zero. */
 function resetOffline(): void {
+  const now = Date.now()
   licenseStore.set('offline_ms', 0)
-  licenseStore.set('last_seen', nowIso())
+  licenseStore.set('last_seen', new Date(now).toISOString())
+  const high = readTime('wall_high')
+  if (high === null || now > high) licenseStore.set('wall_high', new Date(now).toISOString())
+  lastLook = { mono: mono(), wall: now }
 }
 
 /** Statuses only a real Lemon Squeezy answer can set; they lock the tools. */
@@ -345,6 +355,13 @@ function backgroundCheckDue(state: LicenceState, now: number): boolean {
   if (state === 'licensed' && recent(readTime('validation_timestamp'), RECHECK_HOURS * HOUR_MS)) return false
   if (recent(readTime('last_check_attempt'), RETRY_MS)) return false
   return lastAttemptMono === null || mono() - lastAttemptMono >= RETRY_MS
+}
+
+/** scripts/checks only: forget this run's in-memory state, as if PeakFlow restarted. */
+export function simulateRestartForChecks(): void {
+  lastLook = null
+  lastAttemptMono = null
+  lastLockedAttemptMono = null
 }
 
 function lockedRetryDue(): boolean {
@@ -666,7 +683,7 @@ function clearLocalLicence(): void {
   deleteCredential('license', 'key')
   deleteCredential('license', 'product_id')
   deleteCredential('license', 'instance_id')
-  for (const k of ['validation_timestamp', 'license_status', 'last_check_attempt', 'offline_ms', 'last_seen']) {
+  for (const k of ['validation_timestamp', 'license_status', 'last_check_attempt', 'offline_ms', 'last_seen', 'wall_high']) {
     licenseStore.delete(k)
   }
 }
