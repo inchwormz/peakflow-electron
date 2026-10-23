@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { installTsHooks, srcUrl } from './fixtures/ts-hooks.mjs'
 installTsHooks()
-const { clashesWithAltGr, builtInAccel, switchAccel, launcherFallbacks } = await import(srcUrl('src/shared/global-keys.ts'))
+const { clashesWithAltGr, builtInAccel, switchAccel, launcherFallbacks, chooseLauncherKey } = await import(srcUrl('src/shared/global-keys.ts'))
 const { SNAP_LAYOUTS, SNAP_UNDO_ACCEL, snapAccel } = await import(srcUrl('src/shared/snapgrid-layouts.ts'))
 
 // The characters from the review
@@ -38,5 +38,15 @@ assert.equal(switchAccel(9, 'darwin'), null)
 // Launcher fallbacks never clash with AltGr on Windows
 assert.equal(launcherFallbacks('win32').some((a) => clashesWithAltGr(a, 'win32')), false)
 assert.equal(launcherFallbacks('darwin')[0], 'Control+Alt+Space', 'John’s own Mac shortcut is the first fallback')
+
+// Launcher start-up: ⌥Space taken by Raycast → the first free fallback, and say so
+const taken = new Set(['Alt+Space'])
+const reg = (a: string) => !taken.has(a)
+assert.deepEqual(chooseLauncherKey('Alt+Space', 'darwin', reg), { key: 'Control+Alt+Space', movedFrom: 'Alt+Space' })
+taken.add('Control+Alt+Space')
+assert.deepEqual(chooseLauncherKey('Alt+Space', 'darwin', reg), { key: 'Control+Shift+Space', movedFrom: 'Alt+Space' })
+assert.deepEqual(chooseLauncherKey('Alt+Space', 'win32', reg), { key: 'Control+Shift+Space', movedFrom: 'Alt+Space' }, 'Windows never tries Ctrl+Alt+Space')
+assert.deepEqual(chooseLauncherKey('Control+Alt+Space', 'darwin', () => true), { key: 'Control+Alt+Space' }, 'John’s saved key is kept')
+assert.deepEqual(chooseLauncherKey('Alt+Space', 'darwin', () => false), { key: null }, 'nothing free')
 
 console.log('altgr-keys: ok')

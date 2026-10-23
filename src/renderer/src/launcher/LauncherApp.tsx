@@ -185,6 +185,11 @@ export function LauncherApp(): React.JSX.Element {
       setFiles({ q: '', list: [] })
       loadItems()
       void loadAiStatus()
+      // Opened on its settings (the tray menu's "Launcher Settings")
+      if (info.view === 'settings') {
+        void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SETTINGS).then(setSettings)
+        setView('settings')
+      }
       if (!rates) void invoke<CurrencyRates | null>(IPC_INVOKE.LAUNCHER_RATES).then(setRates)
       inputRef.current?.focus()
       // Open time: hotkey pressed → bar painted
@@ -763,7 +768,13 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
       <div className="lc-set">
         <div>
           <div className="lbl">Open the launcher</div>
-          <div className="sub">{settings.hotkeyRegistered ? 'Press it from any app' : 'Another app is using this shortcut: pick a different one'}</div>
+          <div className="sub">
+            {!settings.hotkeyRegistered
+              ? 'Another app is using this shortcut: pick a different one'
+              : settings.hotkeyMovedFrom
+                ? `Another app uses ${formatAccelerator(settings.hotkeyMovedFrom)}, so PeakFlow picked this one`
+                : 'Press it from any app'}
+          </div>
         </div>
         <button
           className="btn lc-rec"

@@ -54,3 +54,19 @@ export function launcherFallbacks(platform: string): string[] {
     ? ['Control+Alt+Space', 'Control+Shift+Space', 'Alt+Shift+Space']
     : ['Control+Shift+Space', 'Alt+Shift+Space']
 }
+
+/**
+ * Start-up choice of launcher shortcut: the saved one if it registers, else
+ * the first fallback that does. `tryRegister` registers and reports success.
+ */
+export function chooseLauncherKey(
+  saved: string,
+  platform: string,
+  tryRegister: (accel: string) => boolean
+): { key: string | null; movedFrom?: string } {
+  if (tryRegister(saved)) return { key: saved }
+  for (const alt of launcherFallbacks(platform)) {
+    if (alt !== saved && tryRegister(alt)) return { key: alt, movedFrom: saved }
+  }
+  return { key: null }
+}

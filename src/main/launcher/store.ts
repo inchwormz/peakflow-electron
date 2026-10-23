@@ -9,6 +9,13 @@ import type { Usage } from '@shared/launcher/rank'
 
 export const DEFAULT_LAUNCHER_HOTKEY = 'Alt+Space'
 
+/**
+ * Snippet expansion starts off on Windows: its system-wide keyboard hook has
+ * not had a real Windows run yet (review B6). The customer turns it on in
+ * Launcher Settings; the hook starts only then, and only with a snippet.
+ */
+export const defaultExpansion = (platform: string): boolean => platform !== 'win32'
+
 interface LauncherData {
   hotkey: string
   expansion: boolean
@@ -25,7 +32,7 @@ function s(): Store<LauncherData> {
     store = new Store<LauncherData>({
       name: 'config-launcher',
       clearInvalidConfig: true,
-      defaults: { hotkey: DEFAULT_LAUNCHER_HOTKEY, expansion: true, snippets: [], links: [], usage: {}, seeded: false }
+      defaults: { hotkey: DEFAULT_LAUNCHER_HOTKEY, expansion: defaultExpansion(process.platform), snippets: [], links: [], usage: {}, seeded: false }
     })
     // Two examples on first run, so snippets make sense the first time you look
     if (!store.get('seeded')) {

@@ -9,7 +9,7 @@
  * compromised page can't open arbitrary files or run commands.
  */
 
-import { app, clipboard, globalShortcut, ipcMain, shell } from 'electron'
+import { app, clipboard, globalShortcut, ipcMain, Notification, shell } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { chmodSync, existsSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -20,6 +20,7 @@ import type {
   LauncherRunResult, LauncherSettings, LauncherSnippet
 } from '@shared/launcher/types'
 import { launcherStore, DEFAULT_LAUNCHER_HOTKEY } from './store'
+import { chooseLauncherKey } from '@shared/global-keys'
 import { getApps, isIndexedApp, isIndexedStartApp, settingsItems, settingsUrl } from './apps'
 import { searchFiles, filePathFor } from './files'
 import { listProcesses, quitProcess } from './processes'
@@ -349,10 +350,66 @@ function registerHotkey(accel: string): boolean {
   return false
 }
 
+/** "⌃⌥Space" on a Mac, "Ctrl+Alt+Space" on Windows (notification text and the tray menu). */
+function keyLabel(accel: string): string {
+  const parts = accel.split('+')
+  if (!isMac) return parts.map((p) => (/^(control|commandorcontrol)$/i.test(p) ? 'Ctrl' : p)).join('+')
+  const sym: Record<string, string> = { control: '⌃', alt: '⌥', option: '⌥', shift: '⇧', command: '⌘', cmd: '⌘', commandorcontrol: '⌘' }
+  return parts.map((p) => sym[p.toLowerCase()] ?? p).join('')
+}
+
+let hotkeyMovedFrom: string | undefined
+
+/**
+ * Start-up: the saved shortcut, or the first free fallback when another app
+ * (Raycast, Alfred) has it. The fallback is saved, and the customer is told
+ * which one PeakFlow picked. Returns the shortcut in use, or null.
+ */
+function registerStartupHotkey(): string | null {
+  const saved = launcherStore.hotkey
+  // A key PeakFlow itself already uses is skipped, not stolen
+  const { key, movedFrom } = chooseLauncherKey(saved, process.platform, (a) => !globalShortcut.isRegistered(a) && registerHotkey(a))
+  if (key && movedFrom) {
+    launcherStore.hotkey = key
+    hotkeyMovedFrom = movedFrom
+    console.log(`[Launcher] ${movedFrom} is taken; switched to ${key}`)
+    tell(`Launcher shortcut: ${keyLabel(key)}`, `Another app uses ${keyLabel(movedFrom)}, so PeakFlow’s launcher now opens with ${keyLabel(key)}. You can change it in Launcher Settings.`)
+  }
+  if (key) return key
+  tell('Launcher has no shortcut', `Another app uses ${keyLabel(saved)}. Open the launcher from the PeakFlow ${isMac ? 'menu-bar icon' : 'tray icon'} and pick a shortcut in Launcher Settings.`)
+  return null
+}
+
+function tell(title: string, body: string): void {
+  try {
+    if (!Notification.isSupported()) return
+    const n = new Notification({ title, body, silent: true })
+    n.on('click', () => openLauncherSettings())
+    n.show()
+  } catch (err) {
+    console.warn('[Launcher] Notification failed:', err)
+  }
+}
+
+/** The tray menu: open the bar, or its settings (the only other way in is the bar itself). */
+export function openLauncher(): void {
+  showLauncher({ at: Date.now() })
+}
+
+export function openLauncherSettings(): void {
+  showLauncher({ at: Date.now(), view: 'settings' })
+}
+
+/** The shortcut that opens the launcher now, or null when none could be registered. */
+export function launcherHotkey(): string | null {
+  return registeredHotkey
+}
+
 function settings(): LauncherSettings {
   return {
     hotkey: launcherStore.hotkey,
     hotkeyRegistered: registeredHotkey === launcherStore.hotkey,
+    hotkeyMovedFrom: registeredHotkey === launcherStore.hotkey ? hotkeyMovedFrom : undefined,
     expansionEnabled: launcherStore.expansion,
     expansionActive: isExpansionActive(),
     keepAwake: isKeepAwake()
@@ -439,8 +496,10 @@ function registerIpc(): void {
     if (key === 'hotkey' && typeof value === 'string' && value.length < 60) {
       const prev = launcherStore.hotkey
       const next = value || DEFAULT_LAUNCHER_HOTKEY
-      if (registerHotkey(next)) launcherStore.hotkey = next
-      else registerHotkey(prev)
+      if (registerHotkey(next)) {
+        launcherStore.hotkey = next
+        hotkeyMovedFrom = undefined
+      } else registerHotkey(prev)
     } else if (key === 'expansion' && typeof value === 'boolean') {
       launcherStore.expansion = value
       changed()
@@ -472,7 +531,7 @@ function registerIpc(): void {
 export function initLauncher(): void {
   registerIpc()
   initLauncherWindow()
-  registerHotkey(launcherStore.hotkey)
+  registerStartupHotkey()
   updateExpansion(launcherStore.expansion, launcherStore.snippets())
   initDictation(() => getLauncherWindow()?.webContents)
   // Warm the app index and the AI check so the first open has everything

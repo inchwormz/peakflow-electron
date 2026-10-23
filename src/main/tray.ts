@@ -20,6 +20,7 @@ import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
 import { isToolSupportedOn } from '@shared/platform-tools'
 import { switchAccel } from '@shared/global-keys'
+import { openLauncher, openLauncherSettings, launcherHotkey } from './launcher'
 
 let tray: Tray | null = null
 
@@ -152,6 +153,20 @@ export function buildContextMenu(): Electron.Menu {
     template.push(...toolItems)
     template.push({ type: 'separator' })
   }
+
+  // The launcher, and its settings: otherwise only reachable through the
+  // launcher's own shortcut, which another app (Raycast, Alfred) may hold
+  const launcherKey = launcherHotkey()
+  template.push(
+    {
+      label: 'Open Launcher',
+      accelerator: launcherKey ? formatHotkeyLabel(launcherKey) : undefined,
+      registerAccelerator: false,
+      click: (): void => openLauncher()
+    },
+    { label: 'Launcher Settings…', click: (): void => openLauncherSettings() },
+    { type: 'separator' }
+  )
 
   template.push(
     {
