@@ -80,7 +80,12 @@ export function getCredential(tool: string, type: string): string | null {
         // Encrypted but unreadable: the Keychain refused (Deny on the "PeakFlow
         // Safe Storage" prompt after an unsigned update), or the key changed.
         // Return nothing, never the scrambled text (review S2).
-        if (looksEncrypted(raw)) {
+        // Licence records are the exception: license.ts treats a missing key as
+        // "not licensed" before it looks at the last good validation, so null
+        // would lock out a paying customer who clicked Deny. They keep the old
+        // behaviour until license.ts (fix/licence-checks) can tell "unreadable"
+        // from "missing" (Sol review P1).
+        if (looksEncrypted(raw) && tool !== 'license') {
           console.warn(`[PeakFlow:Credentials] Can't decrypt ${key}: treating it as not saved`)
           return null
         }

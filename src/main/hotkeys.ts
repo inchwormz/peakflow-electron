@@ -23,6 +23,12 @@ import { builtInAccel, switchAccel } from '@shared/global-keys'
 import { getSnapGridService } from './services/snapgrid'
 import { HeldKeys } from './held-keys'
 import { onPasteRunChanged } from './services/paste-run'
+// Static imports: electron-vite bundles main into one file and leaves a relative
+// require() unresolved, so it would throw in the built app (Sol review P1)
+import { guardedPasteNextAny } from './quickboard-paste'
+import { isQueueActive, cancelQueue } from './services/clipboard-sequential'
+import { getWorkflowStatus, cancelWorkflow } from './services/clipboard-workflows'
+import { getFormFillStatus, cancelFormFill } from './services/clipboard-forms'
 
 /** Registry of all active hotkeys: accelerator → label (for conflict detection) */
 const hotkeyRegistry = new Map<string, string>()
@@ -232,9 +238,6 @@ let queueKeys: HeldKeys | null = null
 let offPasteRun: (() => void) | null = null
 
 function pasteRunActive(): boolean {
-  const { isQueueActive } = require('./services/clipboard-sequential')
-  const { getWorkflowStatus } = require('./services/clipboard-workflows')
-  const { getFormFillStatus } = require('./services/clipboard-forms')
   return isQueueActive() || getWorkflowStatus().active || getFormFillStatus().active
 }
 
@@ -263,24 +266,20 @@ function registerQueueHotkeys(): void {
         accel: QUEUE_KEYS.next,
         action: () => {
           // Same access check as the panel's paste buttons
-          const { guardedPasteNextAny } = require('./quickboard-paste')
           void guardedPasteNextAny()
         }
       },
       {
         accel: QUEUE_KEYS.cancel,
         action: () => {
-          const { getWorkflowStatus, cancelWorkflow } = require('./services/clipboard-workflows')
           if (getWorkflowStatus().active) {
             cancelWorkflow()
             return
           }
-          const { getFormFillStatus, cancelFormFill } = require('./services/clipboard-forms')
           if (getFormFillStatus().active) {
             cancelFormFill()
             return
           }
-          const { cancelQueue } = require('./services/clipboard-sequential')
           cancelQueue()
         }
       }

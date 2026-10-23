@@ -31,6 +31,7 @@ import { readMacSignature } from './mac-signature'
 import { isNewer, shouldOffer, percentOf, type UpdateProgress } from '@shared/update-offer'
 import { IPC_SEND } from '@shared/ipc-types'
 import { FORGOT_ACCESSIBILITY } from '@shared/mac-permissions'
+import { showPanel } from '../panel'
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -76,11 +77,9 @@ export function getUpdateProgress(): UpdateProgress {
   return progress
 }
 
-/** The panel on its Updates page, where the progress shows (loaded lazily: panel.ts imports a lot). */
+/** The panel on its Updates page, where the progress shows. */
 function showUpdatesPage(): void {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { showPanel } = require('../panel') as typeof import('../panel')
     showPanel('app/updates')
   } catch (err) {
     console.warn('[AutoUpdater] Could not open the Updates page:', err)

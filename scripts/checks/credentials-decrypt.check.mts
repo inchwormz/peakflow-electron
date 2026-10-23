@@ -29,8 +29,12 @@ const { storeCredential, getCredential, looksEncrypted } = await import(srcUrl('
 assert.equal(storeCredential('license', 'key', 'ABCD-1234'), true)
 assert.equal(getCredential('license', 'key'), 'ABCD-1234', 'reads back normally')
 
+assert.equal(storeCredential('Dictation', 'openai_key', 'key-abc'), true)
 g.__pf.deny = true
-assert.equal(getCredential('license', 'key'), null, 'Deny: nothing, not the scrambled text')
+assert.equal(getCredential('Dictation', 'openai_key'), null, 'Deny: nothing, not the scrambled text (dictation never sends it)')
+// Licence records keep the old behaviour, so a paying customer who clicked Deny isn't locked out
+assert.notEqual(getCredential('license', 'key'), null, 'licence key still non-null for license.ts')
+g.__pf.m.delete('PeakFlow_Dictation_openai_key')
 
 // A dictation key saved in plain text by a dev build is still returned
 g.__pf.m.set('PeakFlow_Dictation_openai_key', 'plain-key-123')
