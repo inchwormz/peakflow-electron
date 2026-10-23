@@ -135,6 +135,7 @@ function refreshAddon(force = false): Promise<void> {
     if (addon.state !== before || viaAddon() !== wasUsable) {
       console.log(`[Dictation] add-on: ${addon.state}${addon.error ? ` (${addon.error})` : ''}`)
       applyWatcher()
+      settingsChanged()
       // Dictation just became usable: load the recording window now so the first hold records
       if (settings().enabled) getPill()
     }
@@ -142,6 +143,13 @@ function refreshAddon(force = false): Promise<void> {
     addonRefresh = null
   })
   return addonRefresh
+}
+
+/** Tell every window (the Dictation page and its header status) to reload the settings. */
+function settingsChanged(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(IPC_SEND.DICTATION_SETTINGS_CHANGED)
+  }
 }
 
 function settings(): DictationSettings {
@@ -406,9 +414,13 @@ async function runClip(clip: Clip): Promise<void> {
     // Keep the audio so nothing said is lost; it can be tried again for 30 minutes
     const kept = keepsClip(r.error)
     keptClip = kept ? { ...clip, at: Date.now() } : null
+    settingsChanged()
     return fail(r.error ?? 'failed', kept)
   }
-  keptClip = null
+  if (keptClip) {
+    keptClip = null
+    settingsChanged()
+  }
   let text = r.text
   let tidyNote = 'off'
   // With the add-on the clean-up goes through PeakFlow's server too (and is metered there)
@@ -499,6 +511,7 @@ async function saveKey(key: unknown): Promise<{ ok: boolean; error?: string; set
   retryExpansion()
   applyWatcher()
   getPill()
+  settingsChanged()
   return { ok: true, settings: settings() }
 }
 
@@ -592,6 +605,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     }
     applyWatcher()
     if (settings().enabled) getPill()
+    settingsChanged()
     return settingsWithHint()
   })
   h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromUi(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
@@ -599,6 +613,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
   h(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
     if (!fromUi(e) || typeof text !== 'string') return settings()
     store.set('words', text.slice(0, 20_000))
+    settingsChanged()
     return settings()
   })
   h(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
@@ -607,6 +622,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     // With the add-on, dictation carries on without their own key
     if (!viaAddon()) store.set('enabled', false)
     applyWatcher()
+    settingsChanged()
     return settings()
   })
 }

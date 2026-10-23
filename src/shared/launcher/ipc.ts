@@ -63,6 +63,8 @@ export const LAUNCHER_SEND = {
   DICTATION_STOP: 'dictation:stop',
   /** Refresh the prepaid balance after a clip or account update. */
   DICTATION_ACCOUNT_CHANGED: 'dictation:account-changed',
+  /** Dictation settings changed (switch, key, words, add-on, a kept clip): every page reloads them */
+  DICTATION_SETTINGS_CHANGED: 'dictation:settings-changed',
   /** What the pill shows (DictationState) */
   DICTATION_STATE: 'dictation:state'
 } as const

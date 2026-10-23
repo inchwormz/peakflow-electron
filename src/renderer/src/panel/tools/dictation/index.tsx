@@ -44,6 +44,8 @@ function useDictation(): {
     reloadS()
   })
   useIpcEvent(IPC_SEND.LICENSE_STATUS_CHANGED, reloadAccount)
+  // The header status and the page each hold settings: main says when they change (Sol review R1)
+  useIpcEvent(IPC_SEND.DICTATION_SETTINGS_CHANGED, reloadS)
   // While a permission is missing, look again every few seconds so the page
   // catches up when it's switched on in System Settings
   const visible = usePanelVisible()

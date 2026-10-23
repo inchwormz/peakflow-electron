@@ -159,3 +159,17 @@ test('Dictation sits in the switcher as the sixth tool, ungated like the free la
   assert.ok(panel.includes("'Alt+CommandOrControl+6'") && panel.includes('Digit[1-6]'))
   assert.ok(panel.includes("!TOOL_BY_ID[routeTool].ungated"), "ToolGate skips ungated tools")
 })
+
+test('[R1] the header status follows the switch: main broadcasts every settings change and the page reloads', () => {
+  const main = src('src/main/dictation/index.ts')
+  const page = src('src/renderer/src/panel/tools/dictation/index.tsx')
+  assert.ok(page.includes('useIpcEvent(IPC_SEND.DICTATION_SETTINGS_CHANGED, reloadS)'))
+  const handler = (ch: string): string => { const at = main.indexOf(`IPC_INVOKE.${ch},`); return main.slice(at, main.indexOf('\n  h(', at + 10)) }
+  for (const ch of ['DICTATION_SET', 'DICTATION_SET_WORDS', 'DICTATION_REMOVE_KEY']) assert.ok(handler(ch).includes('settingsChanged()'), ch)
+  const save = main.slice(main.indexOf('async function saveKey'), main.indexOf('function registerIpc'))
+  assert.ok(save.includes('settingsChanged()'), 'saving a key')
+  const refresh = main.slice(main.indexOf('function refreshAddon'), main.indexOf('function settingsChanged'))
+  assert.ok(refresh.includes('settingsChanged()'), 'the add-on starting or stopping')
+  const run = main.slice(main.indexOf('async function runClip'), main.indexOf('let text = r.text'))
+  assert.equal((run.match(/settingsChanged\(\)/g) ?? []).length, 2, 'a clip kept or cleared')
+})
