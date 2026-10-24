@@ -13,7 +13,7 @@
     "postinstall": "electron-builder install-app-deps",
     "build:mac:helper": "node scripts/prepare-mac-helper.js",
     "build:win": "npm run build && node scripts/checks/topup-links.mjs && electron-builder --win",
-    "build:mac": "npm run build && node scripts/checks/topup-links.mjs && npm run build:mac:helper && electron-builder --mac",
+    "build:mac": "npm run build && node scripts/checks/topup-links.mjs && npm run build:mac:helper && electron-builder --mac && node scripts/checks/mac-release-identity.mjs",
     "build:mac:dir": "npm run build && npm run build:mac:helper && electron-builder --mac --dir",
     "build:unpack": "npm run build && electron-builder --dir",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",

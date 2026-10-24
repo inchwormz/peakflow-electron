@@ -42,6 +42,10 @@
 - **Window close interceptors:** Use lazy `require()` inside event handlers to avoid circular deps at module load time.
 - **Silent catch {} in C# COM interop:** Always log errors — empty catches hide real failures and make debugging impossible.
 
+### Mac Release Checklist
+- Before a Mac release, follow `docs/RELEASE-CHECKLIST.md`: identity/signature check (`mac-release-identity.mjs`), `.env` with the three top-up links, and the Accessibility note for updates.
+- If a Mac update says "needs the Accessibility permission" in the log, the user removes PeakFlow from Accessibility and adds it again; stable signing (`PEAKFLOW_MAC_SIGN_IDENTITY`) keeps the grant across updates.
+
 ### Build & Run
 - `npm run build` — electron-vite builds main + preload + renderer
 - `npm run dev` — hot-reload dev mode (main + renderer)
