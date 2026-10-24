@@ -14,7 +14,7 @@
  * after Open Settings and brings the panel back when the permission works.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { MacPermission, PermissionStatus } from '@shared/mac-permissions'
 import { GUIDE_ALL_SET, GUIDE_RESTART_HINT, GUIDE_WATCHING, PERMISSION_GUIDE_URL, guideArtLabels, guideCopy, guideNeedsRecheck, guideView } from '@shared/mac-permissions'
@@ -91,17 +91,26 @@ export function GuideSteps({ kind, lost }: { kind: MacPermission; lost: boolean 
  */
 export function PermissionGuide({ kind }: { kind: MacPermission }): React.JSX.Element | null {
   const [s] = usePermissionLive(kind)
+  const [later, setLater] = useState(false)
   const view = guideView(s)
   if (!s || view === 'none') return null
   if (view === 'all-set') return <div className="pg"><AllSet kind={kind} /></div>
+  // "Later" hides the lost-Accessibility explainer until the panel opens again
+  if (later && kind === 'accessibility' && s.lost) return null
   const copy = guideCopy(kind, s.lost)
+  const accessibilityLost = kind === 'accessibility' && s.lost
   return (
     <div className="pg">
       <div className="pg-title">{copy.title}</div>
       <Note style={{ margin: '4px 0 10px', color: 'var(--text-2)' }}>{copy.intro}</Note>
       <Btn primary block onClick={() => openPermission(kind)}>
-        Open Settings
+        {accessibilityLost ? 'Open Accessibility settings' : 'Open Settings'}
       </Btn>
+      {accessibilityLost ? (
+        <LinkBtn style={{ marginTop: 6 }} onClick={() => setLater(true)}>
+          Later
+        </LinkBtn>
+      ) : null}
       <GuideSteps kind={kind} lost={s.lost} />
       <Note style={{ marginTop: 10 }}>{GUIDE_WATCHING}</Note>
       <LinkBtn style={{ marginTop: 6 }} onClick={() => openExternal(PERMISSION_GUIDE_URL)}>

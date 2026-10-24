@@ -51,6 +51,8 @@ export interface DictationPermissions {
   microphone: MediaStatus
   /** macOS Accessibility (true off macOS): hearing the hold key and typing the words */
   accessibility: boolean
+  /** Accessibility worked before on this Mac and is missing now (an unsigned update reset it) */
+  accessibilityLost?: boolean
 }
 
 export type MissingPermission = 'accessibility' | 'microphone'
