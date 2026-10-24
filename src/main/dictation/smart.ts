@@ -220,7 +220,11 @@ export interface CleanupResult {
 
 export async function cleanUp(
   raw: string,
-  opts: { key: string; words: MyWords; ctx?: DictationContext; model?: string; timeoutMs?: number; fetchImpl?: typeof fetch }
+  opts: {
+    key: string; words: MyWords; ctx?: DictationContext; model?: string; timeoutMs?: number; fetchImpl?: typeof fetch
+    /** Set by the add-on path: the server rejects requests over this many bytes, so the call is skipped instead */
+    skipOverBytes?: number
+  }
 ): Promise<CleanupResult> {
   const t0 = Date.now()
   const doFetch = opts.fetchImpl ?? fetch
@@ -229,9 +233,9 @@ export async function cleanUp(
   // Temperature 0 only where the model accepts it: non-reasoning models, and reasoning "none"
   const takesTemperature = effort === null || effort === 'none'
   const ctx = opts.ctx ?? {}
-  // The server counts the whole messages content: the prompt without any word list, plus the dictation
+  // The messages content without any word list: the fixed prompt, the app line and the dictation
   const fixedBytes = byteLength(cleanupSystem([], ctx)) + byteLength(raw)
-  if (fixedBytes > CLEANUP_MAX_BYTES) {
+  if (opts.skipOverBytes !== undefined && fixedBytes > opts.skipOverBytes) {
     if (!tooLongLogged) {
       tooLongLogged = true
       console.warn('[Dictation] clean-up skipped: dictation too long for one request')

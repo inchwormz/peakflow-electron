@@ -32,7 +32,7 @@ import { onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansio
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
-import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
+import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, CLEANUP_MAX_BYTES, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
 import { allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
@@ -523,7 +523,7 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   const tidyKey = auth ? 'add-on' : key
   if (store.get('tidy') && tidyKey && !needsTidy(r.text, words)) tidyNote = 'not needed'
   else if (store.get('tidy') && tidyKey) {
-    const c = await cleanUp(r.text, { key: tidyKey, words, ctx, ...(auth ? { fetchImpl: addonTidyFetch(auth), timeoutMs: 6000 } : {}) })
+    const c = await cleanUp(r.text, { key: tidyKey, words, ctx, ...(auth ? { fetchImpl: addonTidyFetch(auth), timeoutMs: 6000, skipOverBytes: CLEANUP_MAX_BYTES } : {}) })
     text = c.text
     tidyNote = c.cleaned ? `${c.ms} ms` : `kept as spoken: ${c.rejected}`
   }
