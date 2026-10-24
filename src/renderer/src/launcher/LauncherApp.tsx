@@ -22,6 +22,7 @@ import { Glyph } from './glyphs'
 import '../panel/panel.css'
 import './launcher.css'
 import { DictationAccountRow } from './DictationAccountRow'
+import { newestOnly } from './dictation-refresh'
 
 type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup' | 'words'
 
@@ -864,20 +865,28 @@ function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // One stamp per request (reload, toggle, save, remove): an answer older than the latest request is dropped, so a slow reload can't undo a newer change
+  const claim = useRef(newestOnly()).current
+  const take = (call: Promise<DictationSettings>): void => {
+    const current = claim()
+    void call.then((value) => { if (current()) setD(value) })
+  }
   useEffect(() => {
-    const load = (): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
+    const load = (): void => take(invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS))
     load()
     // A top-up (or a used-up balance) changes whether dictation runs on the add-on
-    return window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, load)
+    const off = window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, load)
+    return () => { off(); claim() }
   }, [])
   if (!d) return null
-  const set = (k: string, v: unknown): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v).then(setD)
+  const set = (k: string, v: unknown): void => take(invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v))
   const save = async (): Promise<void> => {
     setSaving(true)
     setErr('')
+    const current = claim()
     const r = await invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
     setSaving(false)
-    setD(r.settings)
+    if (current()) setD(r.settings)
     if (r.ok) setKey('')
     else setErr(KEY_ERRORS[r.error ?? 'failed'] ?? KEY_ERRORS.failed)
   }
@@ -945,7 +954,7 @@ function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean
             <div className="lbl">OpenAI key</div>
             <div className="sub">Saved encrypted on this computer</div>
           </div>
-          <button className="btn" onClick={() => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then(setD)}>Remove</button>
+          <button className="btn" onClick={() => take(invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY))}>Remove</button>
         </div>
       )}
     </>

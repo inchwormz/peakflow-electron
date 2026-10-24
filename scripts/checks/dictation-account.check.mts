@@ -49,6 +49,7 @@ function render(account: unknown): string {
     if (id === 'react') return { ...React, useState: (initial: unknown) => [reads++ === 0 ? account : initial, () => {}], useEffect: () => {}, useRef: (v: unknown) => ({ current: v }) }
     if (id === '@shared/ipc-types') return { IPC_INVOKE: {}, IPC_SEND: {} }
     if (id === '../panel/hooks') return { invoke: () => { throw new Error('unexpected IPC') } }
+    if (id === './dictation-refresh') return { watchAccount: () => ({ checkoutOpened: () => {}, stop: () => {} }) }
     return require(id)
   }
   new Function('require', 'module', 'exports', rowCode)(rowRequire, mod, mod.exports)
@@ -186,7 +187,7 @@ test('one server client and device source, one add-on settings row, and clip ref
   assert.ok(index.includes("addon_empty: 'Dictation is paused. Top up in Launcher Settings'"))
   assert.ok(index.includes('webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)'))
   const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
-  assert.ok(row.includes('window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)'))
+  assert.ok(row.includes('on(IPC_SEND.DICTATION_ACCOUNT_CHANGED)'))
   const settings = read('src/renderer/src/launcher/LauncherApp.tsx')
   assert.equal(settings.split('<DictationAccountRow onState=').length - 1, 1)
   assert.ok(!settings.includes('d.usage') && !settings.includes('Dictation add-on</div>'))

@@ -65,6 +65,7 @@ function render(account: unknown, chosen?: number): string {
     if (id === 'react') return { ...React, useState: (initial: unknown) => { const i = reads++; return [i === 0 ? account : i === 3 && chosen !== undefined ? chosen : initial, () => {}] }, useEffect: () => {}, useRef: (v: unknown) => ({ current: v }) }
     if (id === '@shared/ipc-types') return { IPC_INVOKE: {}, IPC_SEND: {} }
     if (id === '../panel/hooks') return { invoke: () => { throw new Error('unexpected IPC') } }
+    if (id === './dictation-refresh') return { watchAccount: () => ({ checkoutOpened: () => {}, stop: () => {} }) }
     return require(id)
   }
   new Function('require', 'module', 'exports', rowCode)(rowRequire, mod, mod.exports)
