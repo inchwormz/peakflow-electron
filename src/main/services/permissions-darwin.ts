@@ -33,14 +33,28 @@ interface OnboardingData {
   everGranted: Partial<Record<MacPermission, boolean>>
   /** App version the set-up page was last shown for a lost permission or a wrong location */
   setupShownFor: string
+  /** Permissions seen off since they were last granted: the next time one works, PeakFlow says "All set" */
+  awaitingFix: Partial<Record<MacPermission, boolean>>
 }
 
 const onboardingStore = isMac
-  ? new Store<OnboardingData>({ name: 'mac-onboarding', defaults: { firstRunShown: false, everGranted: {}, setupShownFor: '' } })
+  ? new Store<OnboardingData>({ name: 'mac-onboarding', defaults: { firstRunShown: false, everGranted: {}, setupShownFor: '', awaitingFix: {} } })
   : null
 
 /** Reasons already explained this session, so we never nag twice. */
 const explainedThisSession = new Set<string>()
+
+/** When each permission started working again after being off: "All set" shows for a while after. */
+const fixedAt = new Map<MacPermission, number>()
+export const ALL_SET_FOR_MS = 10 * 60 * 1000
+
+/** Development screenshots only (dev-shots.ts): pretend a permission is on or off. */
+const devOverride = new Map<MacPermission, boolean>()
+export function setDevPermission(kind: MacPermission, granted: boolean | null): void {
+  if (app.isPackaged) return
+  if (granted === null) devOverride.delete(kind)
+  else devOverride.set(kind, granted)
+}
 
 // ─── Status checks ──────────────────────────────────────────────────────────
 
@@ -52,6 +66,8 @@ export function checkAccessibility(): boolean {
 
 function isGranted(kind: MacPermission): boolean {
   if (!isMac) return true
+  const forced = devOverride.get(kind)
+  if (forced !== undefined) return forced
   if (kind === 'accessibility') return checkAccessibility()
   return systemPreferences.getMediaAccessStatus(kind) === 'granted'
 }
@@ -62,14 +78,46 @@ function isGranted(kind: MacPermission): boolean {
  */
 export function permissionStatus(kind: MacPermission): PermissionStatus {
   const granted = isGranted(kind)
+  const undecided = isMac && !devOverride.has(kind) && kind !== 'accessibility' && systemPreferences.getMediaAccessStatus(kind) === 'not-determined'
   let lost = false
   if (isMac && onboardingStore) {
     const ever = onboardingStore.get('everGranted') ?? {}
     if (granted && !ever[kind]) onboardingStore.set('everGranted', { ...ever, [kind]: true })
     lost = !granted && !!ever[kind]
+    // Off (and macOS has asked): remember it, across restarts, so the next grant says "All set"
+    const waiting = onboardingStore.get('awaitingFix') ?? {}
+    if (!granted && !undecided && !waiting[kind]) onboardingStore.set('awaitingFix', { ...waiting, [kind]: true })
+    if (granted && waiting[kind]) {
+      onboardingStore.set('awaitingFix', { ...waiting, [kind]: false })
+      fixedAt.set(kind, Date.now())
+      console.log(`[Permissions] ${kind} works again`)
+    }
   }
-  const undecided = isMac && kind !== 'accessibility' && systemPreferences.getMediaAccessStatus(kind) === 'not-determined'
-  return { kind, granted, lost, undecided, advice: granted ? '' : permissionAdvice(kind, lost) }
+  const since = fixedAt.get(kind)
+  const fixed = granted && since !== undefined && Date.now() - since < ALL_SET_FOR_MS
+  return { kind, granted, lost, undecided, advice: granted ? '' : permissionAdvice(kind, lost), fixed }
+}
+
+let fixWatch: ReturnType<typeof setInterval> | null = null
+
+/**
+ * After "Open Settings": check every 1.5 seconds (for up to 10 minutes) and,
+ * the moment the permission works, open the panel so the customer sees
+ * "All set" without having to come back and look.
+ */
+export function watchForFix(kind: MacPermission, onFixed: () => void): void {
+  if (!isMac || isGranted(kind)) return
+  if (fixWatch) clearInterval(fixWatch)
+  const started = Date.now()
+  fixWatch = setInterval(() => {
+    const done = Date.now() - started > 10 * 60 * 1000
+    if (!done && !isGranted(kind)) return
+    if (fixWatch) clearInterval(fixWatch)
+    fixWatch = null
+    if (done) return
+    permissionStatus(kind) // records the fix
+    onFixed()
+  }, 1500)
 }
 
 /** Open the System Settings pane for a permission (Accessibility also adds PeakFlow to its list). */
@@ -123,12 +171,19 @@ export function macStartupRoute(): string | null {
   const firstRun = !onboardingStore.get('firstRunShown')
   // Read before permissionStatus() records anything
   const neverRecorded = !(onboardingStore.get('everGranted') ?? {}).accessibility
+  const wasWaiting = !!(onboardingStore.get('awaitingFix') ?? {}).accessibility
   const ax = permissionStatus('accessibility')
   onboardingStore.set('firstRunShown', true)
   const version = app.getVersion()
   if (firstRun) {
     onboardingStore.set('setupShownFor', version)
     console.log('[Permissions] First launch: showing the set-up page')
+    return 'app/setup'
+  }
+  // Fixed while PeakFlow was closed (the customer quit and reopened it): say "All set" once
+  if (wasWaiting && ax.fixed) {
+    onboardingStore.set('setupShownFor', version) // the same page also covers a wrong location
+    console.log('[Permissions] Accessibility works again: showing the set-up page')
     return 'app/setup'
   }
   // An install from before this release that has no Accessibility now: most likely an update reset it

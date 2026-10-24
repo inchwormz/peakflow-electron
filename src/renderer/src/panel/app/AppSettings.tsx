@@ -19,7 +19,8 @@ import type { PanelToolId, RouteTable } from '../types'
 import { invoke, isMac, useInvoke, useIpcEvent, formatAccelerator, builtInKey, ALTGR_NOTE } from '../hooks'
 import type { MacPermission, PermissionStatus } from '@shared/mac-permissions'
 import type { UpdateProgress } from '@shared/update-offer'
-import { openPermission } from '../permission'
+import { GuideSteps, PermissionGuide, openPermission } from '../permission'
+import { AFTER_UPDATE_TITLE, guideView } from '@shared/mac-permissions'
 import { SWITCH_ACCELS as SWITCH } from '@shared/global-keys'
 import { Banner, Btn, Grp, Hero, Gap, Note, Primary, Rec, Row, Toggle, V, openExternal } from '../kit'
 import { Icon } from '../icons'
@@ -326,7 +327,12 @@ function UpdateProgressView(): React.JSX.Element | null {
     )
   }
   if (p.state === 'downloaded') {
-    return <Note style={{ marginBottom: 12, color: 'var(--text)' }}>PeakFlow{v} has downloaded. Follow the steps in the window that opened.</Note>
+    return (
+      <>
+        <Note style={{ marginBottom: 12, color: 'var(--text)' }}>PeakFlow{v} has downloaded. Follow the steps in the window that opened.</Note>
+        <AfterUpdate />
+      </>
+    )
   }
   const pct = typeof p.percent === 'number' ? p.percent : null
   return (
@@ -335,6 +341,23 @@ function UpdateProgressView(): React.JSX.Element | null {
       <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct ?? undefined}>
         <i style={{ width: `${pct ?? 5}%` }} />
       </div>
+      <Gap h={14} />
+      <AfterUpdate />
+    </div>
+  )
+}
+
+/**
+ * On a Mac, while an update downloads or waits to be installed: the
+ * Accessibility steps, before macOS forgets PeakFlow (John, 24 Oct 2026).
+ */
+function AfterUpdate(): React.JSX.Element | null {
+  if (!isMac()) return null
+  return (
+    <div className="pg" style={{ marginBottom: 14 }}>
+      <div className="pg-head">{AFTER_UPDATE_TITLE}</div>
+      <Note style={{ margin: 0 }}>If a tool stops working after the update, macOS has forgotten PeakFlow. These steps fix it.</Note>
+      <GuideSteps kind="accessibility" lost />
     </div>
   )
 }
@@ -449,7 +472,7 @@ function Setup(): React.JSX.Element {
   const [moving, setMoving] = useState(false)
   if (!info) return <div style={{ height: 220 }} />
   const status = (k: MacPermission): PermissionStatus | undefined => info.permissions.find((p) => p.kind === k)
-  const missing = info.permissions.filter((p) => !p.granted && !p.undecided)
+  const guides = info.permissions.filter((p) => guideView(p) !== 'none')
   return (
     <>
       {info.location !== 'applications' ? (
@@ -478,6 +501,12 @@ function Setup(): React.JSX.Element {
           </Btn>
         </>
       ) : null}
+      {/* The step-by-step guide for each permission that's off (or just came back) */}
+      {guides.map((p) => (
+        <div key={p.kind} style={{ marginBottom: 16 }}>
+          <PermissionGuide kind={p.kind} />
+        </div>
+      ))}
       <Grp>
         {PERMISSION_ROWS.map((r) => {
           const s = status(r.kind)
@@ -485,11 +514,6 @@ function Setup(): React.JSX.Element {
           return <Row key={r.kind} label={r.label} sub={r.sub} right={right} />
         })}
       </Grp>
-      {missing.map((p) => (
-        <Note key={p.kind} style={{ marginTop: 10, color: 'var(--text)' }}>
-          {p.advice}
-        </Note>
-      ))}
       <Gap h={16} />
       <Primary onClick={() => nav.back()}>Done</Primary>
     </>
