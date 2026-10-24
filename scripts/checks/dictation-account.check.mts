@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { serial } from '../../src/main/dictation/serial.ts'
+import { autoEnable } from '../../src/main/dictation/activation.ts'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { transformSync } from 'esbuild'
@@ -186,8 +188,12 @@ test('same-state disabled changes reapply the hold watcher', async () => {
   const code = transformSync(path, { loader: 'ts', format: 'cjs' }).code
   for (const disabled of [{ disabled: true, blocked: null }, { disabled: false, blocked: 'disabled' }]) {
     let next = { ...reply, ...disabled }
-    const run = new Function('fetchAddonStatus', `
+    const run = new Function('fetchAddonStatus', 'serial', 'autoEnable', `
       let addon = { state: 'none' }, addonCheckedAt = 0, addonRefresh = null, addonRetry = null
+      const settingsQueue = serial()
+      const store = {get: () => true, set: () => {}}
+      const retryExpansion = () => {}
+      const ensureMediaAccess = () => {}
       let watcherUpdates = 0
       const addonAuth = () => ({ licence: 'abc', deviceId: 'device' })
       const applyWatcher = () => { watcherUpdates++ }
@@ -198,7 +204,7 @@ test('same-state disabled changes reapply the hold watcher', async () => {
       const console = { log: () => {} }
       ${code}
       return { refresh: () => refreshAddon(true), updates: () => watcherUpdates, usable: viaAddon }
-    `)(async () => next)
+    `)(async () => next, serial, autoEnable)
     await run.refresh()
     assert.equal(run.usable(), false)
     assert.equal(run.updates(), 1)

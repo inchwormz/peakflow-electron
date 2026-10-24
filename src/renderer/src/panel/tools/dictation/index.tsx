@@ -13,17 +13,20 @@
  * Routes: dictation, dictation/settings, dictation/key, dictation/words.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createLatest } from '@shared/latest-only'
+import { HOLD_KEY_COPY, type NativeHoldKey } from '@shared/dictation-key'
+import { watchAccount } from './refresh'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationAccount, TopupAmount } from '@shared/dictation-account'
 import type { DictationSettings } from '@shared/launcher/types'
 import {
-  COPY, buyLabel, dictationStatus, holdKeyName, holdKeys, howTo, missingPermission, payView, pickAmount,
+  COPY, buyLabel, dictationStatus, holdKeyName, howTo, missingPermission, payView, pickAmount,
   type DictationPermissions, type PayView
 } from '@shared/dictation-view'
 import type { PanelToolModule } from '../../types'
 import { invoke, isMac, useInvoke, useIpcEvent, usePanelVisible } from '../../hooks'
-import { Banner, Btn, Gap, Grp, Note, Picker, Primary, Row, Seg, Toggle } from '../../kit'
+import { Banner, Btn, Gap, Grp, Note, Primary, Row, Seg, Toggle } from '../../kit'
 import { useNav } from '../../nav'
 import { PermissionNotice } from '../../permission'
 import { guideCopy } from '@shared/mac-permissions'
@@ -32,13 +35,35 @@ import { guideCopy } from '@shared/mac-permissions'
 
 function useDictation(): {
   s: DictationSettings | undefined
-  setS: (v: DictationSettings) => void
+  takeS: <T extends DictationSettings | { settings: DictationSettings }>(call: Promise<T>) => Promise<T>
+  checkoutOpened: () => void
   account: DictationAccount | undefined
   perms: DictationPermissions | undefined
   setPerms: (v: DictationPermissions) => void
 } {
-  const [s, reloadS, setS] = useInvoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS)
-  const [account, reloadAccount] = useInvoke<DictationAccount>(IPC_INVOKE.DICTATION_ACCOUNT)
+  const [s, setS] = useState<DictationSettings>()
+  const latest = useRef(createLatest()).current
+  const takeS = useCallback(async <T extends DictationSettings | { settings: DictationSettings },>(call: Promise<T>): Promise<T> => {
+    const current = latest.next()
+    const value = await call
+    if (current()) setS('settings' in value ? value.settings : value)
+    return value
+  }, [latest])
+  const reloadS = useCallback(() => { void takeS(invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS)).catch(() => {}) }, [takeS])
+  const [account, setAccount] = useState<DictationAccount>()
+  const watcher = useRef<ReturnType<typeof watchAccount<DictationAccount>> | null>(null)
+  const reloadAccount = useCallback(() => window.dispatchEvent(new Event('dictation:refresh-account')), [])
+  useEffect(() => {
+    watcher.current = watchAccount<DictationAccount>({
+      fetch: () => invoke<DictationAccount>(IPC_INVOKE.DICTATION_ACCOUNT),
+      onValue: setAccount, onError: () => {},
+      setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+      onFocus: (fn) => { window.addEventListener('focus', fn); return () => window.removeEventListener('focus', fn) },
+      onRefreshEvents: [(fn) => { window.addEventListener('dictation:refresh-account', fn); return () => window.removeEventListener('dictation:refresh-account', fn) }]
+    })
+    return () => { watcher.current?.stop(); watcher.current = null }
+  }, [])
+  const checkoutOpened = useCallback(() => watcher.current?.checkoutOpened(), [])
   const [perms, reloadPerms, setPerms] = useInvoke<DictationPermissions>(IPC_INVOKE.DICTATION_PERMISSIONS)
   useIpcEvent(IPC_SEND.DICTATION_ACCOUNT_CHANGED, () => {
     reloadAccount()
@@ -51,13 +76,17 @@ function useDictation(): {
   // While a permission is missing, look again every few seconds so the page
   // catches up when it's switched on in System Settings
   const visible = usePanelVisible()
+  useEffect(() => {
+    if (visible) { reloadS(); reloadAccount() }
+    return () => latest.cancel()
+  }, [visible, reloadS, reloadAccount, latest])
   const missing = !!missingPermission(perms)
   useEffect(() => {
     if (!missing || !visible) return
     const t = setInterval(reloadPerms, 2500)
     return () => clearInterval(t)
   }, [missing, visible, reloadPerms])
-  return { s, setS, account, perms, setPerms }
+  return { s, takeS, checkoutOpened, account, perms, setPerms }
 }
 
 function useStatus(): string {
@@ -76,7 +105,25 @@ const PERMISSION_WHY = {
 } as const
 
 function Main(): React.JSX.Element {
-  const { s, setS, account, perms, setPerms } = useDictation()
+  const { s, takeS, checkoutOpened, account, perms, setPerms } = useDictation()
+  const [capturing, setCapturing] = useState(false)
+  const [keyError, setKeyError] = useState('')
+  const captureStamp = useRef(createLatest()).current
+  useEffect(() => () => {
+    captureStamp.cancel()
+    void invoke(IPC_INVOKE.DICTATION_RECORD_KEY, false)
+  }, [captureStamp])
+  const changeKey = async (): Promise<void> => {
+    const current = captureStamp.next()
+    setCapturing(true)
+    setKeyError('')
+    try {
+      const key = await invoke<NativeHoldKey | 'rejected' | null>(IPC_INVOKE.DICTATION_RECORD_KEY, true)
+      if (!current()) return
+      if (key === 'rejected') setKeyError(HOLD_KEY_COPY.rejection(isMac()))
+      else if (key) await takeS(setting('holdKey', key))
+    } finally { if (current()) setCapturing(false) }
+  }
   if (!s) return <div style={{ height: 300 }} />
   const mac = isMac()
   const missing = missingPermission(perms)
@@ -119,23 +166,26 @@ function Main(): React.JSX.Element {
         <Row
           label="Dictation"
           sub={s.hasKey ? howTo(keyName) : pay.kind === 'own-key' ? 'To turn it on, add your OpenAI key below.' : 'To turn it on, buy time below or add your OpenAI key.'}
-          right={<Toggle label="Dictation" checked={s.enabled} disabled={!s.hasKey} onChange={(v) => void setting('enabled', v).then(setS)} />}
+          right={<Toggle label="Dictation" checked={s.enabled} disabled={!s.hasKey} onChange={(v) => void takeS(setting('enabled', v))} />}
         />
         <Row
-          label="Hold key"
-          right={<Picker label="Hold key" value={s.holdKey} options={holdKeys(mac)} onChange={(k) => void setting('holdKey', k).then(setS)} />}
+          label={HOLD_KEY_COPY.label}
+          value={capturing ? undefined : keyName}
+          sub={capturing ? HOLD_KEY_COPY.recording : undefined}
+          right={capturing ? <Btn sm onClick={() => void invoke(IPC_INVOKE.DICTATION_RECORD_KEY, false)}>{HOLD_KEY_COPY.cancel}</Btn> : <Btn sm onClick={() => void changeKey()}>{HOLD_KEY_COPY.change}</Btn>}
         />
       </Grp>
+      {keyError ? <Note style={{ marginTop: 8 }}>{keyError}</Note> : null}
       {s.enabled && s.hint ? <Note style={{ marginTop: 8 }}>{s.hint}</Note> : null}
 
       <Gap h={14} />
-      <Paying view={pay} ownKey={!!s.ownKey} />
+      <Paying view={pay} ownKey={!!s.ownKey} checkoutOpened={checkoutOpened} />
     </>
   )
 }
 
 /** The balance and Add $5–$20 (or Get dictation), with the own key as the small second option. */
-function Paying({ view, ownKey }: { view: PayView; ownKey: boolean }): React.JSX.Element {
+function Paying({ view, ownKey, checkoutOpened }: { view: PayView; ownKey: boolean; checkoutOpened: () => void }): React.JSX.Element {
   const [chosen, setChosen] = useState<TopupAmount | null>(null)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState('')
@@ -161,6 +211,7 @@ function Paying({ view, ownKey }: { view: PayView; ownKey: boolean }): React.JSX
     setOpening(true)
     setError('')
     try {
+      checkoutOpened()
       if (!(await invoke<boolean>(IPC_INVOKE.DICTATION_CHECKOUT, amount))) setError('Couldn’t open the checkout. Try again.')
     } catch {
       setError('Couldn’t open the checkout. Try again.')
@@ -199,7 +250,7 @@ function Paying({ view, ownKey }: { view: PayView; ownKey: boolean }): React.JSX
 // ─── settings ────────────────────────────────────────────────────────────────
 
 function Settings(): React.JSX.Element {
-  const { s, setS } = useDictation()
+  const { s, takeS } = useDictation()
   if (!s) return <div style={{ height: 120 }} />
   return (
     <>
@@ -207,7 +258,7 @@ function Settings(): React.JSX.Element {
         <Row
           label="Clean up as you go"
           sub="Takes out “um”, adds punctuation, and keeps only the fix when you say “no wait”. Never changes names, numbers or “not”."
-          right={<Toggle label="Clean up as you go" checked={s.cleanup} onChange={(v) => void setting('cleanup', v).then(setS)} />}
+          right={<Toggle label="Clean up as you go" checked={s.cleanup} onChange={(v) => void takeS(setting('cleanup', v))} />}
         />
         <Row label="My words" sub="Names and terms to spell your way" value={s.wordCount ? String(s.wordCount) : undefined} go="dictation/words" />
         <Row label="OpenAI key" value={s.ownKey ? 'Saved' : 'Not added'} go="dictation/key" />
@@ -225,7 +276,7 @@ const KEY_ERRORS: Record<string, string> = {
 
 function OwnKey(): React.JSX.Element {
   const nav = useNav()
-  const { s, setS } = useDictation()
+  const { s, takeS } = useDictation()
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -234,9 +285,8 @@ function OwnKey(): React.JSX.Element {
     if (!key.trim() || busy) return
     setBusy(true)
     setError('')
-    invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
+    takeS(invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key))
       .then((r) => {
-        setS(r.settings)
         if (r.ok) {
           setKey('')
           nav.toast('Key saved. Dictation is on')
@@ -252,7 +302,7 @@ function OwnKey(): React.JSX.Element {
           <Row
             label="OpenAI key"
             sub="Saved encrypted on this computer"
-            right={<Btn sm onClick={() => invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then((v) => { setS(v); nav.toast('Key removed') }).catch(() => {})}>Remove</Btn>}
+            right={<Btn sm onClick={() => takeS(invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY)).then(() => { nav.toast('Key removed') }).catch(() => {})}>Remove</Btn>}
           />
         </Grp>
         <Note style={{ marginTop: 10 }}>If you also have a balance, dictation uses the balance first. Your key takes over when the balance can’t be used.</Note>

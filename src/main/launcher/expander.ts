@@ -21,6 +21,7 @@ import { getMacHelperPath } from '../native/mac-helper'
 import { pasteAndRestore } from './selection'
 import { checkAccessibility } from '../services/permissions-darwin'
 import { KeyTaps } from './key-taps'
+import type { NativeHoldKey } from '@shared/dictation-key'
 
 let child: ChildProcess | null = null
 let active = false
@@ -28,14 +29,25 @@ let wanted = false
 let current: LauncherSnippet[] = []
 let restarts = 0
 let snippetsWanted = false
-let holdKey: string | null = null
+let holdKey: NativeHoldKey | null = null
+let capturingHoldKey = false
+const recordedListeners = new Set<(code: number) => void>()
 let dictating = false
 let holdListener: ((e: 'down' | 'up' | 'cancel') => void) | null = null
 const doubleListeners = new Set<() => void>()
 const taps = new KeyTaps()
 
-/** Windows virtual-key codes for the hold keys */
-const WIN_HOLD_VK: Record<string, number> = { rctrl: 0xa3, ralt: 0xa5 }
+/** Record physical keys through the same native watcher, including fn and side-specific modifiers. */
+export function onHoldKeyRecorded(fn: (code: number) => void): () => void {
+  recordedListeners.add(fn)
+  return () => { recordedListeners.delete(fn) }
+}
+
+export function setHoldKeyCapture(enabled: boolean): void {
+  if (enabled) onKey('cancel')
+  capturingHoldKey = enabled
+  applyHoldKey()
+}
 
 export function onHoldKey(fn: (e: 'down' | 'up' | 'cancel') => void): void {
   holdListener = fn
@@ -55,17 +67,19 @@ export function onDictationKeyDouble(fn: () => void): () => void {
 }
 
 /**
- * The dictation key ('rcmd' | 'ropt' | 'rctrl' | 'fn' on Mac, 'rctrl' | 'ralt' on Windows)
+ * The validated native dictation key (left/right modifier, fn on Mac, or a function key)
  * and whether a hold dictates. With dictation off the key is still watched for double taps.
  */
-export function setHoldKey(key: string | null, dictate = true): void {
+export function setHoldKey(key: NativeHoldKey | null, dictate = true): void {
+  if (JSON.stringify(holdKey) === JSON.stringify(key) && dictating === dictate) return
+  onKey('cancel')
   holdKey = key
   dictating = dictate
   applyHoldKey()
 }
 
 /** The key the watcher should report, or null */
-function watchedKey(): string | null {
+function watchedKey(): NativeHoldKey | null {
   return holdKey && (dictating || doubleListeners.size) ? holdKey : null
 }
 
@@ -78,14 +92,17 @@ function applyHoldKey(): void {
 }
 
 function refreshWanted(): void {
-  wanted = snippetsWanted || !!watchedKey()
+  wanted = capturingHoldKey || snippetsWanted || !!watchedKey()
 }
 
 function sendHold(): void {
   if (!child?.stdin?.writable) return
   const key = watchedKey()
-  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key }) + '\n')
-  else child.stdin.write(`HOLD ${key ? WIN_HOLD_VK[key] ?? 0 : 0}\n`)
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, captureHoldKey: capturingHoldKey }) + '\n')
+  else {
+    child.stdin.write(`HOLD ${key?.code ?? 0}\n`)
+    child.stdin.write(`CAPTURE ${capturingHoldKey ? 1 : 0}\n`)
+  }
 }
 
 function onKey(e: 'down' | 'up' | 'cancel'): void {
@@ -128,7 +145,7 @@ async function expandOnWindows(keyword: string): Promise<void> {
 
 function onLine(line: string): void {
   try {
-    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string }
+    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number }
     if (ev.e === 'ready') {
       active = ev.trusted !== false
       if (!active) console.warn('[Launcher] Snippet expansion needs the Accessibility permission')
@@ -139,7 +156,11 @@ function onLine(line: string): void {
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
     } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
-    if (ev.e === 'hold-down') onKey('down')
+    if (ev.e === 'hold-key-recorded' && capturingHoldKey && Number.isInteger(ev.code)) {
+      capturingHoldKey = false
+      recordedListeners.forEach((fn) => fn(ev.code!))
+      applyHoldKey()
+    } else if (ev.e === 'hold-down') onKey('down')
     else if (ev.e === 'hold-up') onKey('up')
     else if (ev.e === 'hold-cancel') onKey('cancel')
   } catch { /* not ours */ }
@@ -183,6 +204,13 @@ public static class PfKeyWatch {
   static volatile string[] keywords = new string[0];
   static volatile int holdVk = 0;
   static bool holdDown = false;
+  static bool holdPhysicalDown = false;
+  static volatile bool captureHoldKey = false;
+  static HashSet<uint> swallowed = new HashSet<uint>();
+  static HashSet<uint> capturedKeys = new HashSet<uint>();
+  static HashSet<uint> pressed = new HashSet<uint>();
+  static bool IsModifier(uint vk) { return (vk >= 0xA0 && vk <= 0xA5) || vk == 0x5B || vk == 0x5C; }
+  static bool IsAllowedHold(int vk) { return IsModifier((uint)vk) || (vk >= 0x70 && vk <= 0x87); }
   const int WM_KEYUP = 0x0101;
   const int WM_SYSKEYUP = 0x0105;
 
@@ -211,17 +239,49 @@ public static class PfKeyWatch {
         bool isDown = (int)wParam == WM_KEYDOWN || (int)wParam == WM_SYSKEYDOWN;
         bool isUp = (int)wParam == WM_KEYUP || (int)wParam == WM_SYSKEYUP;
         if ((k.flags & LLKHF_INJECTED) == 0) {
+          // Keep down/up pairs swallowed even after capture finishes or the chosen key changes.
+          if (isUp) pressed.Remove(k.vkCode);
+          if (capturedKeys.Contains(k.vkCode)) {
+            if (isUp) capturedKeys.Remove(k.vkCode);
+            return new IntPtr(1);
+          }
+          if (swallowed.Contains(k.vkCode)) {
+            if (isUp) swallowed.Remove(k.vkCode);
+            if (k.vkCode != (uint)holdVk || captureHoldKey) return new IntPtr(1);
+          }
+          if (captureHoldKey && isDown) {
+            captureHoldKey = false;
+            holdDown = false;
+            holdPhysicalDown = false;
+            capturedKeys.Add(k.vkCode);
+            Console.Out.WriteLine("{\\"e\\":\\"hold-key-recorded\\",\\"code\\":" + k.vkCode + "}");
+            Console.Out.Flush();
+            return new IntPtr(1);
+          }
+          bool alreadyPressed = pressed.Contains(k.vkCode);
+          if (isDown) pressed.Add(k.vkCode);
           if (holdVk != 0 && k.vkCode == (uint)holdVk) {
-            if (isDown && !holdDown) {
-              holdDown = true;
-              Emit("hold-down");
-              // A lone Alt press opens the app's menu bar on release, which would eat the paste:
-              // an unassigned key (0xE8) in between stops that
-              if (holdVk == 0xA5) ThreadPool.QueueUserWorkItem(delegate { Tap(0xE8); });
+            if (isDown && !holdPhysicalDown && !alreadyPressed) {
+              holdPhysicalDown = true;
+              // A modifier is dictation only when pressed alone, never as part of a chord.
+              bool alone = true;
+              if (IsModifier(k.vkCode)) foreach (int other in new int[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C }) {
+                if (other != holdVk && !(holdVk == 0xA5 && other == 0xA2) && (GetKeyState(other) & 0x8000) != 0) alone = false;
+              }
+              if (IsModifier(k.vkCode)) foreach (uint other in pressed) {
+                if (other != k.vkCode && !(holdVk == 0xA5 && other == 0xA2)) alone = false;
+              }
+              if (alone) { holdDown = true; Emit("hold-down"); }
+              // Prevent a lone Alt/Win release from opening a menu/Start and stealing the paste.
+              if (holdVk == 0xA4 || holdVk == 0xA5 || holdVk == 0x5B || holdVk == 0x5C) ThreadPool.QueueUserWorkItem(delegate { Tap(0xE8); });
             }
-            else if (isUp && holdDown) { holdDown = false; Emit("hold-up"); }
+            else if (isUp) { holdPhysicalDown = false; if (holdDown) { holdDown = false; Emit("hold-up"); } }
+            if (!IsModifier(k.vkCode)) {
+              if (isDown) swallowed.Add(k.vkCode);
+              return new IntPtr(1);
+            }
           } else if (holdDown && holdVk == 0xA5 && k.vkCode == 0xA2 && (k.scanCode & 0x200) != 0) {
-            // AltGr layouts send a fake Left Ctrl with Right Alt (and repeat it): not another key
+            // AltGr layouts send a fake Left Ctrl with Right Alt: not another key.
           } else if (isDown) {
             if (holdDown) { holdDown = false; Emit("hold-cancel"); }
             Handle(k);
@@ -270,8 +330,11 @@ public static class PfKeyWatch {
         if (line.StartsWith("HOLD ")) {
           int vk = 0;
           int.TryParse(line.Substring(5).Trim(), out vk);
-          holdVk = vk;
+          holdVk = IsAllowedHold(vk) ? vk : 0;
           holdDown = false;
+          holdPhysicalDown = false;
+        } else if (line.StartsWith("CAPTURE ")) {
+          captureHoldKey = line.Substring(8).Trim() == "1";
         } else if (line.StartsWith("SET")) {
           List<string> list = new List<string>();
           foreach (string part in line.Substring(3).Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)) {

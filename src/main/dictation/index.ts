@@ -9,6 +9,9 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { serial } from './serial'
+import { autoEnable, toggleChoice } from './activation'
+import { normalizeHoldKey, holdKeyFromCode, type NativeHoldKey } from '@shared/dictation-key'
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
@@ -24,7 +27,7 @@ import { storeCredential, getCredential, deleteCredential } from '../security/cr
 import { ensureMediaAccess, checkAccessibility, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
-import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../launcher/expander'
+import { onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
@@ -45,11 +48,12 @@ const PILL_W = 220
 const PILL_ERROR_W = 380
 const PILL_H = 44
 
-const MAC_KEYS: DictationHoldKey[] = ['fn', 'ropt', 'rcmd', 'rctrl']
-const WIN_KEYS: DictationHoldKey[] = ['rctrl', 'ralt']
+// One queue owns settings mutations and snapshots, including asynchronous add-on transitions.
+const settingsQueue = serial()
 
 interface DictationData {
   enabled: boolean
+  userOff: boolean
   holdKey: DictationHoldKey
   /** Light clean-up (fillers, punctuation, "no wait"); on by default since it passed the test set */
   tidy: boolean
@@ -63,7 +67,7 @@ const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
   // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
-  defaults: { enabled: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '' }
+  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '' }
 })
 
 let pill: BrowserWindow | null = null
@@ -153,17 +157,23 @@ function refreshAddon(force = false): Promise<void> {
     if (addonRetry) clearTimeout(addonRetry)
     addonRetry = temporary && auth ? setTimeout(() => void refreshAddon(true), 60_000) : null
     if (temporary && viaAddon()) return
-    const before = addon.state
-    const wasUsable = viaAddon()
-    addon = next
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
-    if (addon.state !== before || viaAddon() !== wasUsable) {
-      console.log(`[Dictation] add-on: ${addon.state}${addon.error ? ` (${addon.error})` : ''}`)
-      applyWatcher()
-      settingsChanged()
-      // Dictation just became usable: load the recording window now so the first hold records
-      if (settings().enabled) getPill()
-    }
+    await settingsQueue(() => {
+      const before = JSON.stringify(addon)
+      const beforeState = addon.state
+      const wasUsable = viaAddon()
+      addon = next
+      if (autoEnable(wasUsable, viaAddon(), store.get('userOff'))) {
+        store.set('enabled', true)
+        void ensureMediaAccess('Dictation', ['microphone'])
+        retryExpansion()
+      }
+      if (JSON.stringify(addon) !== before) {
+        for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
+        if (beforeState !== addon.state || wasUsable !== viaAddon()) applyWatcher()
+        settingsChanged()
+        if (settings().enabled) getPill()
+      }
+    })
   })().finally(() => {
     addonRefresh = null
   })
@@ -184,7 +194,7 @@ function settings(): DictationSettings {
     hasKey: key,
     ownKey: hasKey(),
     viaAddon: viaAddon(),
-    holdKey: store.get('holdKey'),
+    holdKey: normalizeHoldKey(store.get('holdKey'), process.platform) ?? holdKeyFromCode(isMac ? 63 : 163, process.platform)!,
     model,
     cleanup: store.get('tidy'),
     wordCount: parseMyWords(store.get('words')).hints.length,
@@ -208,7 +218,7 @@ async function keyHint(holdKey: DictationHoldKey): Promise<string | undefined> {
     ? (apps as Array<{ name?: unknown }>).map((a) => (typeof a.name === 'string' ? a.name : '')).find((n) => DICTATION_APPS.test(n))
     : undefined
   if (other) hints.push(`${other} is running and may use the same key. If both react, pick another key here or in ${other}.`)
-  if (holdKey === 'fn') {
+  if (normalizeHoldKey(holdKey, process.platform)?.code === 63) {
     // 0 = Do Nothing; missing or anything else means macOS also acts on fn (emoji, input source, its own dictation)
     const fnAction = await new Promise<string>((resolve) =>
       execFile('defaults', ['read', 'com.apple.HIToolbox', 'AppleFnUsageType'], { timeout: 2000 }, (err, out) => resolve(err ? '' : String(out).trim()))
@@ -219,7 +229,6 @@ async function keyHint(holdKey: DictationHoldKey): Promise<string | undefined> {
 }
 
 async function settingsWithHint(): Promise<DictationSettings> {
-  await refreshAddon()
   const s = settings()
   return s.enabled ? { ...s, hint: await keyHint(s.holdKey) } : s
 }
@@ -227,7 +236,7 @@ async function settingsWithHint(): Promise<DictationSettings> {
 /** Holding the key dictates only while dictation is on (the key is still watched for SnapGrid's double tap). */
 function applyWatcher(): void {
   const s = settings()
-  setHoldKey(s.holdKey, s.enabled)
+  setHoldKey(s.holdKey as NativeHoldKey, s.enabled)
 }
 
 // ─── the pill ────────────────────────────────────────────────────────────────
@@ -537,6 +546,7 @@ async function saveKey(key: unknown): Promise<{ ok: boolean; error?: string; set
   if (!storeCredential(CRED_TOOL, CRED_TYPE, k)) return { ok: false, error: 'failed', settings: settings() }
   // Saving a key turns dictation on: that's why someone adds it
   store.set('enabled', true)
+  store.set('userOff', false)
   void ensureMediaAccess('Dictation', ['microphone'])
   retryExpansion()
   applyWatcher()
@@ -585,6 +595,49 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
   // Settings and paying: the Dictation tool in the panel (and the launcher's own pages)
   const fromUi = (e: Electron.IpcMainInvokeEvent): boolean => e.sender === getLauncherContents() || e.sender === getPanel()?.webContents
 
+  const serialised = <A extends unknown[]>(channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...args: A) => unknown): void =>
+    h(channel, (e, ...args) => {
+      // Fetch outside the queue: applying the answer also uses this queue.
+      if (channel === IPC_INVOKE.DICTATION_SETTINGS) void refreshAddon()
+      return settingsQueue(() => fn(e, ...(args as A)))
+    })
+
+  let stopCapture: (() => void) | undefined
+  h(IPC_INVOKE.DICTATION_RECORD_KEY, (e, start: unknown) => {
+    if (!fromUi(e)) return null
+    stopCapture?.()
+    if (start !== true) return null
+    return new Promise<NativeHoldKey | 'rejected' | null>((resolve) => {
+      const sender = e.sender
+      const owner = BrowserWindow.fromWebContents(sender)
+      let finished = false
+      const finish = (value: NativeHoldKey | 'rejected' | null): void => {
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        off()
+        owner?.removeListener('blur', cancelCapture)
+        owner?.removeListener('hide', cancelCapture)
+        sender.removeListener('destroyed', cancelCapture)
+        sender.removeListener('render-process-gone', cancelCapture)
+        setHoldKeyCapture(false)
+        stopCapture = undefined
+        resolve(value)
+      }
+      const cancelCapture = (): void => finish(null)
+      const off = onHoldKeyRecorded((code) => finish(code === (isMac ? 53 : 27) ? null : holdKeyFromCode(code, process.platform) ?? 'rejected'))
+      const timer = setTimeout(cancelCapture, 30_000)
+      stopCapture = cancelCapture
+      owner?.once('blur', cancelCapture)
+      owner?.once('hide', cancelCapture)
+      sender.once('destroyed', cancelCapture)
+      sender.once('render-process-gone', cancelCapture)
+      cancel()
+      retryExpansion()
+      setHoldKeyCapture(true)
+    })
+  })
+
   h(IPC_INVOKE.DICTATION_READY, (e, m?: { micMs?: number }) => {
     // The pill reports how long the microphone took to open after the key went down
     if (fromPill(e) && m && typeof m.micMs === 'number') console.log(`[Dictation] microphone open ${Math.round(m.micMs)} ms after key-down`)
@@ -614,7 +667,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     return account
   })
   h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromUi(e) ? openDictationCheckout(amount) : false)
-  h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
+  serialised(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_PERMISSIONS, () => permissions())
   h(IPC_INVOKE.DICTATION_ALLOW, (e) => (fromUi(e) ? allowNext() : permissions()))
   // "Try again" on the Dictation page: give the app underneath the keyboard back, then type into it
@@ -624,16 +677,19 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     await new Promise((r) => setTimeout(r, 400))
     return retryDictation()
   })
-  h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
+  serialised(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromUi(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
-      store.set('enabled', value)
+      const choice = toggleChoice(value)
+      store.set('enabled', choice.enabled)
+      store.set('userOff', choice.userOff)
       if (value) {
         void ensureMediaAccess('Dictation', ['microphone'])
         retryExpansion()
       }
-    } else if (key === 'holdKey' && typeof value === 'string' && (isMac ? MAC_KEYS : WIN_KEYS).includes(value as DictationHoldKey)) {
-      store.set('holdKey', value as DictationHoldKey)
+    } else if (key === 'holdKey') {
+      const chosen = normalizeHoldKey(value, process.platform)
+      if (chosen) store.set('holdKey', chosen)
     } else if (key === 'cleanup' && typeof value === 'boolean') {
       store.set('tidy', value)
     }
@@ -642,15 +698,15 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     settingsChanged()
     return settingsWithHint()
   })
-  h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromUi(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
+  serialised(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromUi(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
   h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromUi(e) ? store.get('words') : ''))
-  h(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
+  serialised(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
     if (!fromUi(e) || typeof text !== 'string') return settings()
     store.set('words', text.slice(0, 20_000))
     settingsChanged()
     return settings()
   })
-  h(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
+  serialised(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
     if (!fromUi(e)) return settings()
     deleteCredential(CRED_TOOL, CRED_TYPE)
     // With the add-on, dictation carries on without their own key
@@ -665,6 +721,8 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   if (!app.isPackaged) allowServerOverride()
   // Development screenshots only: a tiny kept clip (too short to send anywhere, so trying it again ends as "Didn't hear anything")
   if (!app.isPackaged && process.env['PEAKFLOW_DICTATION_KEPT_DEMO'] === '1') keepClip({ buf: new ArrayBuffer(10), mime: 'audio/webm', durationMs: 12_000, ctx: {}, at: Date.now() })
+  const migrated = normalizeHoldKey(store.get('holdKey'), process.platform)
+  if (migrated) store.set('holdKey', migrated)
   registerIpc(getLauncherContents)
   onHoldKey((e) => {
     if (e === 'down') onDown()

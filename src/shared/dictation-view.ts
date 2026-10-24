@@ -36,7 +36,7 @@ export function holdKeys(mac: boolean): Array<[DictationHoldKey, string]> {
 }
 
 export function holdKeyName(key: DictationHoldKey, mac: boolean): string {
-  return holdKeys(mac).find(([k]) => k === key)?.[1] ?? key
+  return typeof key === 'object' ? key.label : holdKeys(mac).find(([k]) => k === key)?.[1] ?? key
 }
 
 /** "Hold fn, talk, let go" */
