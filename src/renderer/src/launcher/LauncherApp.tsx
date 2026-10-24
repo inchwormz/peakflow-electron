@@ -22,7 +22,7 @@ import { Glyph } from './glyphs'
 import '../panel/panel.css'
 import './launcher.css'
 import { DictationAccountRow } from './DictationAccountRow'
-import { settingsStamps } from './dictation-refresh'
+import { newestOnly } from './dictation-refresh'
 
 type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup' | 'words'
 
@@ -865,34 +865,28 @@ function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  // Main holds the truth: a change's answer that a newer reload already overtook is replaced by one fresh reload (rules: dictation-refresh.ts)
-  const claim = useRef(settingsStamps()).current
-  const take = (kind: 'reload' | 'mutate', call: Promise<DictationSettings>): void => {
-    const land = claim[kind]()
-    void call.then((value) => {
-      const verdict = land()
-      if (verdict === 'apply') setD(value)
-      else if (verdict === 'reload') load()
-    })
+  // One counter for every request (reload, toggle, save, remove). Main answers them in the order they were made, so the latest-started answer is also the freshest snapshot; older ones are dropped
+  const claim = useRef(newestOnly()).current
+  const take = (call: Promise<DictationSettings>): void => {
+    const current = claim()
+    void call.then((value) => { if (current()) setD(value) })
   }
-  const load = (): void => take('reload', invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS))
+  const load = (): void => take(invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS))
   useEffect(() => {
     load()
     // A top-up (or a used-up balance) changes whether dictation runs on the add-on
     const off = window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, load)
-    return () => { off(); claim.stop() }
+    return () => { off(); claim() }
   }, [])
   if (!d) return null
-  const set = (k: string, v: unknown): void => take('mutate', invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v))
+  const set = (k: string, v: unknown): void => take(invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v))
   const save = async (): Promise<void> => {
     setSaving(true)
     setErr('')
-    const land = claim.mutate()
+    const current = claim()
     const r = await invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
     setSaving(false)
-    const verdict = land()
-    if (verdict === 'apply') setD(r.settings)
-    else if (verdict === 'reload') load()
+    if (current()) setD(r.settings)
     if (r.ok) setKey('')
     else setErr(KEY_ERRORS[r.error ?? 'failed'] ?? KEY_ERRORS.failed)
   }
@@ -960,7 +954,7 @@ function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean
             <div className="lbl">OpenAI key</div>
             <div className="sub">Saved encrypted on this computer</div>
           </div>
-          <button className="btn" onClick={() => take('mutate', invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY))}>Remove</button>
+          <button className="btn" onClick={() => take(invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY))}>Remove</button>
         </div>
       )}
     </>

@@ -27,6 +27,7 @@ import { saveClipboard, restoreClipboard } from '../launcher/selection'
 import { simulateCtrlV } from '../native/keyboard'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
+import { serial } from './serial'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
 import { addonChanged, allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
@@ -460,6 +461,10 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
   const h = ipcMain.handle.bind(ipcMain)
   const fromPill = (e: Electron.IpcMainInvokeEvent): boolean => !!pill && !pill.isDestroyed() && e.sender === pill.webContents
   const fromLauncher = (e: Electron.IpcMainInvokeEvent): boolean => e.sender === getLauncherContents()
+  // Everything that answers with the settings runs one at a time, so each answer is a snapshot taken after every earlier request finished
+  const queue = serial()
+  const serialised = <A extends unknown[]>(channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...args: A) => unknown): void =>
+    h(channel, (e, ...args) => queue(() => fn(e, ...(args as A))))
 
   h(IPC_INVOKE.DICTATION_READY, (e, m?: { micMs?: number }) => {
     // The pill reports how long the microphone took to open after the key went down
@@ -484,8 +489,8 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     return account
   })
   h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromLauncher(e) ? openDictationCheckout(amount) : false)
-  h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
-  h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
+  serialised(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
+  serialised(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromLauncher(e)) return settings()
     if (key === 'enabled' && typeof value === 'boolean') {
       store.set('enabled', value)
@@ -502,14 +507,14 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     if (settings().enabled) getPill()
     return settingsWithHint()
   })
-  h(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromLauncher(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
+  serialised(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromLauncher(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
   h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromLauncher(e) ? store.get('words') : ''))
-  h(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
+  serialised(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
     if (!fromLauncher(e) || typeof text !== 'string') return settings()
     store.set('words', text.slice(0, 20_000))
     return settings()
   })
-  h(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
+  serialised(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
     if (!fromLauncher(e)) return settings()
     deleteCredential(CRED_TOOL, CRED_TYPE)
     // With the add-on, dictation carries on without their own key

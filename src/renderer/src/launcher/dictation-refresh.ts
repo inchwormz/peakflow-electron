@@ -7,39 +7,6 @@ export function newestOnly(): () => () => boolean {
   }
 }
 
-export type Verdict = 'apply' | 'drop' | 'reload'
-
-/**
- * Stamps for the settings rows. Main holds the truth, so the screen must end on a snapshot taken after every change finished.
- * - A reload's answer is dropped when a newer reload exists or a change started after it; otherwise it lands and covers every change that started before it.
- * - A change's answer is dropped when a later change exists; if a reload that started after it has already landed, the answer is stale: 'reload' asks for one fresh snapshot; otherwise it lands.
- */
-export function settingsStamps(): { reload: () => () => Verdict; mutate: () => () => Verdict; stop: () => void } {
-  let reloads = 0
-  let mutations = 0
-  let covered = 0 // changes numbered up to this have been followed by a reload that landed
-  let stopped = false
-  return {
-    reload: () => {
-      const r = ++reloads
-      const m = mutations
-      return () => {
-        if (stopped || r !== reloads || m !== mutations) return 'drop'
-        covered = Math.max(covered, m)
-        return 'apply'
-      }
-    },
-    mutate: () => {
-      const m = ++mutations
-      return () => {
-        if (stopped || m !== mutations) return 'drop'
-        return covered >= m ? 'reload' : 'apply'
-      }
-    },
-    stop: () => { stopped = true }
-  }
-}
-
 export interface AccountWatchDeps<T> {
   fetch: () => Promise<T>
   onValue: (value: T) => void
