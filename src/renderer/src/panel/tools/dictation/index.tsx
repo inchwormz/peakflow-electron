@@ -28,7 +28,7 @@ import type { PanelToolModule } from '../../types'
 import { invoke, isMac, useInvoke, useIpcEvent, usePanelVisible } from '../../hooks'
 import { Banner, Btn, Gap, Grp, Note, Primary, Row, Seg, Toggle } from '../../kit'
 import { useNav } from '../../nav'
-import { PermissionNotice } from '../../permission'
+import { PermissionNotice, openPermission } from '../../permission'
 import { guideCopy } from '@shared/mac-permissions'
 
 // ─── data ────────────────────────────────────────────────────────────────────
@@ -86,6 +86,11 @@ function useDictation(): {
     const t = setInterval(reloadPerms, 2500)
     return () => clearInterval(t)
   }, [missing, visible, reloadPerms])
+  // Back from System Settings: check at once, so the warning clears without waiting for the poll
+  useEffect(() => {
+    window.addEventListener('focus', reloadPerms)
+    return () => window.removeEventListener('focus', reloadPerms)
+  }, [reloadPerms])
   return { s, takeS, checkoutOpened, account, perms, setPerms }
 }
 
@@ -143,6 +148,20 @@ function Main(): React.JSX.Element {
             Allow
           </Btn>
         </>
+      ) : missing === 'accessibility' && s.enabled ? (
+        // Dictation is on but the hold key can't be heard: a visible warning with Open settings
+        <div className="pg pg-compact" style={{ marginBottom: 14 }}>
+          <Banner icon="shield">
+            <b>{perms?.accessibilityLost ? 'macOS forgot PeakFlow after the update' : 'Hold-to-talk needs Accessibility'}</b>
+            <br />
+            {perms?.accessibilityLost
+              ? 'Hold-to-talk and snippets stop until you fix it: select PeakFlow in Accessibility, click −, then + and add it again.'
+              : 'Hold-to-talk needs Accessibility. Open settings to switch PeakFlow on.'}
+          </Banner>
+          <Btn primary block style={{ marginTop: 8 }} onClick={() => openPermission('accessibility')}>
+            Open settings
+          </Btn>
+        </div>
       ) : missing ? (
         // The same notice as SnapGrid and FocusDim: what happened (including "macOS forgot PeakFlow
         // after the update"), Show me how (the step-by-step guide) and Open Settings

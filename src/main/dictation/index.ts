@@ -25,7 +25,7 @@ import { SystemWindowId, DICTATION_PAGE } from '@shared/tool-ids'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationHoldKey, DictationSettings, DictationState } from '@shared/launcher/types'
 import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
-import { ensureMediaAccess, checkAccessibility, openPermissionPane, watchForFix } from '../services/permissions-darwin'
+import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
 import { onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
@@ -612,6 +612,11 @@ async function saveKey(key: unknown): Promise<{ ok: boolean; error?: string; set
 
 // ─── permissions (the Dictation tool's Allow button) ──────────────────────────
 
+/** Dictation is switched on (the hold key needs Accessibility only when it is). */
+export function dictationOn(): boolean {
+  return store.get('enabled') === true
+}
+
 /** Microphone and Accessibility on a Mac; everything is allowed elsewhere. */
 function permissions(): DictationPermissions {
   if (!isMac) return { microphone: 'granted', accessibility: true }
@@ -622,7 +627,8 @@ function permissions(): DictationPermissions {
   }
   const mic = systemPreferences.getMediaAccessStatus('microphone')
   const known: MediaStatus[] = ['granted', 'denied', 'not-determined', 'restricted']
-  const p: DictationPermissions = { microphone: known.includes(mic as MediaStatus) ? (mic as MediaStatus) : 'unknown', accessibility: checkAccessibility() }
+  const ax = permissionStatus('accessibility')
+  const p: DictationPermissions = { microphone: known.includes(mic as MediaStatus) ? (mic as MediaStatus) : 'unknown', accessibility: ax.granted, accessibilityLost: ax.lost }
   // Permission granted since the key watcher started without it: restart it now
   if (p.accessibility && store.get('enabled') && !isExpansionActive()) retryExpansion()
   return p

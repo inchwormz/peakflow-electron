@@ -18,6 +18,7 @@
 import { app, systemPreferences, dialog, shell } from 'electron'
 import Store from 'electron-store'
 import { permissionAdvice, PERMISSION_LABEL, type MacPermission, type PermissionStatus } from '@shared/mac-permissions'
+import { accessibilityPrompt } from '@shared/accessibility-prompt'
 
 const isMac = process.platform === 'darwin'
 
@@ -164,13 +165,14 @@ export function appLocation(): 'applications' | 'downloads' | 'disk-image' | 'el
  * The panel page to open at launch instead of the last tool, or null:
  * the set-up page on the first launch on a Mac, and once per version when a
  * permission was lost or PeakFlow runs from outside Applications.
+ * featuresOn: a feature that needs Accessibility is on (dictation, snippets).
  * Replaces the old dialog, which took focus and closed the panel behind it.
  */
-export function macStartupRoute(): string | null {
+export function macStartupRoute(featuresOn = true): string | null {
   if (!isMac || !onboardingStore) return null
   const firstRun = !onboardingStore.get('firstRunShown')
   // Read before permissionStatus() records anything
-  const neverRecorded = !(onboardingStore.get('everGranted') ?? {}).accessibility
+  const everBefore = !!(onboardingStore.get('everGranted') ?? {}).accessibility
   const waiting = { ...(onboardingStore.get('awaitingFix') ?? {}) }
   const ax = permissionStatus('accessibility')
   // Any permission seen off that works now (fixed while PeakFlow was closed)
@@ -190,8 +192,8 @@ export function macStartupRoute(): string | null {
     console.log(`[Permissions] ${fixedWhileClosed.join(', ')} works again: showing the set-up page`)
     return 'app/setup'
   }
-  // An install from before this release that has no Accessibility now: most likely an update reset it
-  const likelyLost = ax.lost || (!ax.granted && neverRecorded)
+  // Accessibility missing while a feature needs it: an update reset it (granted before), or an install from before this release (no record)
+  const likelyLost = accessibilityPrompt({ trusted: ax.granted, everGranted: everBefore, featuresOn }) !== 'none'
   const misplaced = appLocation() !== 'applications'
   if ((likelyLost || misplaced) && onboardingStore.get('setupShownFor') !== version) {
     onboardingStore.set('setupShownFor', version)

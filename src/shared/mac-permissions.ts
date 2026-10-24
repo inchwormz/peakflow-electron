@@ -97,7 +97,7 @@ export function guideCopy(kind: MacPermission, lost: boolean): GuideCopy {
     return {
       title: lost ? 'macOS forgot PeakFlow after the update' : 'Turn on Accessibility for PeakFlow',
       intro: lost
-        ? 'The switch in System Settings can still look on, but it no longer works for this version. Remove PeakFlow and add it again. You do this once.'
+        ? 'Your Accessibility switch may still show ON, but macOS no longer applies it to this version. In Accessibility, select PeakFlow, click −, then click + and add PeakFlow from Applications again. Dictation and shortcuts start working straight away.'
         : 'PeakFlow needs Accessibility to paste, move windows and see which window is in front.',
       steps: [
         {

@@ -149,7 +149,7 @@ function onLine(line: string): void {
     const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number }
     if (ev.e === 'ready') {
       active = ev.trusted !== false
-      if (!active) console.warn('[Launcher] Snippet expansion needs the Accessibility permission')
+      if (!active) console.warn('[Launcher] Hold key and snippets need the Accessibility permission (not trusted)')
       else {
         sendSnippets()
         sendHold()
@@ -355,10 +355,22 @@ try {
 [PfKeyWatch]::Run()
 `
 
+/** macOS: retry until Accessibility is trusted, so the watcher starts once it is switched on (no reopen needed). */
+let trustRetry: ReturnType<typeof setTimeout> | null = null
+const TRUST_RETRY_MS = 3000
+
+function scheduleTrustRetry(): void {
+  if (trustRetry || !wanted) return
+  trustRetry = setTimeout(() => {
+    trustRetry = null
+    if (wanted && !child) start()
+  }, TRUST_RETRY_MS)
+}
+
 function start(): void {
   if (child || !wanted) return
   if (process.platform === 'darwin') {
-    if (!checkAccessibility()) return // started on the next open once permission is granted
+    if (!checkAccessibility()) { scheduleTrustRetry(); return } // starts once permission is granted
     const bin = getMacHelperPath()
     if (!existsSync(bin)) return
     child = spawn(bin, ['keywatch'], { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -416,6 +428,7 @@ export function retryExpansion(): void {
 
 export function stopExpansion(keepWanted = false): void {
   if (!keepWanted) wanted = false
+  if (!wanted && trustRetry) { clearTimeout(trustRetry); trustRetry = null }
   const c = child
   child = null
   active = false
