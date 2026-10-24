@@ -785,7 +785,8 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   onHoldKey((e) => {
     if (e === 'down') onDown()
     else if (e === 'up') onUp()
-    else cancel()
+    // A press ignored while busy owns no recording and must not cancel the pending clip.
+    else if (recording) cancel()
   })
   applyWatcher()
   // Load the pill early when dictation is on, so the first hold records straight away
