@@ -865,14 +865,18 @@ function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  // A reload's answer is dropped if a newer reload or any change (toggle, save, remove) started after it; a change's answer only yields to a later change
+  // Main holds the truth: a change's answer that a newer reload already overtook is replaced by one fresh reload (rules: dictation-refresh.ts)
   const claim = useRef(settingsStamps()).current
   const take = (kind: 'reload' | 'mutate', call: Promise<DictationSettings>): void => {
-    const current = claim[kind]()
-    void call.then((value) => { if (current()) setD(value) })
+    const land = claim[kind]()
+    void call.then((value) => {
+      const verdict = land()
+      if (verdict === 'apply') setD(value)
+      else if (verdict === 'reload') load()
+    })
   }
+  const load = (): void => take('reload', invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS))
   useEffect(() => {
-    const load = (): void => take('reload', invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS))
     load()
     // A top-up (or a used-up balance) changes whether dictation runs on the add-on
     const off = window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, load)
@@ -883,10 +887,12 @@ function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean
   const save = async (): Promise<void> => {
     setSaving(true)
     setErr('')
-    const current = claim.mutate()
+    const land = claim.mutate()
     const r = await invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
     setSaving(false)
-    if (current()) setD(r.settings)
+    const verdict = land()
+    if (verdict === 'apply') setD(r.settings)
+    else if (verdict === 'reload') load()
     if (r.ok) setKey('')
     else setErr(KEY_ERRORS[r.error ?? 'failed'] ?? KEY_ERRORS.failed)
   }

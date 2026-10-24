@@ -140,58 +140,94 @@ test('[V3] stopping removes every listener and pending timer, and drops answers 
   assert.deepEqual(t.values, [])
 })
 
+/** Mirrors the settings rows: every landing goes through the verdict; 'reload' starts one fresh snapshot, which the test answers by hand */
 function settingsRig() {
   const { settingsStamps } = load()
   const stamps = settingsStamps()
   let shown = 'initial'
-  const apply = (ok: () => boolean, v: string): void => { if (ok()) shown = v }
-  return { stamps, apply, shown: () => shown }
+  let applies = 0
+  const extra: Array<(value: string) => void> = []
+  const land = (land: () => string, value: string): void => {
+    const verdict = land()
+    if (verdict === 'apply') { shown = value; applies++ }
+    else if (verdict === 'reload') {
+      const fresh = stamps.reload()
+      extra.push((v) => { if (fresh() === 'apply') { shown = v; applies++ } })
+    }
+  }
+  return { stamps, land, extra, shown: () => shown, applies: () => applies }
 }
 
-test('[V3] settings: a reload that started before a toggle cannot restore the old value', () => {
+test('[V3] settings: toggle, then a newer reload answers, then the toggle answers late: ends on a post-toggle reload', () => {
   const t = settingsRig()
-  const reload = t.stamps.reload()
   const toggle = t.stamps.mutate()
-  t.apply(toggle, 'Off')
-  t.apply(reload, 'On')
-  assert.equal(t.shown(), 'Off')
+  const reload = t.stamps.reload()
+  t.land(reload, 'reload: unavailable')
+  assert.equal(t.shown(), 'reload: unavailable')
+  t.land(toggle, 'toggle: stale On')
+  assert.equal(t.shown(), 'reload: unavailable')
+  assert.equal(t.extra.length, 1)
+  t.extra[0]('fresh after toggle')
+  assert.equal(t.shown(), 'fresh after toggle')
 })
 
-test('[V3] settings: a reload that starts while a key save is checking cannot drop the save, even answering first', () => {
+test('[V3] settings: save, then a reload answers first, then the save answers: the screen ends showing the key', () => {
   const t = settingsRig()
   const save = t.stamps.mutate()
   const reload = t.stamps.reload()
-  t.apply(reload, 'no key yet')
-  t.apply(save, 'key saved')
-  assert.equal(t.shown(), 'key saved')
+  t.land(reload, 'no key yet')
+  t.land(save, 'key saved')
+  t.extra.forEach((answer) => answer('key saved (fresh)'))
+  assert.equal(t.shown(), 'key saved (fresh)')
 })
 
-test('[V3] settings: a reload that starts after a toggle cannot drop the toggle either', () => {
+test('[V3] settings: while a newer reload is still in flight the mutation lands, then the reload lands', () => {
   const t = settingsRig()
   const toggle = t.stamps.mutate()
   const reload = t.stamps.reload()
-  t.apply(reload, 'On')
-  t.apply(toggle, 'Off')
-  assert.equal(t.shown(), 'Off')
+  t.land(toggle, 'toggle')
+  assert.equal(t.shown(), 'toggle')
+  t.land(reload, 'reload after toggle')
+  assert.equal(t.shown(), 'reload after toggle')
+  assert.equal(t.extra.length, 0)
 })
 
-test('[V3] settings: only a later mutation supersedes a mutation; a reload after a mutation still lands when it answers last', () => {
+test('[V3] settings: a plain toggle applies once and asks for no extra reload', () => {
   const t = settingsRig()
+  t.land(t.stamps.mutate(), 'Off')
+  assert.equal(t.shown(), 'Off')
+  assert.equal(t.applies(), 1)
+  assert.equal(t.extra.length, 0)
+})
+
+test('[V3] settings: a reload that started before a mutation never lands over it; only a later mutation supersedes a mutation', () => {
+  const t = settingsRig()
+  const reload = t.stamps.reload()
   const first = t.stamps.mutate()
   const second = t.stamps.mutate()
-  t.apply(second, 'second')
-  t.apply(first, 'first')
+  t.land(second, 'second')
+  t.land(first, 'first')
+  t.land(reload, 'old reload')
   assert.equal(t.shown(), 'second')
+  assert.equal(t.extra.length, 0)
+})
+
+test('[V3] settings: stop during the extra reload lands nothing', () => {
+  const t = settingsRig()
+  const toggle = t.stamps.mutate()
   const reload = t.stamps.reload()
-  t.apply(reload, 'fresh')
-  assert.equal(t.shown(), 'fresh')
+  t.land(reload, 'reload')
+  t.land(toggle, 'stale')
+  t.stamps.stop()
+  t.extra[0]('late')
+  assert.equal(t.shown(), 'reload')
 })
 
 test('[V3] settings: after stop nothing lands', () => {
   const t = settingsRig()
   const reload = t.stamps.reload()
   t.stamps.stop()
-  t.apply(reload, 'late')
+  t.land(reload, 'late')
   assert.equal(t.shown(), 'initial')
 })
 
@@ -201,6 +237,7 @@ test('[V3] the settings rows and the balance row use these units', () => {
   assert.ok(rows.includes('settingsStamps()'))
   // reload, set and remove go through take(); save key and unmount stamp directly
   assert.equal((rows.match(/take\('(reload|mutate)', invoke/g) ?? []).length, 3)
+  assert.ok(rows.includes("verdict === 'reload'"))
   assert.equal((rows.match(/claim\.(mutate|stop)\(\)/g) ?? []).length, 2)
   const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
   assert.ok(row.includes('watchAccount<DictationAccount>('))
