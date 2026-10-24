@@ -111,51 +111,55 @@ func getActiveWindow() -> WindowInfo? {
     // Skip system apps
     if ignoredBundleIds.contains(bundleId) { return nil }
 
-    // Try Accessibility API for focused window bounds (most accurate)
+    // Try the main window if focus lands on a tooltip or status bubble.
     let appElement = AXUIElementCreateApplication(pid)
-    var focusedWindow: AnyObject?
-    let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindow)
+    for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+        var windowRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(appElement, attribute as CFString, &windowRef) == .success,
+              let windowRef = windowRef, CFGetTypeID(windowRef) == AXUIElementGetTypeID() else { continue }
+        let window = windowRef as! AXUIElement
 
-    guard result == .success, let window = focusedWindow else {
-        // Fallback: use CGWindowList to find the frontmost window for this PID
-        return getWindowFromCGWindowList(pid: pid, bundleId: bundleId, appName: appName)
+        var role: AnyObject?
+        var subrole: AnyObject?
+        AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role)
+        AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole)
+
+        var position: AnyObject?
+        var size: AnyObject?
+        AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &position)
+        AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &size)
+        guard let posValue = position, let sizeValue = size,
+              CFGetTypeID(posValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else { continue }
+
+        var point = CGPoint.zero
+        var cgSize = CGSize.zero
+        guard AXValueGetValue(posValue as! AXValue, .cgPoint, &point),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &cgSize),
+              isAXFocusWindow(role: role as? String, subrole: subrole as? String,
+                              width: cgSize.width, height: cgSize.height) else { continue }
+
+        var titleValue: AnyObject?
+        AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
+        return WindowInfo(
+            pid: pid,
+            x: Double(point.x), y: Double(point.y), w: Double(cgSize.width), h: Double(cgSize.height),
+            title: (titleValue as? String) ?? "",
+            bundleId: bundleId,
+            appName: appName
+        )
     }
 
-    // Get position
-    var position: AnyObject?
-    AXUIElementCopyAttributeValue(window as! AXUIElement, kAXPositionAttribute as CFString, &position)
+    return getWindowFromCGWindowList(pid: pid, bundleId: bundleId, appName: appName)
+}
 
-    // Get size
-    var size: AnyObject?
-    AXUIElementCopyAttributeValue(window as! AXUIElement, kAXSizeAttribute as CFString, &size)
+// A real window must be at least 50pt in both dimensions; Chrome's link bubble is only 22pt tall.
+func isFocusWindow(width: CGFloat, height: CGFloat, alpha: CGFloat = 1) -> Bool {
+    return width >= 50 && height >= 50 && alpha > 0
+}
 
-    guard let posValue = position, let sizeValue = size else {
-        return getWindowFromCGWindowList(pid: pid, bundleId: bundleId, appName: appName)
-    }
-
-    var point = CGPoint.zero
-    var cgSize = CGSize.zero
-    AXValueGetValue(posValue as! AXValue, .cgPoint, &point)
-    AXValueGetValue(sizeValue as! AXValue, .cgSize, &cgSize)
-
-    // Skip tiny windows
-    if cgSize.width < 10 || cgSize.height < 10 { return nil }
-
-    // Get title
-    var titleValue: AnyObject?
-    AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &titleValue)
-    let title = (titleValue as? String) ?? ""
-
-    return WindowInfo(
-        pid: pid,
-        x: Double(point.x),
-        y: Double(point.y),
-        w: Double(cgSize.width),
-        h: Double(cgSize.height),
-        title: title,
-        bundleId: bundleId,
-        appName: appName
-    )
+func isAXFocusWindow(role: String?, subrole: String?, width: CGFloat, height: CGFloat) -> Bool {
+    return role == kAXWindowRole && subrole != kAXHelpTagRole && isFocusWindow(width: width, height: height)
 }
 
 /// Fallback: find the frontmost window for a PID using CGWindowList
@@ -164,6 +168,10 @@ private func getWindowFromCGWindowList(pid: Int32, bundleId: String, appName: St
         return nil
     }
 
+    return selectWindowFromCGWindowList(windowList, pid: pid, bundleId: bundleId, appName: appName)
+}
+
+func selectWindowFromCGWindowList(_ windowList: [[String: Any]], pid: Int32, bundleId: String, appName: String) -> WindowInfo? {
     for windowInfo in windowList {
         guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? Int32,
               ownerPID == pid,
@@ -173,7 +181,7 @@ private func getWindowFromCGWindowList(pid: Int32, bundleId: String, appName: St
             continue
         }
 
-        if w < 10 || h < 10 { continue }
+        if !isFocusWindow(width: w, height: h, alpha: windowInfo[kCGWindowAlpha as String] as? CGFloat ?? 1) { continue }
 
         // Skip windows at or above the status bar layer
         if let layer = windowInfo[kCGWindowLayer as String] as? Int, layer > 0 { continue }
@@ -211,8 +219,7 @@ func getAllVisibleWindows(filterPid: Int32? = nil) -> [WindowRect] {
             continue
         }
 
-        // Skip tiny windows
-        if w < 10 || h < 10 { continue }
+        if !isFocusWindow(width: w, height: h, alpha: windowInfo[kCGWindowAlpha as String] as? CGFloat ?? 1) { continue }
 
         // Skip system-level windows (menubar, dock, etc.)
         if let layer = windowInfo[kCGWindowLayer as String] as? Int, layer > 0 { continue }
@@ -307,7 +314,7 @@ func getWindowsForBundleId(_ targetBundleId: String) -> [WindowRect] {
             continue
         }
 
-        if w < 10 || h < 10 { continue }
+        if !isFocusWindow(width: w, height: h, alpha: windowInfo[kCGWindowAlpha as String] as? CGFloat ?? 1) { continue }
         if let layer = windowInfo[kCGWindowLayer as String] as? Int, layer > 0 { continue }
 
         let title = windowInfo[kCGWindowName as String] as? String ?? ""
