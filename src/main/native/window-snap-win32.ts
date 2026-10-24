@@ -202,7 +202,8 @@ export async function setWindowFrame(w: SnapWindow, target: SnapRect): Promise<S
   }
 }
 
-export async function raiseWindow(w: SnapWindow): Promise<void> {
+/** `opts` is for macOS; on Windows raising never brings an app's other windows along. */
+export async function raiseWindow(w: SnapWindow, _opts: { activate?: boolean } = {}): Promise<void> {
   init()
   try {
     if (w.handle && fn.IsWindow(w.handle)) fn.SetForegroundWindow(w.handle)
