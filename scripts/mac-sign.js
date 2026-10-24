@@ -6,7 +6,8 @@
  *   2. PEAKFLOW_MAC_SIGN_IDENTITY: a stable self-signed code-signing certificate, e.g.
  *      "PeakFlow Code Signing" in the login keychain (docs/RELEASE-CHECKLIST.md);
  *      PEAKFLOW_MAC_SIGN_KEYCHAIN is optional and names a keychain if it is not in the search list;
- *   3. otherwise ad-hoc ("-"), with a loud warning.
+ *   3. otherwise the build fails, unless PEAKFLOW_MAC_ALLOW_ADHOC=1, which signs ad-hoc ("-")
+ *      with a loud warning (local tests only). PEAKFLOW_MAC_SIGN_IDENTITY set but empty is an error.
  *
  * Why a stable identity matters: macOS ties an Accessibility grant to the app's
  * designated requirement. Ad-hoc builds get a requirement that changes with every
@@ -52,11 +53,20 @@ function withHelperEntitlements(opts) {
   }
 }
 
-/** The identity to sign with: Developer ID from electron-builder, else PEAKFLOW_MAC_SIGN_IDENTITY, else ad-hoc. */
+/**
+ * The identity to sign with: Developer ID from electron-builder, else PEAKFLOW_MAC_SIGN_IDENTITY, else ad-hoc.
+ * Ad-hoc is only allowed with PEAKFLOW_MAC_ALLOW_ADHOC=1 (a local test build); a release with no identity fails.
+ * PEAKFLOW_MAC_SIGN_IDENTITY set but empty is always an error, so a blank variable can never fall through to ad-hoc.
+ */
 function resolveIdentity(opts, env = process.env) {
+  const raw = env.PEAKFLOW_MAC_SIGN_IDENTITY
+  if (raw !== undefined && raw.trim() === '') {
+    throw new Error('[mac-sign] PEAKFLOW_MAC_SIGN_IDENTITY is set but empty. Unset it, or set it to "PeakFlow Code Signing" (see docs/RELEASE-CHECKLIST.md)')
+  }
   if (opts.identity) return { identity: opts.identity, source: 'Developer ID (electron-builder)' }
-  if (env.PEAKFLOW_MAC_SIGN_IDENTITY) return { identity: env.PEAKFLOW_MAC_SIGN_IDENTITY, source: 'PEAKFLOW_MAC_SIGN_IDENTITY (self-signed)' }
-  return { identity: AD_HOC, source: 'ad-hoc' }
+  if (raw) return { identity: raw.trim(), source: 'PEAKFLOW_MAC_SIGN_IDENTITY (self-signed)' }
+  if (env.PEAKFLOW_MAC_ALLOW_ADHOC === '1') return { identity: AD_HOC, source: 'ad-hoc (PEAKFLOW_MAC_ALLOW_ADHOC=1)' }
+  throw new Error('[mac-sign] No signing identity: no Developer ID, and PEAKFLOW_MAC_SIGN_IDENTITY is not set. Release builds must use the stable certificate: PEAKFLOW_MAC_SIGN_IDENTITY="PeakFlow Code Signing" npm run build:mac (see docs/RELEASE-CHECKLIST.md). Ad-hoc is for local tests only (PEAKFLOW_MAC_ALLOW_ADHOC=1).')
 }
 
 /** codesign -dv prints `Identifier=...` on stderr. Returns the identifier line's value, or null. */
