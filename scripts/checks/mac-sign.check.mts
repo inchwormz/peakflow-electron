@@ -64,21 +64,51 @@ function fakeRun(identifiers: { app: string; helper: string }, failVerify = fals
   assert.ok(calls.some((c) => c[0] === '--verify' && c.includes('--strict')))
 }
 
-// 2. Self-signed identity: the Developer ID signer runs with the identity, runtime and entitlements
+// 2. Self-signed identity: plain codesign like the 2.1.1 build (no runtime, no timestamp, no app entitlements);
+//    the Developer ID signer is not used
 {
-  process.env.PEAKFLOW_MAC_SIGN_IDENTITY = 'PeakFlow Self'
-  process.env.PEAKFLOW_MAC_SIGN_KEYCHAIN = '/k/peakflow-codesign.keychain-db'
+  process.env.PEAKFLOW_MAC_SIGN_IDENTITY = 'PeakFlow Code Signing'
+  delete process.env.PEAKFLOW_MAC_SIGN_KEYCHAIN
+  const { run, calls } = fakeRun({ app: APP_IDENTIFIER, helper: HELPER_IDENTIFIER })
+  let signerCalled = 0
+  await macSign({ app, identity: undefined, optionsForFile }, { run, sign: async () => { signerCalled++ } })
+  assert.equal(signerCalled, 0, 'self-signed uses codesign directly')
+  assert.deepEqual(calls[0], ['--force', '--deep', '--sign', 'PeakFlow Code Signing', app])
+  const helperSign = calls.find((c) => c.includes('--identifier') && c.includes(HELPER_IDENTIFIER))!
+  assert.equal(helperSign[helperSign.indexOf('--entitlements') + 1], HELPER_ENTITLEMENTS)
+  assert.equal(helperSign[helperSign.indexOf('--sign') + 1], 'PeakFlow Code Signing')
+  assert.ok(!helperSign.includes('--options') && !helperSign.includes('--timestamp'), 'self-signed: no hardened runtime, no timestamp')
+  const appSign = calls.find((c) => c.includes(APP_IDENTIFIER) && c[c.length - 1] === app && c[0] === '--force' && !c.includes('--deep'))!
+  assert.equal(appSign[appSign.indexOf('--sign') + 1], 'PeakFlow Code Signing')
+  assert.ok(!appSign.includes('--options') && !appSign.includes('--timestamp'), 'self-signed app: no hardened runtime, no timestamp')
+  assert.ok(!appSign.includes('--entitlements'), 'self-signed app: no app entitlements, like 2.1.1')
+  assert.ok(calls.every((c) => !c.includes('--keychain')), 'no keychain flag when PEAKFLOW_MAC_SIGN_KEYCHAIN is unset')
+  delete process.env.PEAKFLOW_MAC_SIGN_IDENTITY
+}
+
+// 2b. Self-signed with a keychain: --keychain goes on every codesign call
+{
+  process.env.PEAKFLOW_MAC_SIGN_IDENTITY = 'PeakFlow Code Signing'
+  process.env.PEAKFLOW_MAC_SIGN_KEYCHAIN = '/k/login.keychain-db'
+  const { run, calls } = fakeRun({ app: APP_IDENTIFIER, helper: HELPER_IDENTIFIER })
+  await macSign({ app, identity: undefined, optionsForFile }, { run, sign: async () => { throw new Error('not used') } })
+  assert.deepEqual(calls[0], ['--force', '--deep', '--sign', 'PeakFlow Code Signing', '--keychain', '/k/login.keychain-db', app])
+  assert.ok(calls.filter((c) => c[0] === '--force' && c.includes('--sign')).every((c) => c.includes('--keychain')))
+  delete process.env.PEAKFLOW_MAC_SIGN_IDENTITY
+  delete process.env.PEAKFLOW_MAC_SIGN_KEYCHAIN
+}
+
+// 2c. Developer ID (electron-builder identity): the Developer ID signer runs with runtime, timestamp and entitlements
+{
   const { run, calls } = fakeRun({ app: APP_IDENTIFIER, helper: HELPER_IDENTIFIER })
   let seen: any = null
-  await macSign({ app, identity: undefined, optionsForFile }, { run, sign: async (o: any) => { seen = o } })
-  assert.equal(seen.identity, 'PeakFlow Self')
-  assert.equal(seen.keychain, '/k/peakflow-codesign.keychain-db')
+  await macSign({ app, identity: 'Developer ID Application: Test (TEAM)', optionsForFile }, { run, sign: async (o: any) => { seen = o } })
+  assert.equal(seen.identity, 'Developer ID Application: Test (TEAM)')
   assert.equal(seen.optionsForFile(helper).entitlements, HELPER_ENTITLEMENTS)
   const appSign = calls.find((c) => c[0] === '--force' && c.includes(APP_IDENTIFIER))!
   assert.ok(appSign.includes('--options') && appSign.includes('runtime'), 'hardened runtime kept')
+  assert.ok(appSign.includes('--timestamp'), 'timestamp kept')
   assert.equal(appSign[appSign.indexOf('--entitlements') + 1], main)
-  delete process.env.PEAKFLOW_MAC_SIGN_IDENTITY
-  delete process.env.PEAKFLOW_MAC_SIGN_KEYCHAIN
 }
 
 // 3. Wrong identifier after signing: the build fails

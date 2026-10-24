@@ -3,9 +3,9 @@
  *
  * Identity, in order:
  *   1. a Developer ID Application identity from electron-builder (opts.identity);
- *   2. PEAKFLOW_MAC_SIGN_IDENTITY: a stable self-signed code-signing certificate
- *      (scripts/mac/make-selfsigned-identity.sh), in the keychain named by
- *      PEAKFLOW_MAC_SIGN_KEYCHAIN if set;
+ *   2. PEAKFLOW_MAC_SIGN_IDENTITY: a stable self-signed code-signing certificate, e.g.
+ *      "PeakFlow Code Signing" in the login keychain (docs/RELEASE-CHECKLIST.md);
+ *      PEAKFLOW_MAC_SIGN_KEYCHAIN is optional and names a keychain if it is not in the search list;
  *   3. otherwise ad-hoc ("-"), with a loud warning.
  *
  * Why a stable identity matters: macOS ties an Accessibility grant to the app's
@@ -19,8 +19,12 @@
  * the bundle is sealed, and `codesign --verify --deep --strict` plus the
  * identifier check run. Any failure throws, so the build fails.
  *
- * Hardened runtime and entitlements apply only to signed builds with a real
- * identity. The ad-hoc build matches the 2.1.1 build that worked (no runtime flag).
+ * Hardened runtime, timestamp and app entitlements apply ONLY to the Developer ID
+ * path. The ad-hoc and self-signed paths both sign exactly like the 2.1.1 build that
+ * kept its Accessibility grant: plain codesign, no runtime flag, no timestamp. A
+ * self-signed certificate has no Team ID, so hardened-runtime library validation can
+ * refuse to load Electron's frameworks, and Apple's timestamp service only signs for
+ * Apple-issued certificates.
  */
 
 const path = require('path')
@@ -76,28 +80,31 @@ async function macSign(opts, deps = {}) {
   const run = deps.run ?? runCodesign
   const { identity, source } = resolveIdentity(opts)
   const adHoc = identity === AD_HOC
+  // Developer ID comes from electron-builder; everything else uses the plain 2.1.1 shape below
+  const developerId = !adHoc && Boolean(opts.identity)
   const keychain = process.env.PEAKFLOW_MAC_SIGN_KEYCHAIN
   const keychainArgs = keychain && !adHoc ? ['--keychain', keychain] : []
   const helperPath = path.join(opts.app, 'Contents', 'Resources', 'peakflow-helper')
 
   if (adHoc) {
-    console.warn('[mac-sign] WARNING: no signing identity. Building ad-hoc. macOS will forget the Accessibility grant after every update until a stable identity or Developer ID is used (see scripts/mac/make-selfsigned-identity.sh).')
+    console.warn('[mac-sign] WARNING: no signing identity. Building ad-hoc. macOS will forget the Accessibility grant after every update until the stable PeakFlow Code Signing certificate or Developer ID is used.')
   }
   console.log(`[mac-sign] Signing ${opts.app} with ${source}`)
 
-  if (adHoc) {
-    // Same as the 2.1.1 build that kept its grant: deep ad-hoc seal, no runtime flag
-    mustRun(run, ['--force', '--deep', '--sign', AD_HOC, opts.app], 'ad-hoc deep sign')
-  } else {
+  if (developerId) {
     const sign = deps.sign ?? require('app-builder-lib/out/codeSign/macCodeSign').sign
     await sign({ ...withHelperEntitlements(opts), identity, keychain: keychain || undefined })
+  } else {
+    // Ad-hoc or self-signed: deep seal with the identity, no runtime flag (matches the 2.1.1 build)
+    mustRun(run, ['--force', '--deep', '--sign', identity, ...keychainArgs, opts.app], `${adHoc ? 'ad-hoc' : 'self-signed'} deep sign`)
   }
 
-  const runtimeArgs = adHoc ? [] : ['--options', 'runtime', '--timestamp']
+  // Hardened runtime and timestamp: Developer ID only
+  const runtimeArgs = developerId ? ['--options', 'runtime', '--timestamp'] : []
   // Pin the helper's identifier, then the app's; the app seal is written last, over the helper
   mustRun(run, ['--force', '--sign', identity, '--identifier', HELPER_IDENTIFIER, ...runtimeArgs, ...keychainArgs, '--entitlements', HELPER_ENTITLEMENTS, helperPath], 'helper sign')
   const mainEntitlements = (opts.optionsForFile && opts.optionsForFile(opts.app)?.entitlements) || path.join(__dirname, '..', 'resources', 'entitlements.mac.plist')
-  const appEntitlements = adHoc ? [] : ['--entitlements', mainEntitlements]
+  const appEntitlements = developerId ? ['--entitlements', mainEntitlements] : []
   mustRun(run, ['--force', '--sign', identity, '--identifier', APP_IDENTIFIER, ...runtimeArgs, ...keychainArgs, ...appEntitlements, opts.app], 'app sign')
 
   mustRun(run, ['--verify', '--deep', '--strict', opts.app], 'codesign --verify --deep --strict')

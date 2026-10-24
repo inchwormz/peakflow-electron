@@ -5,6 +5,10 @@
 // build (newer than out/main/index.js), so a stale release/ app is never validated.
 // Ad-hoc signatures fail unless PEAKFLOW_MAC_ALLOW_ADHOC=1 (then a loud warning).
 // Developer ID signatures must also use the hardened runtime (flags include "runtime").
+// When PEAKFLOW_MAC_SIGN_IDENTITY is set (the stable self-signed certificate, e.g.
+// "PeakFlow Code Signing"), the app must be signed by that Authority, and its designated
+// requirement must pin the certificate leaf ("certificate leaf = H\"...\"", stable across
+// updates). The designated requirement is printed so the release owner can see it.
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -66,7 +70,7 @@ for (const app of apps) {
   const display = plistValue(app, 'CFBundleDisplayName')
   if (display !== null && display !== NAME) fail(`CFBundleDisplayName is "${display}", expected ${NAME}`)
 
-  const info = codesign(['-dv', '--verbose=2'], app)
+  const info = codesign(['-dv', '--verbose=4'], app)
   const id = /^Identifier=(.+)$/m.exec(info.output)?.[1]?.trim()
   const authority = /^Authority=(.+)$/m.exec(info.output)?.[1]?.trim() ?? null
   const flags = /flags=0x[0-9a-f]+\(([^)]*)\)/.exec(info.output)?.[1]?.split(',') ?? []
@@ -80,6 +84,20 @@ for (const app of apps) {
     if (authority) console.log(`mac-release-identity: ${app} Authority=${authority}`)
     if (authority?.startsWith('Developer ID Application') && !flags.includes('runtime')) {
       fail(`Developer ID build has no hardened runtime (flags "${flags.join(',')}", expected "runtime")`)
+    }
+    const stableName = process.env.PEAKFLOW_MAC_SIGN_IDENTITY
+    if (stableName) {
+      const lines = info.output.split('\n').map((l) => l.trim())
+      if (!lines.includes(`Authority=${stableName}`)) {
+        fail(`codesign shows no "Authority=${stableName}" (the stable certificate); Authority is "${authority ?? 'none'}"`)
+      }
+      const dr = codesign(['-d', '-r-'], app)
+      const drLine = dr.output.split('\n').find((l) => l.includes('designated =>'))?.replace(/^#\s*/, '').trim() ?? dr.output.trim()
+      if (dr.status !== 0) fail(`codesign -d -r- failed (exit ${dr.status})`)
+      else if (!dr.output.includes('certificate leaf = H"')) {
+        fail(`designated requirement does not pin the certificate leaf (no 'certificate leaf = H"'), so Accessibility would be forgotten after updates: ${drLine}`)
+      }
+      console.log(`mac-release-identity: ${app} designated requirement: ${drLine}`)
     }
   }
 
