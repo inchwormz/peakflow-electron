@@ -26,6 +26,7 @@ import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
+import { sendViaEmail } from './services/bug-report' // static: a relative require() is unresolved in the bundle
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
 import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools, ensureTrialExpiry } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
@@ -94,8 +95,7 @@ function checkCrashMarker(): void {
     })
 
     if (result.response === 0) {
-      const { sendViaEmail } = require('./services/bug-report')
-      sendViaEmail()
+      void sendViaEmail()
     }
   }, 2000)
 }

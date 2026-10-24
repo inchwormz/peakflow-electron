@@ -22,6 +22,7 @@ import { getConfig, setConfig } from './config-store'
 import { checkAccess } from '../security/access-check'
 import { withToolAccess } from '../security/access-guard'
 import type { FocusDimConfig } from '@shared/config-schemas'
+import { rebuildTray } from '../tray'
 import { getActiveWindow, getAllVisibleWindows, getWindowsForExeNames, getProcessExeName, clearPidExeCache, getVisibleAppList, raiseAppWindows, type WindowRect, type DisplayBounds } from '../native/active-window'
 
 // ─── Legacy color key → hex migration map ────────────────────────────────────
@@ -119,9 +120,9 @@ class FocusDimService {
         win.webContents.send(IPC_SEND.FOCUSDIM_STATE_CHANGED, state)
       }
     })
-    // Lazy-import to avoid circular dep (tray imports from windows, which imports services)
+    // rebuildTray is imported statically: a relative require() is left unresolved
+    // in the bundled main file and threw here, so the tray never updated
     try {
-      const { rebuildTray } = require('../tray')
       rebuildTray()
     } catch { /* tray not ready yet during init */ }
   }

@@ -16,6 +16,11 @@ import { isToolSupportedOn } from '@shared/platform-tools'
 import { ensureMediaAccess } from './services/permissions-darwin'
 import { getPanel, showPanel } from './panel'
 import { layoutMini } from './mini-window'
+// Static imports: electron-vite bundles main into one file and leaves a relative
+// require() unresolved, so it would throw in the built app (same fix as hotkeys.ts)
+import { getLiquidFocusService } from './services/liquidfocus'
+import { crashWrite } from './services/logger'
+import { sendViaEmail } from './services/bug-report'
 
 /** Cached app icon shared across all windows */
 let _appIcon: Electron.NativeImage | undefined
@@ -240,8 +245,6 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
     win.on('close', (e) => {
       if (appQuitting) return // let it close during app quit
       try {
-        // Lazy import to avoid circular dependency at module load time
-        const { getLiquidFocusService } = require('./services/liquidfocus')
         const state = getLiquidFocusService().getTimerState()
         if (state.status === 'running' || state.status === 'paused') {
           e.preventDefault()
@@ -290,7 +293,6 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
       if (win.isDestroyed()) return
 
       // Sync-write the freeze event to the log file
-      const { crashWrite } = require('./services/logger')
       crashWrite('FATAL', `Renderer frozen for 30s: ${toolId} — prompting user`)
 
       dialog.showMessageBox({
@@ -305,8 +307,7 @@ export function createToolWindow(toolId: WindowId, extraQuery?: Record<string, s
         if (result.response === 0 && !win.isDestroyed()) {
           // win.destroy() bypasses close interceptors (Dashboard hide, LiquidFocus hide)
           win.destroy()
-          const { sendViaEmail } = require('./services/bug-report')
-          sendViaEmail(toolId)
+          void sendViaEmail(toolId)
         }
       })
     }, 30_000)
