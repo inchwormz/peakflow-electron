@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs'
 import * as v from '../../src/shared/dictation-view.ts'
 
 const src = (p: string): string => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8')
-const four = [5, 10, 15, 20] as const
-const bal = { state: 'ok', balanceMicros: 4_070_000, minutesLeft: 900, disabled: false, blocked: null, amounts: [...four] } as const
+const offered = [5, 10, 20] as const
+const bal = { state: 'ok', balanceMicros: 4_070_000, minutesLeft: 900, disabled: false, blocked: null, amounts: [...offered] } as const
 const settings = { enabled: true, hasKey: true, ownKey: false, viaAddon: true, holdKey: 'fn', model: 'gpt-transcribe', cleanup: true, wordCount: 0, active: true } as const
 const granted = { microphone: 'granted', accessibility: true } as const
 
@@ -26,8 +26,8 @@ test('add-on off (hidden account) or no buy links: own key only, never a buy but
 })
 
 test('before the first purchase: Get dictation with the amount choice', () => {
-  const view = v.payView({ state: 'no_addon', amounts: [...four] })
-  assert.deepEqual(view, { kind: 'buy', amounts: [5, 10, 15, 20] })
+  const view = v.payView({ state: 'no_addon', amounts: [...offered] })
+  assert.deepEqual(view, { kind: 'buy', amounts: [5, 10, 20] })
   assert.equal(v.buyLabel(view, 5), 'Get dictation')
 })
 
@@ -36,7 +36,7 @@ test('[AM1 kept] one amount and no choice: Get dictation names the price', () =>
 })
 
 test('[AM2 kept] a chosen amount no longer offered falls back to the smallest offered one', () => {
-  assert.equal(v.pickAmount([5, 20], 15), 5)
+  assert.equal(v.pickAmount([5, 20], 10), 5)
   assert.equal(v.pickAmount([10, 20], 20), 20)
   assert.equal(v.pickAmount([10, 20], null), 10)
   assert.equal(v.pickAmount([], 5), undefined)
@@ -48,9 +48,9 @@ test('with a balance: the line shows dollars and about how long it lasts, and Ad
   if (view.kind !== 'balance') return
   assert.equal(view.line, 'US$4.07 left · about 15 hours')
   assert.equal(view.notice, null)
-  assert.deepEqual(view.amounts, [5, 10, 15, 20])
+  assert.deepEqual(view.amounts, [5, 10, 20])
   assert.equal(view.paused, false)
-  assert.equal(v.buyLabel(view, 15), 'Add US$15')
+  assert.equal(v.buyLabel(view, 10), 'Add US$10')
 })
 
 test('low balance: same Add choice, the line counts minutes under an hour', () => {
@@ -72,7 +72,7 @@ test('paused (empty, or a negative balance after a refund): notice, no balance l
     if (view.kind !== 'balance') continue
     assert.equal(view.line, null)
     assert.equal(view.notice, 'Dictation is paused. Top up to keep going.')
-    assert.deepEqual(view.amounts, [5, 10, 15, 20])
+    assert.deepEqual(view.amounts, [5, 10, 20])
     assert.equal(view.paused, true)
   }
 })

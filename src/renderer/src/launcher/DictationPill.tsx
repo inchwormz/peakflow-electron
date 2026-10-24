@@ -16,6 +16,8 @@ import { useEffect, useRef, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationState } from '@shared/launcher/types'
 import { invoke } from '../panel/hooks'
+// An external same-origin asset: the packaged CSP blocks data: worklet URLs.
+const captureWorkletUrl = './dictation-capture-worklet.js'
 
 const BARS = 19
 const BAR_W = 2.5
@@ -36,7 +38,7 @@ export function DictationPill(): React.JSX.Element {
   const phaseAt = useRef(0)
   const level = useRef(0)
   const canvas = useRef<HTMLCanvasElement>(null)
-  const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; an: AnalyserNode; chunks: Blob[] } | null>(null)
+  const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; an?: AnalyserNode; source?: MediaStreamAudioSourceNode; worklet?: AudioWorkletNode; chunks: Blob[]; sessionId?: number } | null>(null)
   const startId = useRef(0)
   // One audio graph for the level meter, kept between dictations (suspended when idle)
   const ctxRef = useRef<AudioContext | null>(null)
@@ -44,80 +46,133 @@ export function DictationPill(): React.JSX.Element {
   useEffect(() => {
     document.documentElement.style.background = 'transparent'
     document.body.style.background = 'transparent'
-    void invoke(IPC_INVOKE.DICTATION_READY)
-    // Ask for the device list once now (doesn't turn the mic on): the first real open is quicker
+    let disposed = false
+    let activeSessionId: number | undefined
+    // Warm the graph and processor without opening a microphone. In a preloaded
+    // hidden pill this work finishes before the first hold-key press.
+    const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext({ sampleRate: 24000 }))
+    const workletReady = ctx.audioWorklet.addModule(captureWorkletUrl)
+    void workletReady.catch(() => {}) // Timing is optional; MediaRecorder preserves the complete clip
+    void ctx.suspend().catch(() => {})
     void navigator.mediaDevices.enumerateDevices().catch(() => {})
 
-    const release = (): void => {
-      const r = rec.current
-      if (!r) return
-      r.stream.getTracks().forEach((t) => t.stop()) // the Mac's mic indicator goes off
-      void ctxRef.current?.suspend().catch(() => {})
-      rec.current = null
+    type Recording = NonNullable<typeof rec.current>
+    const closeGraph = (r: Recording): void => {
+      r.source?.disconnect()
+      r.worklet?.disconnect()
+      r.an?.disconnect()
+      if (!rec.current) void ctx.suspend().catch(() => {})
+    }
+    const release = (r: Recording): void => {
+      r.stream.getTracks().forEach((t) => t.stop())
+      if (rec.current === r) rec.current = null
     }
 
-    const start = async (opts: { at?: number; processing?: boolean }): Promise<void> => {
+    const start = async (opts: { at?: number; processing?: boolean; sessionId?: number }): Promise<void> => {
       const id = ++startId.current
+      activeSessionId = opts.sessionId
       const processing = opts.processing !== false
       let stream: MediaStream
       try {
-        // Mono speech at 16 kHz is all the model needs, and uploads faster
+        // This is the first asynchronous action on START: no network or worklet
+        // setup is allowed to postpone asking the device for audio.
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, sampleRate: { ideal: 16000 }, echoCancellation: processing, noiseSuppression: processing, autoGainControl: processing }
+          audio: { channelCount: 1, sampleRate: { ideal: 24000 }, echoCancellation: processing, noiseSuppression: processing, autoGainControl: processing }
         })
       } catch (err) {
+        if (id !== startId.current || disposed) return
         const name = (err as DOMException).name
-        void invoke(IPC_INVOKE.DICTATION_MIC_ERROR, name === 'NotAllowedError' ? 'denied' : name === 'NotFoundError' ? 'none' : 'failed')
+        void invoke(IPC_INVOKE.DICTATION_MIC_ERROR, name === 'NotAllowedError' ? 'denied' : name === 'NotFoundError' ? 'none' : 'failed', opts.sessionId)
         return
       }
-      // Let go before the mic opened
-      if (id !== startId.current) return stream.getTracks().forEach((t) => t.stop())
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
-      const mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32000 })
-      const chunks: Blob[] = []
-      mr.ondataavailable = (e) => e.data.size && chunks.push(e.data)
-      const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext())
-      void ctx.resume().catch(() => {})
-      const an = ctx.createAnalyser()
-      an.fftSize = 512
-      ctx.createMediaStreamSource(stream).connect(an)
-      rec.current = { mr, stream, an, chunks }
-      mr.start(250)
-      // How long the mic took to open after the key went down: anything said before this is lost
-      if (opts.at) void invoke(IPC_INVOKE.DICTATION_READY, { micMs: Date.now() - opts.at })
+      if (id !== startId.current || disposed) return stream.getTracks().forEach((t) => t.stop())
+      if (rec.current) {
+        const previous = rec.current
+        release(previous)
+        if (previous.mr.state !== 'inactive') previous.mr.stop()
+        closeGraph(previous)
+      }
+      try {
+        const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
+        const mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32000 })
+        const r: Recording = { mr, stream, chunks: [], sessionId: opts.sessionId }
+        mr.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data) }
+        rec.current = r
+        // Buffer audio immediately, before setting up the optional timing graph.
+        mr.start(250)
+        void ctx.resume().catch(() => {})
+        r.an = ctx.createAnalyser()
+        r.an.fftSize = 512
+        r.source = ctx.createMediaStreamSource(stream)
+        r.source.connect(r.an)
+        await workletReady
+        if (id !== startId.current || disposed || rec.current !== r) return
+        const worklet = new AudioWorkletNode(ctx, 'dictation-capture', { channelCount: 1, channelCountMode: 'explicit' })
+        r.worklet = worklet
+        worklet.port.onmessage = ({ data }: MessageEvent<{ firstSampleAt?: number }>) => {
+          if (data.firstSampleAt && opts.at) {
+            void invoke(IPC_INVOKE.DICTATION_READY, { micMs: Math.max(0, data.firstSampleAt - opts.at), sessionId: opts.sessionId })
+          }
+        }
+        r.source.connect(worklet)
+        // The processor outputs silence, but a destination connection keeps the
+        // rendering graph running. Microphone audio is never played back.
+        worklet.connect(ctx.destination)
+      } catch {
+        // A recorder that never started cannot provide a fallback or onstop.
+        // Close its device immediately and report the failure to main.
+        const failed = rec.current?.stream === stream ? rec.current : null
+        if (!failed || failed.mr.state === 'inactive') {
+          if (failed) { release(failed); closeGraph(failed) }
+          else stream.getTracks().forEach((t) => t.stop())
+          if (!disposed && id === startId.current) void invoke(IPC_INVOKE.DICTATION_MIC_ERROR, 'failed', opts.sessionId)
+          return
+        }
+        // Optional timing graph failure leaves the complete recording intact.
+        if (!rec.current || rec.current.stream !== stream) stream.getTracks().forEach((t) => t.stop())
+      }
     }
 
-    const stop = (send: boolean): void => {
+    const stop = (send: boolean, sessionId?: number): void => {
+      if (sessionId !== undefined && sessionId !== activeSessionId) return
       startId.current++
+      activeSessionId = undefined
       const r = rec.current
       if (!r) {
-        // Mic never opened (very short hold or no permission): nothing to send
-        if (send) void invoke(IPC_INVOKE.DICTATION_AUDIO, new ArrayBuffer(0), 'audio/webm')
+        if (send && !disposed) void invoke(IPC_INVOKE.DICTATION_AUDIO, new ArrayBuffer(0), 'audio/webm', sessionId)
         return
       }
       r.mr.onstop = () => {
-        const type = r.mr.mimeType || 'audio/webm'
-        release()
-        if (!send) return
-        void new Blob(r.chunks, { type }).arrayBuffer().then((ab) => invoke(IPC_INVOKE.DICTATION_AUDIO, ab, type))
+        void (async () => {
+          closeGraph(r)
+          if (!send || disposed) return
+          const type = r.mr.mimeType || 'audio/webm'
+          const ab = await new Blob(r.chunks, { type }).arrayBuffer()
+          if (!disposed) await invoke(IPC_INVOKE.DICTATION_AUDIO, ab, type, r.sessionId)
+        })()
       }
-      r.mr.stop()
+      if (r.mr.state !== 'inactive') r.mr.stop()
+      // Stop the tracks now, independently of recorder finalization or network.
+      release(r)
     }
 
-    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean }))
-    const offStop = window.peakflow.on(IPC_SEND.DICTATION_STOP, (raw) => stop(!!(raw as { send?: boolean } | undefined)?.send))
+    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean; sessionId?: number }))
+    const offStop = window.peakflow.on(IPC_SEND.DICTATION_STOP, (raw) => { const opts = raw as { send?: boolean; sessionId?: number } | undefined; stop(!!opts?.send, opts?.sessionId) })
     const offState = window.peakflow.on(IPC_SEND.DICTATION_STATE, (raw) => {
       const s = raw as DictationState
       if (s.phase !== phase.current) phaseAt.current = performance.now()
       phase.current = s.phase
       setSt(s)
     })
+    void invoke(IPC_INVOKE.DICTATION_READY)
     return () => {
       offStart()
       offStop()
       offState()
-      release()
-      void ctxRef.current?.close().catch(() => {})
+      disposed = true
+      stop(false)
+      ctxRef.current = null
+      void ctx.close().catch(() => {})
     }
   }, [])
 

@@ -26,8 +26,8 @@
  * after each expansion. Typed text never leaves this process: only the
  * keyword that matched is reported.
  *
- * Dictation's hold-to-talk key rides on the same tap: {"hold": "rcmd"}
- * (rcmd | ropt | rctrl | fn, or null for off) and the watcher prints
+ * Dictation's hold-to-talk key rides on the same tap: {"hold": {"code": 54}}
+ * (a native modifier or F1–F20 key code, or null for off) and the watcher prints
  * {"e": "hold-down"} when that key goes down alone, {"e": "hold-up"} when it
  * is released, and {"e": "hold-cancel"} if another key is pressed meanwhile
  * (the person was using a shortcut, not dictating).
@@ -311,19 +311,25 @@ private var maxKeywordLength = 0
 private var typed = ""
 private var keywatchTap: CFMachPort?
 private var holdKeyCode: Int64 = -1
-/// Other key codes that mean the same key (fn is 63, the Globe key on newer keyboards can report 179)
-private var holdAltCodes: Set<Int64> = []
-/// PEAKFLOW_KEYWATCH_DEBUG=1: log every modifier change to stderr (PeakFlow prints it)
-private let keyDebug = getenv("PEAKFLOW_KEYWATCH_DEBUG").map { String(cString: $0) } == "1"
-private var holdFlag: CGEventFlags = []
-private var holdDown = false
-
-private let HOLD_KEYS: [String: (Int64, CGEventFlags)] = [
-    "rcmd": (54, .maskCommand),
-    "ropt": (61, .maskAlternate),
-    "rctrl": (62, .maskControl),
-    "fn": (63, .maskSecondaryFn)
-]
+private var captureHoldKey = false
+private var nativeKeyState = NativeKeyState()
+private func physicalKeyDown(_ code: Int64) -> Bool {
+    CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
+}
+private func emitHoldEvents(_ events: [String]) {
+    for event in events { emit(["e": "hold-" + event]) }
+}
+// Device-specific flags distinguish each side even while the opposite side stays held.
+private let modifierBits: [Int64: UInt64] = [55: 0x8, 54: 0x10, 58: 0x20, 61: 0x40,
+                                            59: 0x1, 62: 0x2000, 56: 0x2, 60: 0x4,
+                                            63: CGEventFlags.maskSecondaryFn.rawValue]
+private let functionKeyCodes: Set<Int64> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109,
+                                           103, 111, 105, 107, 113, 106, 64, 79, 80, 90]
+private func canonicalKey(_ code: Int64) -> Int64 { code == 179 ? 63 : code }
+private func modifierIsDown(_ code: Int64, _ flags: CGEventFlags) -> Bool {
+    guard let bit = modifierBits[canonicalKey(code)] else { return false }
+    return flags.rawValue & bit != 0
+}
 
 private func emit(_ obj: [String: Any]) {
     print(jsonString(obj))
@@ -395,6 +401,8 @@ private func expand(keyword: String, text: String) {
 
 private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        emitHoldEvents(nativeKeyState.interrupt())
+        typed = ""
         if let tap = keywatchTap { CGEvent.tapEnable(tap: tap, enable: true) }
         return Unmanaged.passUnretained(event)
     }
@@ -406,38 +414,31 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         typed = ""
         return Unmanaged.passUnretained(event)
     }
-    if type == .flagsChanged {
-        let code = event.getIntegerValueField(.keyboardEventKeycode)
-        if keyDebug {
-            FileHandle.standardError.write("flagsChanged code=\(code) flags=0x\(String(event.flags.rawValue, radix: 16)) fn=\(event.flags.contains(.maskSecondaryFn)) hold=\(holdKeyCode) down=\(holdDown)\n".data(using: .utf8)!)
-        }
-        let isHoldKey = holdKeyCode >= 0 && (code == holdKeyCode || holdAltCodes.contains(code))
-        if isHoldKey {
-            let down = event.flags.contains(holdFlag)
-            if down && !holdDown {
-                holdDown = true
-                emit(["e": "hold-down"])
-            } else if !down && holdDown {
-                holdDown = false
-                emit(["e": "hold-up"])
-            }
-            // fn alone makes macOS open the emoji picker (or switch input source) on release, which
-            // then takes the paste. Hide fn's own down/up from apps: fn + arrows and the F-keys are
-            // translated by the keyboard driver before this tap, so they keep working.
-            if !holdAltCodes.isEmpty { return nil }
-        } else if holdDown {
-            // Another modifier joined in: a shortcut like ⌘⇧4, not dictation
-            holdDown = false
-            emit(["e": "hold-cancel"])
-        }
-        return Unmanaged.passUnretained(event)
+    let rawCode = event.getIntegerValueField(.keyboardEventKeycode)
+    let code = canonicalKey(rawCode)
+    let isModifier = modifierBits[code] != nil
+    let isDown = type == .keyDown || (type == .flagsChanged && modifierIsDown(code, event.flags))
+    let isUp = type == .keyUp || (type == .flagsChanged && !modifierIsDown(code, event.flags))
+    let capsToggle = type == .flagsChanged && code == 57
+    let result = nativeKeyState.feed(code: code, down: isDown || capsToggle, up: isUp && !capsToggle,
+                                    repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+                                    modifier: isModifier, suppress: !isModifier || code == 63,
+                                    otherModifier: modifierBits.keys.contains { $0 != code && modifierIsDown($0, event.flags) },
+                                    physical: physicalKeyDown)
+    emitHoldEvents(result.events)
+    if let recorded = result.recorded {
+        captureHoldKey = false
+        emit(["e": "hold-key-recorded", "code": recorded])
     }
+    // Caps Lock is rejected by main and toggles without a paired release.
+    if capsToggle && result.recorded != nil {
+        _ = nativeKeyState.feed(code: code, down: false, up: true, repeated: false,
+                                modifier: false, suppress: false, otherModifier: false, physical: physicalKeyDown)
+    }
+    if result.swallow { return nil }
+    if type == .flagsChanged || type == .keyUp { return Unmanaged.passUnretained(event) }
     guard type == .keyDown else { return Unmanaged.passUnretained(event) }
     inputGeneration &+= 1
-    if holdDown {
-        holdDown = false
-        emit(["e": "hold-cancel"])
-    }
 
     let flags = event.flags
     if flags.contains(.maskCommand) || flags.contains(.maskControl) {
@@ -480,17 +481,17 @@ private func readSnippetUpdates() {
             guard let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
-            if obj.keys.contains("hold") {
-                let name = obj["hold"] as? String ?? ""
+            if obj.keys.contains("hold") || obj.keys.contains("captureHoldKey") {
+                let key = obj["hold"] as? [String: Any]
+                let code = (key?["code"] as? NSNumber)?.int64Value ?? -1
+                let capture = obj["captureHoldKey"] as? Bool
                 DispatchQueue.main.async {
-                    if let (code, flag) = HOLD_KEYS[name] {
-                        holdKeyCode = code
-                        holdFlag = flag
-                        holdAltCodes = name == "fn" ? [179] : []
-                    } else {
-                        holdKeyCode = -1
+                    if obj.keys.contains("hold") {
+                        holdKeyCode = (modifierBits[code] != nil || functionKeyCodes.contains(code)) ? code : -1
                     }
-                    holdDown = false
+                    if let capture = capture { captureHoldKey = capture }
+                    let physical = Set((0..<256).map { Int64($0) }.filter { physicalKeyDown($0) })
+                    emitHoldEvents(nativeKeyState.configure(key: holdKeyCode, capture: captureHoldKey, physical: physical))
                 }
             }
             if let map = obj["snippets"] as? [String: String] {
@@ -510,7 +511,7 @@ private func readSnippetUpdates() {
 func runKeyWatch() -> Never {
     let trusted = AXIsProcessTrusted()
     readSnippetUpdates()
-    let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
+    let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
     guard trusted,
           let tap = CGEvent.tapCreate(tap: getenv("PEAKFLOW_KEYWATCH_TAP").map { String(cString: $0) } == "hid" ? .cghidEventTap : .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                       eventsOfInterest: CGEventMask(mask), callback: keywatchCallback, userInfo: nil) else {

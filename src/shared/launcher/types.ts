@@ -161,7 +161,7 @@ export interface LauncherOpenInfo {
 
 // ─── dictation ──────────────────────────────────────────────────────────────
 
-export type DictationHoldKey = 'rcmd' | 'ropt' | 'fn' | 'rctrl' | 'ralt'
+export type DictationHoldKey = import('../dictation-key').NativeHoldKey | import('../dictation-key').LegacyHoldKey
 
 export interface DictationSettings {
   enabled: boolean

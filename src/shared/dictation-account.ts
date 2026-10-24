@@ -1,5 +1,5 @@
 /** The top-up amounts on sale, in US dollars. Each has its own Lemon Squeezy checkout. */
-export type TopupAmount = 5 | 10 | 15 | 20
+export type TopupAmount = 5 | 10 | 20
 
 /**
  * Only display data crosses IPC; licence keys and checkout URLs stay in main.

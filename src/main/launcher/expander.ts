@@ -21,6 +21,8 @@ import { getMacHelperPath } from '../native/mac-helper'
 import { pasteAndRestore } from './selection'
 import { checkAccessibility } from '../services/permissions-darwin'
 import { KeyTaps } from './key-taps'
+import { windowsKeyStateSource } from './windows-key-state'
+import type { NativeHoldKey } from '@shared/dictation-key'
 
 let child: ChildProcess | null = null
 let active = false
@@ -28,14 +30,25 @@ let wanted = false
 let current: LauncherSnippet[] = []
 let restarts = 0
 let snippetsWanted = false
-let holdKey: string | null = null
+let holdKey: NativeHoldKey | null = null
+let capturingHoldKey = false
+const recordedListeners = new Set<(code: number) => void>()
 let dictating = false
 let holdListener: ((e: 'down' | 'up' | 'cancel') => void) | null = null
 const doubleListeners = new Set<() => void>()
 const taps = new KeyTaps()
 
-/** Windows virtual-key codes for the hold keys */
-const WIN_HOLD_VK: Record<string, number> = { rctrl: 0xa3, ralt: 0xa5 }
+/** Record physical keys through the same native watcher, including fn and side-specific modifiers. */
+export function onHoldKeyRecorded(fn: (code: number) => void): () => void {
+  recordedListeners.add(fn)
+  return () => { recordedListeners.delete(fn) }
+}
+
+export function setHoldKeyCapture(enabled: boolean): void {
+  if (enabled) onKey('cancel')
+  capturingHoldKey = enabled
+  applyHoldKey()
+}
 
 export function onHoldKey(fn: (e: 'down' | 'up' | 'cancel') => void): void {
   holdListener = fn
@@ -55,17 +68,19 @@ export function onDictationKeyDouble(fn: () => void): () => void {
 }
 
 /**
- * The dictation key ('rcmd' | 'ropt' | 'rctrl' | 'fn' on Mac, 'rctrl' | 'ralt' on Windows)
+ * The validated native dictation key (left/right modifier, fn on Mac, or a function key)
  * and whether a hold dictates. With dictation off the key is still watched for double taps.
  */
-export function setHoldKey(key: string | null, dictate = true): void {
+export function setHoldKey(key: NativeHoldKey | null, dictate = true): void {
+  if (JSON.stringify(holdKey) === JSON.stringify(key) && dictating === dictate) return
+  onKey('cancel')
   holdKey = key
   dictating = dictate
   applyHoldKey()
 }
 
 /** The key the watcher should report, or null */
-function watchedKey(): string | null {
+function watchedKey(): NativeHoldKey | null {
   return holdKey && (dictating || doubleListeners.size) ? holdKey : null
 }
 
@@ -78,14 +93,17 @@ function applyHoldKey(): void {
 }
 
 function refreshWanted(): void {
-  wanted = snippetsWanted || !!watchedKey()
+  wanted = capturingHoldKey || snippetsWanted || !!watchedKey()
 }
 
 function sendHold(): void {
   if (!child?.stdin?.writable) return
   const key = watchedKey()
-  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key }) + '\n')
-  else child.stdin.write(`HOLD ${key ? WIN_HOLD_VK[key] ?? 0 : 0}\n`)
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, captureHoldKey: capturingHoldKey }) + '\n')
+  else {
+    child.stdin.write(`HOLD ${key?.code ?? 0}\n`)
+    child.stdin.write(`CAPTURE ${capturingHoldKey ? 1 : 0}\n`)
+  }
 }
 
 function onKey(e: 'down' | 'up' | 'cancel'): void {
@@ -128,7 +146,7 @@ async function expandOnWindows(keyword: string): Promise<void> {
 
 function onLine(line: string): void {
   try {
-    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string }
+    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number }
     if (ev.e === 'ready') {
       active = ev.trusted !== false
       if (!active) console.warn('[Launcher] Snippet expansion needs the Accessibility permission')
@@ -139,7 +157,11 @@ function onLine(line: string): void {
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
     } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
-    if (ev.e === 'hold-down') onKey('down')
+    if (ev.e === 'hold-key-recorded' && capturingHoldKey && Number.isInteger(ev.code)) {
+      capturingHoldKey = false
+      recordedListeners.forEach((fn) => fn(ev.code!))
+      applyHoldKey()
+    } else if (ev.e === 'hold-down') onKey('down')
     else if (ev.e === 'hold-up') onKey('up')
     else if (ev.e === 'hold-cancel') onKey('cancel')
   } catch { /* not ours */ }
@@ -157,6 +179,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
+${windowsKeyStateSource()}
 public static class PfKeyWatch {
   const int WH_KEYBOARD_LL = 13;
   const int WM_KEYDOWN = 0x0100;
@@ -169,6 +192,7 @@ public static class PfKeyWatch {
   [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc fn, IntPtr mod, uint thread);
   [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int n, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] static extern short GetKeyState(int vk);
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
   [DllImport("user32.dll")] static extern bool GetKeyboardState(byte[] state);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, IntPtr pid);
@@ -182,7 +206,21 @@ public static class PfKeyWatch {
   static StringBuilder typed = new StringBuilder();
   static volatile string[] keywords = new string[0];
   static volatile int holdVk = 0;
-  static bool holdDown = false;
+  static bool captureHoldKey = false;
+  static readonly object keyLock = new object();
+  static NativeKeyState keyState = new NativeKeyState();
+  static HashSet<uint> PhysicalKeys() {
+    HashSet<uint> keys = new HashSet<uint>();
+    for (int vk = 8; vk < 256; vk++) {
+      // Generic modifier aliases duplicate the side-specific keys.
+      if (vk == 0x10 || vk == 0x11 || vk == 0x12) continue;
+      if ((GetAsyncKeyState(vk) & 0x8000) != 0) keys.Add((uint)vk);
+    }
+    return keys;
+  }
+  static void EmitEvents(List<string> events) { foreach (string e in events) Emit("hold-" + e); }
+  static bool IsModifier(uint vk) { return (vk >= 0xA0 && vk <= 0xA5) || vk == 0x5B || vk == 0x5C; }
+  static bool IsAllowedHold(int vk) { return IsModifier((uint)vk) || (vk >= 0x70 && vk <= 0x87); }
   const int WM_KEYUP = 0x0101;
   const int WM_SYSKEYUP = 0x0105;
 
@@ -211,20 +249,30 @@ public static class PfKeyWatch {
         bool isDown = (int)wParam == WM_KEYDOWN || (int)wParam == WM_SYSKEYDOWN;
         bool isUp = (int)wParam == WM_KEYUP || (int)wParam == WM_SYSKEYUP;
         if ((k.flags & LLKHF_INJECTED) == 0) {
-          if (holdVk != 0 && k.vkCode == (uint)holdVk) {
-            if (isDown && !holdDown) {
-              holdDown = true;
-              Emit("hold-down");
-              // A lone Alt press opens the app's menu bar on release, which would eat the paste:
-              // an unassigned key (0xE8) in between stops that
-              if (holdVk == 0xA5) ThreadPool.QueueUserWorkItem(delegate { Tap(0xE8); });
+          lock (keyLock) {
+            HashSet<uint> physical = PhysicalKeys();
+            bool otherModifier = false;
+            foreach (uint other in physical) {
+              if (IsModifier(other) && other != k.vkCode && !(holdVk == 0xA5 && other == 0xA2)) otherModifier = true;
             }
-            else if (isUp && holdDown) { holdDown = false; Emit("hold-up"); }
-          } else if (holdDown && holdVk == 0xA5 && k.vkCode == 0xA2 && (k.scanCode & 0x200) != 0) {
-            // AltGr layouts send a fake Left Ctrl with Right Alt (and repeat it): not another key
-          } else if (isDown) {
-            if (holdDown) { holdDown = false; Emit("hold-cancel"); }
-            Handle(k);
+            // KBDLLHOOKSTRUCT has no repeat bit (unlike WM_KEYDOWN lParam).
+            // Async state still describes the previous state for this key here.
+            // The state machine also retains observed presses and the capture-start snapshot.
+            bool repeat = isDown && physical.Contains(k.vkCode);
+            // AltGr's fake Left Ctrl is not a chord or snippet input.
+            bool altGrCompanion = !captureHoldKey && holdVk == 0xA5 && k.vkCode == 0xA2 && (k.scanCode & 0x200) != 0;
+            NativeKeyResult result = keyState.Feed(k.vkCode, isDown && !altGrCompanion, isUp, repeat,
+              IsModifier(k.vkCode), !IsModifier(k.vkCode), otherModifier, physical);
+            EmitEvents(result.events);
+            if (result.recorded >= 0) {
+              captureHoldKey = false;
+              Console.Out.WriteLine("{\\"e\\":\\"hold-key-recorded\\",\\"code\\":" + result.recorded + "}");
+              Console.Out.Flush();
+            }
+            if (result.events.Contains("down") && (holdVk == 0xA4 || holdVk == 0xA5 || holdVk == 0x5B || holdVk == 0x5C)) ThreadPool.QueueUserWorkItem(delegate { Tap(0xE8); });
+            if (result.swallow) return new IntPtr(1);
+            // Preserve AltGr's synthetic Ctrl without cancelling the Right Alt hold.
+            if (isDown && !altGrCompanion) Handle(k);
           }
         }
       }
@@ -270,8 +318,15 @@ public static class PfKeyWatch {
         if (line.StartsWith("HOLD ")) {
           int vk = 0;
           int.TryParse(line.Substring(5).Trim(), out vk);
-          holdVk = vk;
-          holdDown = false;
+          lock (keyLock) {
+            holdVk = IsAllowedHold(vk) ? vk : 0;
+            EmitEvents(keyState.Configure(holdVk, captureHoldKey, PhysicalKeys()));
+          }
+        } else if (line.StartsWith("CAPTURE ")) {
+          lock (keyLock) {
+            captureHoldKey = line.Substring(8).Trim() == "1";
+            EmitEvents(keyState.Configure(holdVk, captureHoldKey, PhysicalKeys()));
+          }
         } else if (line.StartsWith("SET")) {
           List<string> list = new List<string>();
           foreach (string part in line.Substring(3).Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)) {
@@ -292,7 +347,7 @@ public static class PfKeyWatch {
 }
 "@
 try {
-  Add-Type -TypeDefinition $src -ReferencedAssemblies System.Windows.Forms -ErrorAction Stop
+  Add-Type -TypeDefinition $src -ReferencedAssemblies System,System.Core,System.Windows.Forms -ErrorAction Stop
 } catch {
   [Console]::Error.WriteLine("Add-Type failed: " + $_.Exception.Message)
   exit 1
