@@ -19,9 +19,9 @@ export function getMacHelperPath(): string {
 }
 
 /** Run one helper command asynchronously and parse its JSON reply (null on failure). */
-export function runMacHelper(args: string[], timeoutMs = 15000): Promise<Record<string, unknown> | null> {
+export function runMacHelper(args: string[], timeoutMs = 15000, input?: string): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
-    execFile(getMacHelperPath(), args, { timeout: timeoutMs }, (error, stdout) => {
+    const child = execFile(getMacHelperPath(), args, { timeout: timeoutMs }, (error, stdout) => {
       if (error) {
         console.warn(`[MacHelper] ${args[0]} failed:`, error.message)
         resolve(null)
@@ -33,5 +33,8 @@ export function runMacHelper(args: string[], timeoutMs = 15000): Promise<Record<
         resolve(null)
       }
     })
+    // Text for the command goes on stdin, never on the command line where other processes can read it
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(input ?? '')
   })
 }

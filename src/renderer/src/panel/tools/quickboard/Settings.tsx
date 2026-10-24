@@ -93,6 +93,10 @@ export function General(): React.JSX.Element {
         <Row label="Paste as plain text" right={<Toggle label="Paste as plain text" checked={cfg.plain_text_mode} onChange={(v) => set('plain_text_mode', v)} />} />
         <Row label="Open QuickBoard" right={<Rec value={OPEN_KEY} />} />
       </Grp>
+      <Grp>
+        <Row label="Show page titles for links" right={<Toggle label="Show page titles for links" checked={!!cfg.link_previews} onChange={(v) => set('link_previews', v)} />} />
+      </Grp>
+      <Note style={{ marginTop: 10 }}>To get a title, QuickBoard opens the link when it appears in your list. Opening a link can use up a one-time sign-in link, and the site sees your internet address. Links to this computer or your own network are never opened.</Note>
       <Note style={{ marginTop: 10 }}>QuickBoard skips anything that looks like a password, API key or card number, and ignores password managers and banking apps.</Note>
       <Grp>
         <Row label="Clear all history" icon="trash" tone="danger" onClick={unpinned ? () => void clear() : () => nav.toast('No unpinned clips to clear')} />

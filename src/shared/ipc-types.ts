@@ -126,6 +126,7 @@ export const IPC_INVOKE = {
   CLIPBOARD_DELETE_TRANSFORM: 'clipboard:delete-transform',
   CLIPBOARD_PASTE_WITH_TRANSFORM: 'clipboard:paste-with-transform',
   CLIPBOARD_RUN_OCR: 'clipboard:run-ocr',
+  CLIPBOARD_LINK_PREVIEW: 'clipboard:link-preview',
 
   // QuickBoard AI
   CLIPBOARD_AI_TRANSFORM: 'clipboard:ai-transform',

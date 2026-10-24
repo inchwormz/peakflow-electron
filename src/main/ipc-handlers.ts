@@ -438,6 +438,10 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(IPC_INVOKE.CLIPBOARD_LINK_PREVIEW, (_event, itemId: unknown): void => {
+    if (typeof itemId === 'string') getClipboardService().requestLinkPreview(itemId)
+  })
+
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_WRITE_TEXT,
     (_event, text: string): void => {

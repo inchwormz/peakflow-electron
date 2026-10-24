@@ -12,7 +12,7 @@
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { randomUUID } from 'crypto'
-import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
@@ -23,8 +23,7 @@ import type { DictationHoldKey, DictationSettings, DictationState } from '@share
 import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
 import { ensureMediaAccess } from '../services/permissions-darwin'
 import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../launcher/expander'
-import { saveClipboard, restoreClipboard } from '../launcher/selection'
-import { simulateCtrlV } from '../native/keyboard'
+import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
@@ -422,18 +421,9 @@ export function pasteDictation(text: string): Promise<boolean> {
 let pastedAt = 0
 
 async function typeText(text: string): Promise<boolean> {
-  const before = clipboard.readText()
-  const saved = saveClipboard()
-  clipboard.writeText(text)
   if (process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Dictation] pasting ${text.length} chars into ${(await readContext()).app ?? 'unknown app'}`)
-  const ok = await simulateCtrlV()
   pastedAt = Date.now()
-  if (ok) {
-    // Give the app time to read the clipboard before restoring it
-    await new Promise((r) => setTimeout(r, 400))
-    restoreClipboard(saved, before)
-  }
-  return ok
+  return pasteAndRestore(text)
 }
 
 // ─── IPC and lifecycle ───────────────────────────────────────────────────────

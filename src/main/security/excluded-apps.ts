@@ -4,13 +4,14 @@
  * PeakFlow tools (especially ScreenSlap and QuickBoard) must never capture
  * content from password managers, banking apps, or security-sensitive windows.
  *
- * This module provides the exclusion list and a case-insensitive substring
- * matcher that mirrors the Python implementation exactly.
+ * Each name must appear as a whole word (or whole phrase) in the window title
+ * or the app's identifier (Windows exe name, Mac bundle ID). Substrings don't
+ * count, so "Purchase order" is not "chase" and "Goalkeeper" is not "keeper".
  */
 
 /**
- * Window titles containing any of these substrings (case-insensitive) are
- * excluded from capture. Matches password managers, banking sites, and
+ * Names matched as whole words, case-insensitively, against the window title
+ * and the app identifier. Password managers, banks (US and New Zealand) and
  * OS security dialogs.
  */
 export const EXCLUDED_APPS: string[] = [
@@ -19,6 +20,7 @@ export const EXCLUDED_APPS: string[] = [
   'bitwarden',
   'lastpass',
   'keepass',
+  'keepassxc',
   'dashlane',
   'roboform',
   'keeper',
@@ -30,6 +32,11 @@ export const EXCLUDED_APPS: string[] = [
   'bank of america',
   'wells fargo',
   'paypal',
+  'anz',
+  'asb',
+  'bnz',
+  'westpac',
+  'kiwibank',
 
   // OS security
   'windows security',
@@ -37,20 +44,24 @@ export const EXCLUDED_APPS: string[] = [
   'user account control'
 ]
 
+const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** One pattern: any listed name, not touching another letter or digit on either side. */
+const EXCLUDED_PATTERN = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${EXCLUDED_APPS.map(escape).join('|')})(?![\\p{L}\\p{N}])`,
+  'iu'
+)
+
 /**
- * Check if a window title belongs to an excluded application.
+ * Check if a window belongs to an excluded application.
  *
- * Performs a case-insensitive substring match against every entry in
- * `EXCLUDED_APPS`. Returns `true` if any entry is found within the title.
- *
- * @param windowTitle - The window title to check (e.g. from `@electron/active-window`)
+ * @param windowTitle - The window title (e.g. "ANZ Internet Banking - Chrome")
+ * @param appId - Optional app identifier: exe name ("1Password.exe") or bundle ID ("com.1password.1password")
  * @returns `true` if the window should be excluded from capture
  */
-export function isExcludedApp(windowTitle: string): boolean {
+export function isExcludedApp(windowTitle: string, appId?: string | null): boolean {
   try {
-    if (!windowTitle) return false
-    const lower = windowTitle.toLowerCase()
-    return EXCLUDED_APPS.some((app) => lower.includes(app))
+    return [windowTitle, appId].some((s) => !!s && EXCLUDED_PATTERN.test(s))
   } catch (error) {
     console.warn('[PeakFlow:ExcludedApps] isExcludedApp failed:', error)
     // Fail safe: exclude if we can't determine

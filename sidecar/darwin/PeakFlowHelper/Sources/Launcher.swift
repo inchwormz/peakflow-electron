@@ -4,6 +4,8 @@
  *
  * One-shot commands (see runOneShot in main.swift):
  *   activate-previous      → {"ok": bool}       bring back the app the user was in
+ *   paste-text             → {"ok": bool, "trusted": bool, "restored": bool}
+ *                            paste the text read from stdin, then put the pasteboard back
  *   selection [ax]         → {"text": "...", "via": "ax"|"copy"|"none", "trusted": bool}
  *                            ("ax": Accessibility only, never touches the clipboard or focus)
  *   quit-app <pid>         → {"ok": bool}       NSRunningApplication.terminate()
@@ -60,16 +62,23 @@ func activatePrevious() -> String {
 // MARK: - pasteboard save / restore
 
 /// Every item on the general pasteboard, with every type's data, so a
-/// simulated copy or paste can put back exactly what the user had.
-private func savePasteboard() -> [[NSPasteboard.PasteboardType: Data]] {
+/// simulated copy or paste can put back exactly what the user had. nil if
+/// any type can't be read: the caller then leaves the pasteboard alone,
+/// because a restore missing a password manager's private marker would
+/// hand the password to clipboard managers.
+private func savePasteboard() -> [[NSPasteboard.PasteboardType: Data]]? {
     let pb = NSPasteboard.general
-    return (pb.pasteboardItems ?? []).map { item in
+    guard let items = pb.pasteboardItems else { return nil } // nil means the read failed, not "empty"
+    var saved: [[NSPasteboard.PasteboardType: Data]] = []
+    for item in items {
         var types: [NSPasteboard.PasteboardType: Data] = [:]
         for t in item.types {
-            if let d = item.data(forType: t) { types[t] = d }
+            guard let d = item.data(forType: t) else { return nil }
+            types[t] = d
         }
-        return types
+        saved.append(types)
     }
+    return saved
 }
 
 private func restorePasteboard(_ saved: [[NSPasteboard.PasteboardType: Data]]) {
@@ -81,6 +90,79 @@ private func restorePasteboard(_ saved: [[NSPasteboard.PasteboardType: Data]]) {
         return item
     }
     if !items.isEmpty { pb.writeObjects(items) }
+}
+
+/// Types added to every clip PeakFlow puts on the pasteboard for a moment
+/// (dictation, snippets, launcher answers). Clipboard managers skip
+/// TransientType (nspasteboard.org); QuickBoard also skips its own marker.
+/// Keep the marker name in step with OWN_WRITE_MARK_MAC in clipboard-own-writes.ts.
+private let ownWriteTypes: [NSPasteboard.PasteboardType] = [
+    NSPasteboard.PasteboardType("org.nspasteboard.TransientType"),
+    NSPasteboard.PasteboardType("pro.getpeakflow.own-write")
+]
+
+/// Replace the pasteboard with `text`, marked as PeakFlow's own short-lived write.
+private func writeOwnText(_ text: String) {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    let item = NSPasteboardItem()
+    item.setString(text, forType: .string)
+    for t in ownWriteTypes { item.setData(Data(), forType: t) }
+    pb.writeObjects([item])
+}
+
+/// Cross-process lock around every pasteboard round trip (paste-text, the
+/// selection copy, snippet expansion in the keyword watcher). Two overlapping
+/// round trips would lose the person's clipboard: the second would save the
+/// first one's text and put that back. flock is released if a process dies.
+private let pasteboardLockPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("pro.getpeakflow.pasteboard.lock")
+
+/// Wait up to `timeout` seconds for the lock. Returns the descriptor to pass to
+/// `unlockPasteboard`, or nil if it couldn't be had: the caller then leaves
+/// the pasteboard alone.
+private func lockPasteboard(timeout: Double = 2.0) -> Int32? {
+    let fd = open(pasteboardLockPath, O_CREAT | O_RDWR, 0o600)
+    if fd < 0 { return nil }
+    let deadline = Date().addingTimeInterval(timeout)
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+        if Date() > deadline { close(fd); return nil }
+        usleep(20_000)
+    }
+    return fd
+}
+
+private func unlockPasteboard(_ fd: Int32?) {
+    guard let fd = fd else { return }
+    flock(fd, LOCK_UN)
+    close(fd)
+}
+
+/// `paste-text`: text arrives on stdin (never on the command line, where
+/// other processes could read it). Saves every pasteboard item and type,
+/// writes the text (marked as our own), sends Cmd+V, waits for the app to
+/// read it, then puts back exactly what was there, password-manager markers
+/// and images included. If someone copies something in the meantime, that
+/// copy is kept. Without Accessibility nothing is pasted and the text stays
+/// on the pasteboard so the person can paste it by hand.
+func pasteTextRestoring() -> String {
+    let input = FileHandle.standardInput.readDataToEndOfFile()
+    guard let text = String(data: input, encoding: .utf8), !text.isEmpty else {
+        return jsonLine(["ok": false, "trusted": true, "error": "no text"])
+    }
+    // Another round trip is still running: don't touch the pasteboard
+    guard let lock = lockPasteboard() else { return jsonLine(["ok": false, "trusted": true, "error": "busy"]) }
+    defer { unlockPasteboard(lock) }
+    let pb = NSPasteboard.general
+    guard let saved = savePasteboard() else { return jsonLine(["ok": false, "trusted": true, "error": "unreadable"]) }
+    writeOwnText(text)
+    let ours = pb.changeCount
+    var result = sendPaste()
+    guard result["ok"] as? Bool == true else { return jsonLine(result) }
+    usleep(400_000) // give the app time to read the pasteboard
+    let restored = pb.changeCount == ours
+    if restored { restorePasteboard(saved) }
+    result["restored"] = restored
+    return jsonLine(result)
 }
 
 /// Our own synthetic key events carry this tag so the keyword watcher ignores them.
@@ -124,8 +206,10 @@ func selectedText(axOnly: Bool = false) -> String {
     // Fallback: copy in the previous app, read, restore the clipboard
     app.activate(options: [])
     usleep(120_000)
+    guard let lock = lockPasteboard(timeout: 1.5) else { return jsonLine(["text": "", "via": "none", "trusted": true]) }
+    defer { unlockPasteboard(lock) }
     let pb = NSPasteboard.general
-    let saved = savePasteboard()
+    guard let saved = savePasteboard() else { return jsonLine(["text": "", "via": "none", "trusted": true]) }
     let before = pb.changeCount
     postKey(8, flags: .maskCommand) // kVK_ANSI_C
     var text = ""
@@ -267,22 +351,45 @@ private func fill(_ text: String, clipboard: String) -> String {
     return out
 }
 
+/// Snippet expansions run one at a time, off the main thread, each holding the
+/// pasteboard lock until its restore is done. (Waiting for the lock on the
+/// main queue would block the very restore that releases it.)
+private let snippetQueue = DispatchQueue(label: "pro.getpeakflow.snippets")
+
+/// Bumped (on the main thread) by every real key press and mouse click, so a
+/// waiting expansion can tell the person has moved on.
+private var inputGeneration = 0
+
 private func expand(keyword: String, text: String) {
+    let generation = inputGeneration
+    let app = NSWorkspace.shared.frontmostApplication?.processIdentifier
     // Runs after the keyword's last key event has been delivered
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-        for _ in 0..<keyword.count { postKey(51) } // kVK_Delete (backspace)
+    snippetQueue.asyncAfter(deadline: .now() + 0.03) {
+        // Another round trip is running: leave the keyword as typed rather than risk the clipboard
+        guard let lock = lockPasteboard(timeout: 0.25) else { return }
+        defer { unlockPasteboard(lock) }
         let pb = NSPasteboard.general
-        let saved = savePasteboard()
-        let current = pb.string(forType: .string) ?? ""
-        pb.clearContents()
-        pb.setString(fill(text, clipboard: current), forType: .string)
-        usleep(30_000)
-        postKey(9, flags: .maskCommand) // kVK_ANSI_V
-        // Give the app time to read the clipboard before putting the old one back
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            restorePasteboard(saved)
+        guard let saved = savePasteboard() else { return } // can't put it back whole: leave the keyword
+        let previous = pb.string(forType: .string) ?? ""
+        writeOwnText(fill(text, clipboard: previous))
+        let ours = pb.changeCount
+        // Typed, clicked or switched app since the keyword (for example while waiting for the lock):
+        // deleting and pasting now would hit the wrong text, so leave the keyword as typed. Checked on
+        // the main thread, where real input is counted. Input arriving in the ~30 ms between the
+        // backspaces and the paste can still race them, as it always could.
+        let pasted = DispatchQueue.main.sync { () -> Bool in
+            guard inputGeneration == generation,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == app else { return false }
+            for _ in 0..<keyword.count { postKey(51) } // kVK_Delete (backspace)
+            return true
         }
-        emit(["e": "expanded", "keyword": keyword])
+        if pasted {
+            usleep(30_000)
+            postKey(9, flags: .maskCommand) // kVK_ANSI_V: once the keyword is gone, always replace it
+            usleep(400_000) // give the app time to read the clipboard before putting the old one back
+        }
+        if pb.changeCount == ours { restorePasteboard(saved) }
+        if pasted { DispatchQueue.main.async { emit(["e": "expanded", "keyword": keyword]) } }
     }
 }
 
@@ -295,6 +402,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         return Unmanaged.passUnretained(event)
     }
     if type == .leftMouseDown || type == .rightMouseDown {
+        inputGeneration &+= 1
         typed = ""
         return Unmanaged.passUnretained(event)
     }
@@ -325,6 +433,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         return Unmanaged.passUnretained(event)
     }
     guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+    inputGeneration &+= 1
     if holdDown {
         holdDown = false
         emit(["e": "hold-cancel"])

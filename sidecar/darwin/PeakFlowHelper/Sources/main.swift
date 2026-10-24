@@ -67,6 +67,8 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
         return activatePrevious()
     case "selection":
         return selectedText(axOnly: arg == "ax")
+    case "paste-text":
+        return pasteTextRestoring()
     case "running-apps":
         return runningApps()
     case "quit-app", "force-quit-app":
