@@ -87,8 +87,13 @@ g.__m.version = '2.1.4'
 assert.equal(M.guideView(null), 'none', 'no answer yet (or not a Mac): nothing')
 assert.equal(M.guideView(P.permissionStatus('accessibility')), 'all-set', 'it came back above (2.1.3): All set for a while')
 
-// An update makes macOS forget Accessibility: the steps show
+// Switched off by hand in the version it was trusted in: a deliberate revoke, not an update
 g.__m.ax = false
+s = P.permissionStatus('accessibility')
+assert.equal(s.lost, false, 'off in the same version it was trusted in: not "forgot after the update"')
+assert.match(s.advice, /^Switch PeakFlow on/)
+// An update makes macOS forget Accessibility: the steps show
+g.__m.version = '2.1.5'
 s = P.permissionStatus('accessibility')
 assert.equal(s.lost, true)
 assert.equal(M.guideView(s), 'steps')

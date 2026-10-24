@@ -32,6 +32,8 @@ interface OnboardingData {
   firstRunShown: boolean
   /** Permissions seen granted on this Mac (missing = never recorded: an install from before 2.1.1) */
   everGranted: Partial<Record<MacPermission, boolean>>
+  /** Accessibility only: the app version when it was last seen trusted (tells an update from a deliberate revoke) */
+  lastTrustedVersion: Partial<Record<'accessibility', string>>
   /** App version the set-up page was last shown for a lost permission or a wrong location */
   setupShownFor: string
   /** Permissions seen off since they were last granted: the next time one works, PeakFlow says "All set" */
@@ -39,7 +41,7 @@ interface OnboardingData {
 }
 
 const onboardingStore = isMac
-  ? new Store<OnboardingData>({ name: 'mac-onboarding', defaults: { firstRunShown: false, everGranted: {}, setupShownFor: '', awaitingFix: {} } })
+  ? new Store<OnboardingData>({ name: 'mac-onboarding', defaults: { firstRunShown: false, everGranted: {}, lastTrustedVersion: {}, setupShownFor: '', awaitingFix: {} } })
   : null
 
 /** Reasons already explained this session, so we never nag twice. */
@@ -83,8 +85,23 @@ export function permissionStatus(kind: MacPermission): PermissionStatus {
   let lost = false
   if (isMac && onboardingStore) {
     const ever = onboardingStore.get('everGranted') ?? {}
+    const trustedVersions = onboardingStore.get('lastTrustedVersion') ?? {}
     if (granted && !ever[kind]) onboardingStore.set('everGranted', { ...ever, [kind]: true })
-    lost = !granted && !!ever[kind]
+    if (granted && kind === 'accessibility' && trustedVersions.accessibility !== app.getVersion()) {
+      onboardingStore.set('lastTrustedVersion', { ...trustedVersions, accessibility: app.getVersion() })
+    }
+    if (kind === 'accessibility') {
+      // Lost means: trusted under an earlier version. Off in this same version is a deliberate revoke.
+      lost = !granted && accessibilityPrompt({
+        trusted: false,
+        everGranted: !!ever[kind],
+        lastTrustedVersion: trustedVersions.accessibility,
+        currentVersion: app.getVersion(),
+        featuresOn: true
+      }) === 'forgot-after-update'
+    } else {
+      lost = !granted && !!ever[kind]
+    }
     // Off (and macOS has asked): remember it, across restarts, so the next grant says "All set"
     const waiting = onboardingStore.get('awaitingFix') ?? {}
     if (!granted && !undecided && !waiting[kind]) onboardingStore.set('awaitingFix', { ...waiting, [kind]: true })
@@ -165,14 +182,14 @@ export function appLocation(): 'applications' | 'downloads' | 'disk-image' | 'el
  * The panel page to open at launch instead of the last tool, or null:
  * the set-up page on the first launch on a Mac, and once per version when a
  * permission was lost or PeakFlow runs from outside Applications.
- * featuresOn: a feature that needs Accessibility is on (dictation, snippets).
  * Replaces the old dialog, which took focus and closed the panel behind it.
  */
-export function macStartupRoute(featuresOn = true): string | null {
+export function macStartupRoute(): string | null {
   if (!isMac || !onboardingStore) return null
   const firstRun = !onboardingStore.get('firstRunShown')
   // Read before permissionStatus() records anything
   const everBefore = !!(onboardingStore.get('everGranted') ?? {}).accessibility
+  const trustedVersionBefore = (onboardingStore.get('lastTrustedVersion') ?? {}).accessibility
   const waiting = { ...(onboardingStore.get('awaitingFix') ?? {}) }
   const ax = permissionStatus('accessibility')
   // Any permission seen off that works now (fixed while PeakFlow was closed)
@@ -192,8 +209,15 @@ export function macStartupRoute(featuresOn = true): string | null {
     console.log(`[Permissions] ${fixedWhileClosed.join(', ')} works again: showing the set-up page`)
     return 'app/setup'
   }
-  // Accessibility missing while a feature needs it: an update reset it (granted before), or an install from before this release (no record)
-  const likelyLost = accessibilityPrompt({ trusted: ax.granted, everGranted: everBefore, featuresOn }) !== 'none'
+  // Accessibility missing: an update reset it (trusted under an earlier version), or an install from before this release (no record).
+  // SnapGrid always needs Accessibility, so it is always on here.
+  const likelyLost = accessibilityPrompt({
+    trusted: ax.granted,
+    everGranted: everBefore,
+    lastTrustedVersion: trustedVersionBefore,
+    currentVersion: version,
+    featuresOn: true
+  }) !== 'none'
   const misplaced = appLocation() !== 'applications'
   if ((likelyLost || misplaced) && onboardingStore.get('setupShownFor') !== version) {
     onboardingStore.set('setupShownFor', version)

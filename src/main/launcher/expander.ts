@@ -149,8 +149,9 @@ function onLine(line: string): void {
     const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number }
     if (ev.e === 'ready') {
       active = ev.trusted !== false
-      if (!active) console.warn('[Launcher] Hold key and snippets need the Accessibility permission (not trusted)')
+      if (!active) logUntrustedOnce()
       else {
+        respawnDelayMs = RESPAWN_MIN_MS // working again: the next kill-and-restart backs off from the minimum
         sendSnippets()
         sendHold()
       }
@@ -359,6 +360,24 @@ try {
 let trustRetry: ReturnType<typeof setTimeout> | null = null
 const TRUST_RETRY_MS = 3000
 
+/** Set once per app session: the untrusted message is logged once, not on every retry. */
+const UNTRUSTED_LOG = '[Launcher] Hold key and snippets need the Accessibility permission (not trusted)'
+let loggedUntrusted = false
+function logUntrustedOnce(): void {
+  if (loggedUntrusted) return
+  loggedUntrusted = true
+  console.warn(UNTRUSTED_LOG)
+}
+
+/** A crash restart waiting to run; cleared whenever the watcher is stopped on purpose. */
+let crashRestart: ReturnType<typeof setTimeout> | null = null
+
+/** Respawn backoff for retryExpansion's kill-and-restart (min 10 s, doubling, max 5 min). */
+const RESPAWN_MIN_MS = 10_000
+const RESPAWN_MAX_MS = 5 * 60_000
+let respawnDelayMs = RESPAWN_MIN_MS
+let respawnNotBefore = 0
+
 function scheduleTrustRetry(): void {
   if (trustRetry || !wanted) return
   trustRetry = setTimeout(() => {
@@ -370,7 +389,7 @@ function scheduleTrustRetry(): void {
 function start(): void {
   if (child || !wanted) return
   if (process.platform === 'darwin') {
-    if (!checkAccessibility()) { scheduleTrustRetry(); return } // starts once permission is granted
+    if (!checkAccessibility()) { logUntrustedOnce(); scheduleTrustRetry(); return } // starts once permission is granted
     const bin = getMacHelperPath()
     if (!existsSync(bin)) return
     child = spawn(bin, ['keywatch'], { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -396,10 +415,18 @@ function start(): void {
   })
   c.stdin?.on('error', () => {})
   c.on('exit', (code) => {
-    if (child === c) child = null
+    // Only the current child may change state. A child we stopped on purpose (or replaced) has already been cleared.
+    if (child !== c) return
+    child = null
     active = false
     // Restart after a crash (not after we stopped it), a few times at most
-    if (wanted && code !== 0 && restarts++ < 3) setTimeout(start, 2000)
+    if (wanted && code !== 0 && restarts++ < 3) {
+      if (crashRestart) clearTimeout(crashRestart)
+      crashRestart = setTimeout(() => {
+        crashRestart = null
+        start()
+      }, 2000)
+    }
   })
 }
 
@@ -420,7 +447,11 @@ export function retryExpansion(): void {
     restarts = 0
     start()
   } else if (wanted && child && !active && process.platform === 'darwin' && checkAccessibility()) {
-    // Running without permission: restart it so the new permission takes effect
+    // Running without permission: restart it so the new permission takes effect.
+    // Backed off, so repeated calls cannot respawn the helper in a loop.
+    if (Date.now() < respawnNotBefore) return
+    respawnNotBefore = Date.now() + respawnDelayMs
+    respawnDelayMs = Math.min(respawnDelayMs * 2, RESPAWN_MAX_MS)
     stopExpansion(true)
     start()
   }
@@ -429,6 +460,7 @@ export function retryExpansion(): void {
 export function stopExpansion(keepWanted = false): void {
   if (!keepWanted) wanted = false
   if (!wanted && trustRetry) { clearTimeout(trustRetry); trustRetry = null }
+  if (crashRestart) { clearTimeout(crashRestart); crashRestart = null }
   const c = child
   child = null
   active = false
