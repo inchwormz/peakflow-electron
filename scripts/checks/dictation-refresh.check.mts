@@ -140,25 +140,68 @@ test('[V3] stopping removes every listener and pending timer, and drops answers 
   assert.deepEqual(t.values, [])
 })
 
-test('[V3] settings: a reload that started before a toggle cannot restore the old value', async () => {
-  const { newestOnly } = load()
-  const claim = newestOnly()
-  let shown = 'On'
+function settingsRig() {
+  const { settingsStamps } = load()
+  const stamps = settingsStamps()
+  let shown = 'initial'
   const apply = (ok: () => boolean, v: string): void => { if (ok()) shown = v }
-  const reload = claim()   // account-change reload, captured while dictation is on
-  const toggle = claim()   // person switches dictation off
-  apply(toggle, 'Off')     // the newer answer lands first
-  apply(reload, 'On')      // the older reload lands after
-  assert.equal(shown, 'Off')
+  return { stamps, apply, shown: () => shown }
+}
+
+test('[V3] settings: a reload that started before a toggle cannot restore the old value', () => {
+  const t = settingsRig()
+  const reload = t.stamps.reload()
+  const toggle = t.stamps.mutate()
+  t.apply(toggle, 'Off')
+  t.apply(reload, 'On')
+  assert.equal(t.shown(), 'Off')
+})
+
+test('[V3] settings: a reload that starts while a key save is checking cannot drop the save, even answering first', () => {
+  const t = settingsRig()
+  const save = t.stamps.mutate()
+  const reload = t.stamps.reload()
+  t.apply(reload, 'no key yet')
+  t.apply(save, 'key saved')
+  assert.equal(t.shown(), 'key saved')
+})
+
+test('[V3] settings: a reload that starts after a toggle cannot drop the toggle either', () => {
+  const t = settingsRig()
+  const toggle = t.stamps.mutate()
+  const reload = t.stamps.reload()
+  t.apply(reload, 'On')
+  t.apply(toggle, 'Off')
+  assert.equal(t.shown(), 'Off')
+})
+
+test('[V3] settings: only a later mutation supersedes a mutation; a reload after a mutation still lands when it answers last', () => {
+  const t = settingsRig()
+  const first = t.stamps.mutate()
+  const second = t.stamps.mutate()
+  t.apply(second, 'second')
+  t.apply(first, 'first')
+  assert.equal(t.shown(), 'second')
+  const reload = t.stamps.reload()
+  t.apply(reload, 'fresh')
+  assert.equal(t.shown(), 'fresh')
+})
+
+test('[V3] settings: after stop nothing lands', () => {
+  const t = settingsRig()
+  const reload = t.stamps.reload()
+  t.stamps.stop()
+  t.apply(reload, 'late')
+  assert.equal(t.shown(), 'initial')
 })
 
 test('[V3] the settings rows and the balance row use these units', () => {
   const app = read('src/renderer/src/launcher/LauncherApp.tsx')
   const rows = app.slice(app.indexOf('function DictationRows'), app.indexOf('function AiSetup'))
-  assert.ok(rows.includes('newestOnly()'))
+  assert.ok(rows.includes('settingsStamps()'))
   // reload, set and remove go through take(); save key and unmount stamp directly
-  assert.equal((rows.match(/take\(invoke/g) ?? []).length, 3)
-  assert.equal((rows.match(/claim\(\)/g) ?? []).length, 3)
+  assert.equal((rows.match(/take\('(reload|mutate)', invoke/g) ?? []).length, 3)
+  assert.equal((rows.match(/claim\.(mutate|stop)\(\)/g) ?? []).length, 2)
   const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
   assert.ok(row.includes('watchAccount<DictationAccount>('))
   assert.ok(row.includes('checkoutOpened()'))

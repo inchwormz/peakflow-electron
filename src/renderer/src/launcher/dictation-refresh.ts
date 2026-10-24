@@ -7,6 +7,24 @@ export function newestOnly(): () => () => boolean {
   }
 }
 
+/** Stamps for the settings rows: a reload's answer is dropped by a newer reload or by any mutation that started after it; a mutation's answer is dropped only by a later mutation */
+export function settingsStamps(): { reload: () => () => boolean; mutate: () => () => boolean; stop: () => void } {
+  let reloads = 0
+  let mutations = 0
+  return {
+    reload: () => {
+      const r = ++reloads
+      const m = mutations
+      return () => r === reloads && m === mutations
+    },
+    mutate: () => {
+      const m = ++mutations
+      return () => m === mutations
+    },
+    stop: () => { reloads++; mutations++ }
+  }
+}
+
 export interface AccountWatchDeps<T> {
   fetch: () => Promise<T>
   onValue: (value: T) => void
