@@ -55,7 +55,7 @@ import { runOcr } from './services/clipboard-ocr'
 import { checkAccess } from './security/access-check'
 import { withToolAccess } from './security/access-guard'
 import { guardedQueueStart, guardedQueueNext, guardedWorkflowPasteNext, guardedFormPasteNext } from './quickboard-paste'
-import { activateLicense } from './security/license'
+import { activateLicense, deactivateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService, initFocusDim } from './services/focus-dim'
@@ -155,6 +155,11 @@ export function registerIpcHandlers(): void {
       if (result.success && isToolInstalled(ToolId.ScreenSlap)) void getScreenSlapService().start()
       return result
     }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SECURITY_DEACTIVATE_LICENSE,
+    async (): Promise<LicenseActivationResult> => deactivateLicense()
   )
 
   ipcMain.handle(
