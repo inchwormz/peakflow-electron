@@ -18,8 +18,8 @@ import { rebuildTray } from './tray'
 import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool, panelRendererReady } from './panel'
 import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
-import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
-import { checkForUpdates } from './services/auto-updater'
+import { checkAccessibility, requestAccessibility, permissionStatus, openPermissionPane, appLocation, moveToApplications } from './services/permissions-darwin'
+import { checkForUpdates, getUpdateProgress } from './services/auto-updater'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
 import { cancelQueue, getQueueStatus } from './services/clipboard-sequential'
@@ -1180,6 +1180,19 @@ export function registerIpcHandlers(): void {
     hidePanel()
     requestAccessibility()
   })
+  const isPermission = (k: unknown): k is 'accessibility' | 'microphone' | 'camera' => k === 'accessibility' || k === 'microphone' || k === 'camera'
+  ipcMain.handle(IPC_INVOKE.APP_PERMISSION_STATUS, (_e, kind: unknown) => (isPermission(kind) ? permissionStatus(kind) : null))
+  ipcMain.handle(IPC_INVOKE.APP_OPEN_PERMISSION, (_e, kind: unknown): void => {
+    if (!isPermission(kind)) return
+    hidePanel()
+    openPermissionPane(kind)
+  })
+  ipcMain.handle(IPC_INVOKE.APP_SETUP_INFO, () => ({
+    location: appLocation(),
+    permissions: (['accessibility', 'microphone', 'camera'] as const).map((k) => permissionStatus(k))
+  }))
+  ipcMain.handle(IPC_INVOKE.APP_MOVE_TO_APPLICATIONS, (): boolean => moveToApplications())
+  ipcMain.handle(IPC_INVOKE.APP_UPDATE_STATUS, () => getUpdateProgress())
   ipcMain.handle(IPC_INVOKE.APP_GET_ICON, async (_event, q: AppIconQuery): Promise<string | null> => {
     if (!q || typeof q !== 'object') return null
     const clean: AppIconQuery = {}

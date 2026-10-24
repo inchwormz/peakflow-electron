@@ -130,6 +130,8 @@ export interface LauncherLink {
 export interface LauncherSettings {
   hotkey: string
   hotkeyRegistered: boolean
+  /** Set when the saved shortcut was taken at start-up and PeakFlow switched to `hotkey` */
+  hotkeyMovedFrom?: string
   expansionEnabled: boolean
   /** Snippet expansion is running (has the keyboard permission it needs) */
   expansionActive: boolean

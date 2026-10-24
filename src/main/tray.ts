@@ -19,6 +19,8 @@ import { getFocusDimService } from './services/focus-dim'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
 import { isToolSupportedOn } from '@shared/platform-tools'
+import { switchAccel } from '@shared/global-keys'
+import { openLauncher, openLauncherSettings, launcherHotkey } from './launcher'
 
 let tray: Tray | null = null
 
@@ -69,13 +71,10 @@ function formatHotkeyLabel(hotkey: string): string {
  */
 const TRAY_TOOL_ORDER: readonly ToolId[] = PANEL_TOOLS
 
-/** ⌥⌘1–4 open the panel on a tool (shown next to each tool in this menu). */
-const SWITCH_ACCELERATORS: Partial<Record<ToolId, string>> = {
-  [ToolId.FocusDim]: 'Alt+CommandOrControl+1',
-  [ToolId.LiquidFocus]: 'Alt+CommandOrControl+2',
-  [ToolId.ScreenSlap]: 'Alt+CommandOrControl+3',
-  [ToolId.QuickBoard]: 'Alt+CommandOrControl+4',
-  [ToolId.SnapGrid]: 'Alt+CommandOrControl+5'
+/** ⌥⌘1–5 open the panel on a tool (shown next to each tool in this menu; none on Windows). */
+function switchAcceleratorFor(id: ToolId): string | undefined {
+  const i = PANEL_TOOLS.indexOf(id)
+  return i < 0 ? undefined : switchAccel(i, process.platform) ?? undefined
 }
 
 /**
@@ -134,7 +133,7 @@ export function buildContextMenu(): Electron.Menu {
       continue
     }
 
-    const hotkey = SWITCH_ACCELERATORS[id]
+    const hotkey = switchAcceleratorFor(id)
     toolItems.push({
       label: TOOL_DISPLAY_NAMES[id],
       accelerator: hotkey ? formatHotkeyLabel(hotkey) : undefined,
@@ -154,6 +153,20 @@ export function buildContextMenu(): Electron.Menu {
     template.push(...toolItems)
     template.push({ type: 'separator' })
   }
+
+  // The launcher, and its settings: otherwise only reachable through the
+  // launcher's own shortcut, which another app (Raycast, Alfred) may hold
+  const launcherKey = launcherHotkey()
+  template.push(
+    {
+      label: 'Open Launcher',
+      accelerator: launcherKey ? formatHotkeyLabel(launcherKey) : undefined,
+      registerAccelerator: false,
+      click: (): void => openLauncher()
+    },
+    { label: 'Launcher Settings…', click: (): void => openLauncherSettings() },
+    { type: 'separator' }
+  )
 
   template.push(
     {

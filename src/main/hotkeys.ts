@@ -18,8 +18,17 @@ import { toggleMicMute } from './services/mic-mute'
 import { isToolInstalled } from './security/trial'
 import { getConfig } from './services/config-store'
 import type { FocusDimConfig } from '@shared/config-schemas'
-import { SNAP_LAYOUTS, SNAP_UNDO_ACCEL } from '@shared/snapgrid-layouts'
+import { SNAP_LAYOUTS, SNAP_UNDO_ACCEL, snapAccel } from '@shared/snapgrid-layouts'
+import { builtInAccel, switchAccel } from '@shared/global-keys'
 import { getSnapGridService } from './services/snapgrid'
+import { HeldKeys } from './held-keys'
+import { onPasteRunChanged } from './services/paste-run'
+// Static imports: electron-vite bundles main into one file and leaves a relative
+// require() unresolved, so it would throw in the built app (Sol review P1)
+import { guardedPasteNextAny } from './quickboard-paste'
+import { isQueueActive, cancelQueue } from './services/clipboard-sequential'
+import { getWorkflowStatus, cancelWorkflow } from './services/clipboard-workflows'
+import { getFormFillStatus, cancelFormFill } from './services/clipboard-forms'
 
 /** Registry of all active hotkeys: accelerator → label (for conflict detection) */
 const hotkeyRegistry = new Map<string, string>()
@@ -85,20 +94,21 @@ export function registerHotkeys(): void {
     registerFocusDimFeatureHotkeys()
   }
 
-  // QuickBoard sequential paste queue hotkeys
+  // QuickBoard paste-next / cancel: held only while a paste run is going
   registerQueueHotkeys()
 
-  // SnapGrid window layouts (⌃⌥ + arrows / letters)
+  // SnapGrid window layouts (⌃⌥ + arrows / letters; arrows only on Windows)
   registerSnapGridHotkeys()
 
   // v2 switcher: ⌥⌘1–5 open the panel on FocusDim, Liquid Focus, ScreenSlap, QuickBoard, SnapGrid
+  // (Mac only: on Windows Alt+Ctrl+digit is AltGr+digit, which types @ # [ ] on many keyboards)
   registerSwitcherHotkeys()
 }
 
 function registerSwitcherHotkeys(): void {
   PANEL_TOOLS.forEach((toolId, i) => {
-    const accel = `Alt+CommandOrControl+${i + 1}`
-    if (globalShortcut.isRegistered(accel)) return
+    const accel = switchAccel(i, process.platform)
+    if (!accel || globalShortcut.isRegistered(accel)) return
     // Same rule as the tool shortcuts: hide if this tool is already showing, else switch to it
     registerSingleHotkey(`switch:${toolId}`, accel, () => toggleTool(toolId))
   })
@@ -138,8 +148,9 @@ function registerSnapGridHotkeys(): void {
   if (!isToolInstalled(ToolId.SnapGrid)) return
   const svc = getSnapGridService()
   for (const layout of SNAP_LAYOUTS) {
-    if (globalShortcut.isRegistered(layout.accel)) continue
-    registerSingleHotkey(`snapgrid:${layout.key}`, layout.accel, () => void svc.applyLayout(layout.key))
+    const accel = snapAccel(layout, process.platform)
+    if (!accel || globalShortcut.isRegistered(accel)) continue
+    registerSingleHotkey(`snapgrid:${layout.key}`, accel, () => void svc.applyLayout(layout.key))
   }
   if (!globalShortcut.isRegistered(SNAP_UNDO_ACCEL)) {
     registerSingleHotkey('snapgrid:undo', SNAP_UNDO_ACCEL, () => void svc.undo())
@@ -202,6 +213,8 @@ function registerFocusDimFeatureHotkeys(): void {
   ]
 
   for (const fk of featureKeys) {
+    // Peek (Ctrl+Alt+`) is AltGr+` on Windows: no shortcut there
+    if (!builtInAccel(fk.accel, process.platform)) continue
     if (globalShortcut.isRegistered(fk.accel)) continue
     const ok = globalShortcut.register(fk.accel, fk.action)
     if (ok) {
@@ -214,49 +227,67 @@ function registerFocusDimFeatureHotkeys(): void {
 }
 
 /**
- * Register QuickBoard sequential paste queue hotkeys.
- * Always active — pasteNext() is a no-op when queue is empty.
+ * QuickBoard paste queue keys: ⇧⌘N pastes the next item, ⇧⌘Q cancels.
+ * They're common Mac and Windows shortcuts (Chrome's incognito window,
+ * Finder's new folder, Log Out), so PeakFlow takes them only while a paste
+ * queue, workflow or form fill is running (review S7).
  */
-function registerQueueHotkeys(): void {
-  if (!isToolInstalled(ToolId.QuickBoard)) return
+export const QUEUE_KEYS = { next: 'CommandOrControl+Shift+N', cancel: 'CommandOrControl+Shift+Q' } as const
 
-  const queueKeys: Array<{ accel: string; id: string; action: () => void }> = [
-    {
-      accel: 'CommandOrControl+Shift+N',
-      id: 'quickboard:paste-next',
-      action: () => {
-        // Same access check as the panel's paste buttons
-        const { guardedPasteNextAny } = require('./quickboard-paste')
-        void guardedPasteNextAny()
-      }
-    },
-    {
-      accel: 'CommandOrControl+Shift+Q',
-      id: 'quickboard:cancel-queue',
-      action: () => {
-        const { getWorkflowStatus, cancelWorkflow } = require('./services/clipboard-workflows')
-        if (getWorkflowStatus().active) {
-          cancelWorkflow()
-          return
-        }
-        const { getFormFillStatus, cancelFormFill } = require('./services/clipboard-forms')
-        if (getFormFillStatus().active) {
-          cancelFormFill()
-          return
-        }
-        const { cancelQueue } = require('./services/clipboard-sequential')
-        cancelQueue()
-      }
-    }
-  ]
+let queueKeys: HeldKeys | null = null
+let offPasteRun: (() => void) | null = null
 
-  for (const qk of queueKeys) {
-    if (globalShortcut.isRegistered(qk.accel)) {
-      console.warn(`[PeakFlow] Skipping ${qk.accel} — already registered`)
-      continue
-    }
-    registerSingleHotkey(qk.id, qk.accel, qk.action)
+function pasteRunActive(): boolean {
+  return isQueueActive() || getWorkflowStatus().active || getFormFillStatus().active
+}
+
+function syncQueueHotkeys(): void {
+  if (!queueKeys) return
+  const want = isToolInstalled(ToolId.QuickBoard) && pasteRunActive()
+  const before = queueKeys.isHeld(QUEUE_KEYS.next) || queueKeys.isHeld(QUEUE_KEYS.cancel)
+  const held = queueKeys.sync(want)
+  for (const a of [QUEUE_KEYS.next, QUEUE_KEYS.cancel]) {
+    if (held.includes(a)) hotkeyRegistry.set(a, a === QUEUE_KEYS.next ? 'quickboard:paste-next' : 'quickboard:cancel-queue')
+    else if (hotkeyRegistry.get(a)?.startsWith('quickboard:')) hotkeyRegistry.delete(a)
   }
+  if (want !== before) console.log(`[PeakFlow] Paste queue keys ${want ? `held (${held.join(', ') || 'none free'})` : 'released'}`)
+}
+
+function registerQueueHotkeys(): void {
+  if (queueKeys) return
+  queueKeys = new HeldKeys(
+    {
+      register: (a, fn) => globalShortcut.register(a, fn),
+      unregister: (a) => globalShortcut.unregister(a),
+      isRegistered: (a) => globalShortcut.isRegistered(a)
+    },
+    [
+      {
+        accel: QUEUE_KEYS.next,
+        action: () => {
+          // Same access check as the panel's paste buttons
+          void guardedPasteNextAny()
+        }
+      },
+      {
+        accel: QUEUE_KEYS.cancel,
+        action: () => {
+          if (getWorkflowStatus().active) {
+            cancelWorkflow()
+            return
+          }
+          if (getFormFillStatus().active) {
+            cancelFormFill()
+            return
+          }
+          cancelQueue()
+        }
+      }
+    ]
+  )
+  // A run can end inside the key's own handler: release on the next tick
+  offPasteRun = onPasteRunChanged(() => setImmediate(syncQueueHotkeys))
+  syncQueueHotkeys()
 }
 
 /**
@@ -274,6 +305,9 @@ export function getRegisteredHotkeys(): Array<{ accelerator: string; label: stri
  * Unregister all global shortcuts. Called during app shutdown.
  */
 export function unregisterHotkeys(): void {
+  offPasteRun?.()
+  offPasteRun = null
+  queueKeys = null
   globalShortcut.unregisterAll()
   hotkeyRegistry.clear()
   console.log('[PeakFlow] All hotkeys unregistered')

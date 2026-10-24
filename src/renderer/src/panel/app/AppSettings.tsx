@@ -11,13 +11,17 @@
  */
 
 import { useState } from 'react'
-import { IPC_INVOKE } from '@shared/ipc-types'
+import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import { EXTENSION_ENABLED } from '@shared/tool-ids'
 import type { AccessStatus, LicenseActivationResult } from '@shared/ipc-types'
 import type { LauncherSettings } from '@shared/launcher/types'
 import type { PanelToolId, RouteTable } from '../types'
-import { invoke, isMac, useInvoke, formatAccelerator } from '../hooks'
-import { Btn, Grp, Hero, Gap, Note, Primary, Rec, Row, Toggle, V, openExternal } from '../kit'
+import { invoke, isMac, useInvoke, useIpcEvent, formatAccelerator, builtInKey, ALTGR_NOTE } from '../hooks'
+import type { MacPermission, PermissionStatus } from '@shared/mac-permissions'
+import type { UpdateProgress } from '@shared/update-offer'
+import { openPermission } from '../permission'
+import { SWITCH_ACCELS as SWITCH } from '@shared/global-keys'
+import { Banner, Btn, Grp, Hero, Gap, Note, Primary, Rec, Row, Toggle, V, openExternal } from '../kit'
 import { Icon } from '../icons'
 import { useNav } from '../nav'
 import { TOOL_MODULES } from '../tools'
@@ -110,6 +114,7 @@ function Home(): React.JSX.Element {
           }
         />
         <Row label="Updates" icon="refresh" value={info ? `v${info.version}` : ''} go="app/updates" />
+        {isMac() ? <Row label="Set up on this Mac" icon="shield" go="app/setup" /> : null}
       </Grp>
       <Grp>
         {EXTENSION_ENABLED ? <Row label="Chrome extension" icon="puzzle" go="app/extension" /> : null}
@@ -305,8 +310,6 @@ function Tools(): React.JSX.Element {
 
 /* ─── keyboard shortcuts ─────────────────────────────────────────────────── */
 
-const SWITCH = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4', 'Alt+CommandOrControl+5']
-
 function Hotkeys(): React.JSX.Element {
   const [registered] = useInvoke<Array<{ accelerator: string; label: string }>>(IPC_INVOKE.HOTKEY_GET_REGISTERED)
   const has = (accel: string): boolean => !registered || registered.some((r) => r.accelerator.toLowerCase() === accel.toLowerCase())
@@ -318,7 +321,11 @@ function Hotkeys(): React.JSX.Element {
       <Note style={{ marginBottom: 2 }}>PeakFlow</Note>
       <Grp>
         {TOOL_MODULES.map((m, i) => (
-          <Row key={m.id} label={`Open ${m.name}`} sub={taken(SWITCH[i])} right={<Rec value={SWITCH[i]} />} />
+          builtInKey(SWITCH[i]) ? (
+            <Row key={m.id} label={`Open ${m.name}`} sub={taken(SWITCH[i])} right={<Rec value={SWITCH[i]} />} />
+          ) : (
+            <Row key={m.id} label={`Open ${m.name}`} value="No shortcut" />
+          )
         ))}
         {launcher && (
           <Row
@@ -332,17 +339,55 @@ function Hotkeys(): React.JSX.Element {
       <Grp>
         <Row label="FocusDim on or off" go="focusdim/shortcuts" />
         <Row label="FocusDim brighter / darker" value={`${formatAccelerator('Control+Alt+Up')} ${formatAccelerator('Control+Alt+Down')}`} />
-        <Row label="FocusDim peek" right={<Rec value="Control+Alt+`" />} />
+        {builtInKey('Control+Alt+`') ? <Row label="FocusDim peek" right={<Rec value="Control+Alt+`" />} /> : null}
         <Row label="Open QuickBoard" right={<Rec value="CommandOrControl+Shift+V" />} />
-        <Row label="Paste next / cancel" value={`${formatAccelerator('CommandOrControl+Shift+N')} ${formatAccelerator('CommandOrControl+Shift+Q')}`} />
+        <Row
+          label="Paste next / cancel"
+          sub="Only while you paste a list. The rest of the time other apps keep these keys."
+          value={`${formatAccelerator('CommandOrControl+Shift+N')} ${formatAccelerator('CommandOrControl+Shift+Q')}`}
+        />
         <Row label="SnapGrid layouts" go="snapgrid/shortcuts" />
       </Grp>
-      <Note style={{ marginTop: 10 }}>FocusDim’s on/off shortcut can be changed in its settings. The others are fixed for now.</Note>
+      <Note style={{ marginTop: 10 }}>
+        FocusDim’s on/off shortcut can be changed in its settings. The others are fixed for now.
+        {isMac() ? null : <> {ALTGR_NOTE}</>}
+      </Note>
     </>
   )
 }
 
 /* ─── updates ────────────────────────────────────────────────────────────── */
+
+/** Mac download progress and errors (review S12); Windows downloads in the background as before. */
+function UpdateProgressView(): React.JSX.Element | null {
+  const [initial] = useInvoke<UpdateProgress>(IPC_INVOKE.APP_UPDATE_STATUS)
+  const [live, setLive] = useState<UpdateProgress | null>(null)
+  useIpcEvent(IPC_SEND.APP_UPDATE_PROGRESS, (p) => setLive(p as UpdateProgress))
+  const p = live ?? initial
+  if (!p || p.state === 'idle') return null
+  const v = p.version ? ` ${p.version}` : ''
+  if (p.state === 'error') {
+    return (
+      <Banner icon="info" style={{ marginBottom: 12 }}>
+        <b>The download of PeakFlow{v} stopped</b>
+        <br />
+        {p.message ? `${p.message}. ` : ''}Check your connection and try again, or download it from getpeakflow.pro.
+      </Banner>
+    )
+  }
+  if (p.state === 'downloaded') {
+    return <Note style={{ marginBottom: 12, color: 'var(--text)' }}>PeakFlow{v} has downloaded. Follow the steps in the window that opened.</Note>
+  }
+  const pct = typeof p.percent === 'number' ? p.percent : null
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <Note style={{ margin: '0 0 6px', color: 'var(--text)' }}>Downloading PeakFlow{v}{pct !== null ? `: ${pct}%` : '…'}</Note>
+      <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct ?? undefined}>
+        <i style={{ width: `${pct ?? 5}%` }} />
+      </div>
+    </div>
+  )
+}
 
 function Updates(): React.JSX.Element {
   const [info] = useInvoke<AppInfo>(IPC_INVOKE.APP_GET_INFO)
@@ -350,8 +395,11 @@ function Updates(): React.JSX.Element {
   const arch = info?.arch === 'arm64' ? 'Apple silicon' : info?.arch === 'x64' ? 'Intel' : info?.arch
   return (
     <>
-      <Hero icon="logo" title={info ? `PeakFlow ${info.version}` : 'PeakFlow'}>Updates download in the background. PeakFlow tells you when one is ready.</Hero>
+      <Hero icon="logo" title={info ? `PeakFlow ${info.version}` : 'PeakFlow'}>
+        {isMac() ? 'PeakFlow checks for updates and asks before it downloads one.' : 'Updates download in the background. PeakFlow tells you when one is ready.'}
+      </Hero>
       <Gap />
+      <UpdateProgressView />
       <Btn
         block
         disabled={checking}
@@ -426,6 +474,78 @@ function Help(): React.JSX.Element {
   )
 }
 
+/* ─── set up on a Mac (review S13) ───────────────────────────────────────── */
+
+interface SetupInfo {
+  location: 'applications' | 'downloads' | 'disk-image' | 'elsewhere'
+  permissions: PermissionStatus[]
+}
+
+const RUNS_FROM: Record<Exclude<SetupInfo['location'], 'applications'>, string> = {
+  downloads: 'your Downloads folder',
+  'disk-image': 'the disk image you downloaded',
+  elsewhere: 'a folder outside Applications'
+}
+
+const PERMISSION_ROWS: Array<{ kind: MacPermission; label: string; sub: string }> = [
+  { kind: 'accessibility', label: 'Accessibility', sub: 'Lets QuickBoard paste for you, FocusDim follow your window, SnapGrid move windows and snippets expand.' },
+  { kind: 'microphone', label: 'Microphone', sub: 'Only for Dictation. macOS asks the first time you use it.' },
+  { kind: 'camera', label: 'Camera', sub: 'Only for Liquid Focus, to notice when you look away. macOS asks the first time you turn it on.' }
+]
+
+function Setup(): React.JSX.Element {
+  const nav = useNav()
+  const [info] = useInvoke<SetupInfo>(IPC_INVOKE.APP_SETUP_INFO)
+  const [moving, setMoving] = useState(false)
+  if (!info) return <div style={{ height: 220 }} />
+  const status = (k: MacPermission): PermissionStatus | undefined => info.permissions.find((p) => p.kind === k)
+  const missing = info.permissions.filter((p) => !p.granted && !p.undecided)
+  return (
+    <>
+      {info.location !== 'applications' ? (
+        <>
+          <Banner icon="download">
+            <b>Move PeakFlow to Applications</b>
+            <br />
+            It’s running from {RUNS_FROM[info.location]}. Updates and permissions work properly only when PeakFlow is in Applications.
+          </Banner>
+          <Btn
+            primary
+            block
+            disabled={moving}
+            style={{ marginTop: 12, marginBottom: 14 }}
+            onClick={() => {
+              setMoving(true)
+              invoke<boolean>(IPC_INVOKE.APP_MOVE_TO_APPLICATIONS)
+                .then((ok) => {
+                  if (!ok) nav.toast('Couldn’t move it. Drag PeakFlow into Applications yourself.')
+                })
+                .catch(() => {})
+                .finally(() => setMoving(false))
+            }}
+          >
+            {moving ? 'Moving…' : 'Move to Applications'}
+          </Btn>
+        </>
+      ) : null}
+      <Grp>
+        {PERMISSION_ROWS.map((r) => {
+          const s = status(r.kind)
+          const right = !s ? null : s.granted ? <V>On</V> : s.undecided ? <V>Asks when needed</V> : <Btn sm onClick={() => openPermission(r.kind)}>Open</Btn>
+          return <Row key={r.kind} label={r.label} sub={r.sub} right={right} />
+        })}
+      </Grp>
+      {missing.map((p) => (
+        <Note key={p.kind} style={{ marginTop: 10, color: 'var(--text)' }}>
+          {p.advice}
+        </Note>
+      ))}
+      <Gap h={16} />
+      <Primary onClick={() => nav.back()}>Done</Primary>
+    </>
+  )
+}
+
 /** `back: '__last'` returns to the tool that was open before. */
 export const APP_ROUTES: RouteTable = {
   app: { kind: 'sub', back: '__last', title: 'PeakFlow settings', view: Home },
@@ -434,6 +554,7 @@ export const APP_ROUTES: RouteTable = {
   'app/tools': { kind: 'sub', back: 'app', title: 'Tools', view: Tools },
   'app/hotkeys': { kind: 'sub', back: 'app', title: 'Keyboard shortcuts', view: Hotkeys },
   'app/updates': { kind: 'sub', back: 'app', title: 'Updates', view: Updates },
+  'app/setup': { kind: 'sub', back: '__last', title: 'Set up on your Mac', view: Setup },
   ...(EXTENSION_ENABLED ? { 'app/extension': { kind: 'sub' as const, back: 'app', title: 'Chrome extension', view: Extension } } : {}),
   'app/share': { kind: 'sub', back: 'app', title: 'Share & Earn', view: Share },
   'app/help': { kind: 'sub', back: 'app', title: 'Help', view: Help }
