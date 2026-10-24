@@ -44,6 +44,7 @@
 
 ### Mac Release Checklist
 - Before a Mac release, follow `docs/RELEASE-CHECKLIST.md`: identity/signature check (`mac-release-identity.mjs`), `.env` with the three top-up links, and the Accessibility note for updates.
+- Mac release signing (full details: `docs/RELEASE-CHECKLIST.md` item 3): certificate "PeakFlow Code Signing", SHA-1 `2C6DF1B6EA8E330D6D4727B05F7A1CE533C55755`, expires 2036-10-21, backup in `~/.secrets/peakflow-signing/`, install with `~/Work/peakflow/docs/2026-10-25-v2.1.4-release/install-signing-cert.sh`. Check it with `security find-identity -v -p codesigning`. Build with `PEAKFLOW_MAC_SIGN_IDENTITY="PeakFlow Code Signing" npm run build:mac`. Never ship ad-hoc, and never recreate the certificate (every Mac user would re-add PeakFlow). Self-signed builds are not auto-update-capable on Mac (users download by hand).
 - If the PeakFlow log says `[Launcher] Hold key and snippets need the Accessibility permission (not trusted)` (the Dictation page shows a warning row too), the user removes PeakFlow from Accessibility and adds it again; stable signing (`PEAKFLOW_MAC_SIGN_IDENTITY`) keeps the grant across updates.
 
 ### Build & Run
