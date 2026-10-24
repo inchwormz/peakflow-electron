@@ -9,6 +9,8 @@
  * The cure is a Developer ID signature; until then this text says what works.
  */
 
+import { ART_LABELS_EN, type ArtLabels } from './permission-art'
+
 export type MacPermission = 'accessibility' | 'microphone' | 'camera'
 
 export const PERMISSION_LABEL: Record<MacPermission, string> = {
@@ -64,6 +66,16 @@ export function guideView(s: PermissionStatus | null | undefined): GuideView {
   if (!s) return 'none'
   if (s.granted) return s.fixed ? 'all-set' : 'none'
   return s.undecided ? 'none' : 'steps'
+}
+
+/** Re-check every 2 seconds while the steps or "All set" are on screen (so All set expires, and a new loss shows). */
+export function guideNeedsRecheck(view: GuideView): boolean {
+  return view !== 'none'
+}
+
+/** The words drawn in a step's picture: the list is named after the permission. */
+export function guideArtLabels(kind: MacPermission): ArtLabels {
+  return { ...ART_LABELS_EN, list: PERMISSION_LABEL[kind] }
 }
 
 export interface GuideStep {

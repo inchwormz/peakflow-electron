@@ -125,10 +125,25 @@ g.__m.version = '2.1.5'
 assert.equal(P.macStartupRoute(), 'app/setup', 'after a fix: the set-up page shows All set')
 assert.equal(P.permissionStatus('accessibility').fixed, true)
 
+// Microphone fixed while PeakFlow was closed: the set-up page says All set too (Sol P2)
+g.__m.mic = 'denied'
+P.permissionStatus('microphone') // seen off
+g.__m.mic = 'granted'
+g.__m.version = '2.1.6'
+assert.equal(P.macStartupRoute(), 'app/setup', 'Microphone fixed while closed: All set at launch')
+assert.equal(P.macStartupRoute(), null, 'only once')
+
 // Microphone not asked yet: no guide; denied: one step, switch off and on
 g.__m.mic = 'not-determined'
 assert.equal(M.guideView(P.permissionStatus('microphone')), 'none')
 assert.deepEqual(M.guideCopy('microphone', true).steps.map((x: { art: string }) => x.art), ['toggle'])
+
+// Sol P3: the Microphone picture says Microphone; "All set" keeps re-checking
+assert.ok(A.permissionArt('toggle', 'x', M.guideArtLabels('microphone')).includes('>Microphone</text>'))
+assert.ok(!A.permissionArt('toggle', 'x', M.guideArtLabels('camera')).includes('>Accessibility</text>'))
+assert.equal(M.guideNeedsRecheck('steps'), true)
+assert.equal(M.guideNeedsRecheck('all-set'), true, 'All set re-checks so it expires and a new loss shows')
+assert.equal(M.guideNeedsRecheck('none'), false)
 
 // The pictures: one SVG per step, labels escaped, light and dark colours inside
 for (const step of ['remove', 'add', 'choose', 'switch', 'toggle']) {

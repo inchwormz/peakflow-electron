@@ -17,7 +17,7 @@
 import { useEffect } from 'react'
 import { IPC_INVOKE } from '@shared/ipc-types'
 import type { MacPermission, PermissionStatus } from '@shared/mac-permissions'
-import { GUIDE_ALL_SET, GUIDE_RESTART_HINT, GUIDE_WATCHING, PERMISSION_GUIDE_URL, guideCopy, guideView } from '@shared/mac-permissions'
+import { GUIDE_ALL_SET, GUIDE_RESTART_HINT, GUIDE_WATCHING, PERMISSION_GUIDE_URL, guideArtLabels, guideCopy, guideNeedsRecheck, guideView } from '@shared/mac-permissions'
 import { permissionArt } from '@shared/permission-art'
 import { invoke, isMac, useInvoke, usePanelVisible } from './hooks'
 import { Banner, Btn, LinkBtn, Note, openExternal } from './kit'
@@ -28,13 +28,14 @@ export function usePermission(kind: MacPermission): PermissionStatus | null {
   return usePermissionLive(kind)[0]
 }
 
-/** Status plus a re-check every 2 seconds while the steps are on screen. */
+/** Status plus a re-check every 2 seconds while the steps or "All set" are on screen. */
 function usePermissionLive(kind: MacPermission): [PermissionStatus | null, () => void] {
   const [s, reload] = useInvoke<PermissionStatus | null>(IPC_INVOKE.APP_PERMISSION_STATUS, kind)
   const visible = usePanelVisible()
   const view = guideView(s)
   useEffect(() => {
-    if (!isMac() || !visible || view !== 'steps') return
+    // Also while "All set" shows, so it goes away when it expires and a new loss shows at once
+    if (!isMac() || !visible || !guideNeedsRecheck(view)) return
     const t = setInterval(reload, 2000)
     return () => clearInterval(t)
   }, [visible, view, reload])
@@ -45,9 +46,10 @@ export function openPermission(kind: MacPermission): void {
   invoke(IPC_INVOKE.APP_OPEN_PERMISSION, kind).catch(() => {})
 }
 
-function Art({ step, label }: { step: Parameters<typeof permissionArt>[0]; label: string }): React.JSX.Element {
-  // Static, escaped markup from shared/permission-art.ts (no user data)
-  return <div className="pg-art" dangerouslySetInnerHTML={{ __html: permissionArt(step, label) }} />
+function Art({ kind, step, label }: { kind: MacPermission; step: Parameters<typeof permissionArt>[0]; label: string }): React.JSX.Element {
+  // Static, escaped markup from shared/permission-art.ts (no user data); the list is named after the permission
+  const html = permissionArt(step, label, guideArtLabels(kind))
+  return <div className="pg-art" dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 function AllSet({ kind }: { kind: MacPermission }): React.JSX.Element {
@@ -75,7 +77,7 @@ export function GuideSteps({ kind, lost }: { kind: MacPermission; lost: boolean 
             <span className="pg-n">{i + 1}</span>
             <span>{st.text}</span>
           </div>
-          <Art step={st.art} label={st.text} />
+          <Art kind={kind} step={st.art} label={st.text} />
         </li>
       ))}
     </ol>

@@ -171,8 +171,12 @@ export function macStartupRoute(): string | null {
   const firstRun = !onboardingStore.get('firstRunShown')
   // Read before permissionStatus() records anything
   const neverRecorded = !(onboardingStore.get('everGranted') ?? {}).accessibility
-  const wasWaiting = !!(onboardingStore.get('awaitingFix') ?? {}).accessibility
+  const waiting = { ...(onboardingStore.get('awaitingFix') ?? {}) }
   const ax = permissionStatus('accessibility')
+  // Any permission seen off that works now (fixed while PeakFlow was closed)
+  const fixedWhileClosed = (['accessibility', 'microphone', 'camera'] as const).filter(
+    (k) => waiting[k] && (k === 'accessibility' ? ax : permissionStatus(k)).fixed
+  )
   onboardingStore.set('firstRunShown', true)
   const version = app.getVersion()
   if (firstRun) {
@@ -181,9 +185,9 @@ export function macStartupRoute(): string | null {
     return 'app/setup'
   }
   // Fixed while PeakFlow was closed (the customer quit and reopened it): say "All set" once
-  if (wasWaiting && ax.fixed) {
+  if (fixedWhileClosed.length) {
     onboardingStore.set('setupShownFor', version) // the same page also covers a wrong location
-    console.log('[Permissions] Accessibility works again: showing the set-up page')
+    console.log(`[Permissions] ${fixedWhileClosed.join(', ')} works again: showing the set-up page`)
     return 'app/setup'
   }
   // An install from before this release that has no Accessibility now: most likely an update reset it
