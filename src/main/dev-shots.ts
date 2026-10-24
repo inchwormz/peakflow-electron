@@ -9,6 +9,7 @@
  *   { "name": "10-mini", "mini": true, "card": false }   the Liquid Focus mini timer
  *   { "name": "20-alert", "alert": true }                ScreenSlap test alert
  *   { "wait": 1500 }
+ *   { "permission": { "accessibility": false } }        pretend a permission is off (true: on, null: real)
  * Each named step saves <name>.png (window contents) and <name>-screen.png
  * (the real screen around the window, with the macOS shadow). Never runs in
  * packaged builds.
@@ -22,6 +23,8 @@ import { is } from '@electron-toolkit/utils'
 import { SystemWindowId } from '@shared/tool-ids'
 import { getPanel, showPanel, hidePanel } from './panel'
 import { createToolWindow, getToolWindow, closeToolWindow } from './windows'
+import { setDevPermission } from './services/permissions-darwin'
+import type { MacPermission } from '@shared/mac-permissions'
 
 interface Step {
   name?: string
@@ -41,6 +44,8 @@ interface Step {
   miniInput?: Array<{ type: 'mouseDown' | 'mouseUp' | 'mouseMove'; x: number; y: number; button?: 'left' | 'right' }>
   /** Log the mini timer's bounds */
   miniBounds?: boolean
+  /** Pretend permissions are on or off (null: the real answer) */
+  permission?: Partial<Record<MacPermission, boolean | null>>
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -78,6 +83,9 @@ export async function runDevShots(): Promise<void> {
   for (const step of plan) {
     try {
       if (step.wait) await sleep(step.wait)
+      if (step.permission) {
+        for (const [k, v] of Object.entries(step.permission)) setDevPermission(k as MacPermission, v ?? null)
+      }
       if (step.eval) {
         showPanel()
         const out = await getPanel()?.webContents.executeJavaScript(step.eval, true)

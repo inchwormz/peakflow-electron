@@ -13,6 +13,7 @@ import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { AppIcon, Banner, Btn, Empty, IconBtn, LinkBtn, Note } from '../../kit'
 import { Icon, type IconName } from '../../icons'
 import { useNav, type NavApi } from '../../nav'
+import { PermissionNotice } from '../../permission'
 import {
   canEdit, clipLines, deleteClip, getQB, reloadHistory, reloadPasteStatus, reloadTags, setQB, timeAgo, togglePin, useQB, visibleClips,
   OPEN_KEY, QUEUE_NEXT_KEY, type Clip, type Suggestion, type TypeFilter
@@ -149,6 +150,7 @@ export function MainList(): React.JSX.Element {
 
   return (
     <>
+      <PermissionNotice kind="accessibility" why="QuickBoard uses it to paste into the app you were in." onlyIfLost />
       {s.paste.active ? (
         <Banner style={{ marginBottom: 10 }} action={<LinkBtn onClick={cancelPaste}>Cancel</LinkBtn>}>
           <b>{s.paste.kind === 'form' ? 'Filling' : 'Pasting'} {s.paste.current} of {s.paste.total}</b>

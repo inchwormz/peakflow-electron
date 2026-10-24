@@ -18,7 +18,7 @@ import { rebuildTray } from './tray'
 import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool, panelRendererReady } from './panel'
 import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
-import { checkAccessibility, requestAccessibility, permissionStatus, openPermissionPane, appLocation, moveToApplications } from './services/permissions-darwin'
+import { checkAccessibility, requestAccessibility, permissionStatus, openPermissionPane, appLocation, moveToApplications, watchForFix } from './services/permissions-darwin'
 import { checkForUpdates, getUpdateProgress } from './services/auto-updater'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
@@ -1179,6 +1179,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_INVOKE.APP_OPEN_ACCESSIBILITY, (): void => {
     hidePanel()
     requestAccessibility()
+    watchForFix('accessibility', () => showPanel('app/setup'))
   })
   const isPermission = (k: unknown): k is 'accessibility' | 'microphone' | 'camera' => k === 'accessibility' || k === 'microphone' || k === 'camera'
   ipcMain.handle(IPC_INVOKE.APP_PERMISSION_STATUS, (_e, kind: unknown) => (isPermission(kind) ? permissionStatus(kind) : null))
@@ -1186,6 +1187,12 @@ export function registerIpcHandlers(): void {
     if (!isPermission(kind)) return
     hidePanel()
     openPermissionPane(kind)
+    // The moment it works, open the panel where the customer was, now saying "All set"
+    watchForFix(kind, () => showPanel())
+  })
+  ipcMain.handle(IPC_INVOKE.APP_RESTART, (): void => {
+    app.relaunch()
+    app.quit()
   })
   ipcMain.handle(IPC_INVOKE.APP_SETUP_INFO, () => ({
     location: appLocation(),
