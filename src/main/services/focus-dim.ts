@@ -1142,7 +1142,13 @@ class FocusDimService {
       return
     }
 
-    this.sendOverlayUpdate({ x: -10000, y: -10000, w: 1, h: 1 })
+    const rect = { x: -10000, y: -10000, w: 1, h: 1 }
+    const lr = this._lastRect
+    if (rect.x === lr.x && rect.y === lr.y && rect.w === lr.w && rect.h === lr.h && this._lastRectsHash === '') return
+    this._lastRect = rect
+    this._lastRectsHash = ''
+    this.hideCanvas()
+    this.sendOverlayUpdate(rect)
   }
 }
 

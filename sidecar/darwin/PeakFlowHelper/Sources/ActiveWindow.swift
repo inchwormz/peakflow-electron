@@ -153,9 +153,9 @@ func getActiveWindow() -> WindowInfo? {
     return getWindowFromCGWindowList(pid: pid, bundleId: bundleId, appName: appName)
 }
 
-// A real window must be at least 50pt in both dimensions; Chrome's link bubble is only 22pt tall.
+// Preserve small windows in enumeration and Accessibility results.
 func isFocusWindow(width: CGFloat, height: CGFloat, alpha: CGFloat = 1) -> Bool {
-    return width >= 50 && height >= 50 && alpha > 0
+    return width >= 10 && height >= 10 && alpha > 0
 }
 
 func isAXFocusWindow(role: String?, subrole: String?, width: CGFloat, height: CGFloat) -> Bool {
@@ -172,6 +172,7 @@ private func getWindowFromCGWindowList(pid: Int32, bundleId: String, appName: St
 }
 
 func selectWindowFromCGWindowList(_ windowList: [[String: Any]], pid: Int32, bundleId: String, appName: String) -> WindowInfo? {
+    var fallback: WindowInfo?
     for windowInfo in windowList {
         guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? Int32,
               ownerPID == pid,
@@ -188,16 +189,20 @@ func selectWindowFromCGWindowList(_ windowList: [[String: Any]], pid: Int32, bun
 
         let title = windowInfo[kCGWindowName as String] as? String ?? ""
 
-        return WindowInfo(
+        let window = WindowInfo(
             pid: pid,
             x: Double(x), y: Double(y), w: Double(w), h: Double(h),
             title: title,
             bundleId: bundleId,
             appName: appName
         )
+        // Prefer a full-sized window over Chrome's 22pt link bubble, but keep
+        // the first small window when no larger window qualifies.
+        if w >= 50 && h >= 50 { return window }
+        if fallback == nil { fallback = window }
     }
 
-    return nil
+    return fallback
 }
 
 // MARK: - All visible windows
