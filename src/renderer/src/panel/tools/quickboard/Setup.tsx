@@ -10,6 +10,7 @@ import { invoke } from '../../hooks'
 import { Btn, Grp, Hero, LinkBtn, Row, V } from '../../kit'
 import { useNav } from '../../nav'
 import { reloadHistory, reloadTags, setQB, useQB, type OnboardConfig } from './store'
+import { ConnectAiBtn, needsConnect } from './ConnectAi'
 import './quickboard.css'
 
 const ROLES = ['Developer', 'Designer', 'Writer', 'Project manager', 'Student', 'Marketing / sales', 'Support', 'Other']
@@ -102,8 +103,9 @@ export function Setup3(): React.JSX.Element {
 const ERR: Record<string, string> = {
   timeout: 'It took too long. Try again.',
   not_licensed: 'AI setup needs a PeakFlow licence.',
-  no_provider: 'QuickBoard’s AI uses your own ChatGPT or Claude. Install Codex or Claude Code, sign in once, then try again.',
-  not_signed_in: 'Open Codex or Claude Code once and sign in, then try again.'
+  no_provider: 'QuickBoard’s AI runs on your own ChatGPT or Claude. Connect one, then try again.',
+  not_signed_in: 'You’re signed out of ChatGPT or Claude. Connect signs you back in, then try again.',
+  codex_outdated: 'Your Codex app is too old for PeakFlow. Update it in Terminal with “npm install -g @openai/codex”, then try again.'
 }
 
 export function SetupGenerating(): React.JSX.Element {
@@ -184,6 +186,11 @@ export function SetupError(): React.JSX.Element {
   return (
     <Wiz n={4} title="Your setup" nextLabel="Try again" next={() => nav.go('quickboard/setup/generating')}>
       <Hero icon="info" title="Couldn’t generate a setup">{ERR[w.error] ?? 'Something went wrong. Try again.'}</Hero>
+      {needsConnect(w.error) ? (
+        <div style={{ marginTop: 12 }}>
+          <ConnectAiBtn block />
+        </div>
+      ) : null}
     </Wiz>
   )
 }
