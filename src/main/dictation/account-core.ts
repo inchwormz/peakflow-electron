@@ -3,7 +3,7 @@ import type { AddonAuth, AddonStatus } from './addon'
 import type { DictationAccount, TopupAmount } from '../../shared/dictation-account'
 
 /** Offered in this order; each needs its own buy link */
-export const TOPUP_AMOUNTS: readonly TopupAmount[] = [5, 10, 15, 20]
+export const TOPUP_AMOUNTS: readonly TopupAmount[] = [5, 10, 20]
 
 export function accountHash(key: string): string {
   return createHash('sha256').update(key.trim()).digest('hex')

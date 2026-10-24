@@ -7,7 +7,6 @@ interface ImportMetaEnv {
   readonly MAIN_VITE_DICTATION_TOPUP_URL?: string
   readonly MAIN_VITE_DICTATION_TOPUP_URL_5?: string
   readonly MAIN_VITE_DICTATION_TOPUP_URL_10?: string
-  readonly MAIN_VITE_DICTATION_TOPUP_URL_15?: string
   readonly MAIN_VITE_DICTATION_TOPUP_URL_20?: string
 }
 

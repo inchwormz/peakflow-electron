@@ -1,5 +1,5 @@
 /**
- * The prepaid dictation add-on ($5, $10, $15 or $20 top-ups): PeakFlow's server holds the OpenAI key and meters
+ * The prepaid dictation add-on ($5, $10 or $20 top-ups): PeakFlow's server holds the OpenAI key and meters
  * each clip against the person's balance, so they don't need a key of their own.
  * Signed in with their PeakFlow licence key plus a device id made up once.
  *

@@ -1,4 +1,4 @@
-// $5 / $10 / $15 / $20 top-ups (John, 24 Oct 2026: "Add the ability to add 10 , 15 or 20")
+// $5 / $10 / $20 top-ups (John, 24 Oct 2026: "Add the ability to add 10 , 15 or 20", then "just did 5/10/20 no need for 15")
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -12,7 +12,6 @@ const reply = { state: 'ok', balanceMicros: 4070000, minutesLeft: 900, usedSecon
 const urls = {
   5: 'https://shop.lemonsqueezy.com/buy/five',
   10: 'https://shop.lemonsqueezy.com/buy/ten',
-  15: 'https://shop.lemonsqueezy.com/buy/fifteen',
   20: 'https://shop.lemonsqueezy.com/buy/twenty'
 }
 function client(topupUrls: Record<number, string | undefined>, body: unknown = reply) {
@@ -28,14 +27,14 @@ function client(topupUrls: Record<number, string | undefined>, body: unknown = r
 
 test('each amount opens its own prefilled checkout with the account hash', async () => {
   const { c, opened } = client(urls)
-  for (const amount of [5, 10, 15, 20]) assert.equal(await c.openDictationCheckout(amount), true)
-  assert.deepEqual(opened.map((u) => new URL(u).pathname), ['/buy/five', '/buy/ten', '/buy/fifteen', '/buy/twenty'])
+  for (const amount of [5, 10, 20]) assert.equal(await c.openDictationCheckout(amount), true)
+  assert.deepEqual(opened.map((u) => new URL(u).pathname), ['/buy/five', '/buy/ten', '/buy/twenty'])
   for (const u of opened) assert.equal(new URL(u).searchParams.get('checkout[custom][account]'), accountHash('abc'))
 })
 
 test('the account lists only amounts whose URL is set, in order', async () => {
-  assert.deepEqual((await client(urls).c.getDictationAccount() as any).amounts, [5, 10, 15, 20])
-  assert.deepEqual((await client({ 20: urls[20], 5: urls[5], 10: '', 15: 'https://evil.example/buy' }).c.getDictationAccount() as any).amounts, [5, 20])
+  assert.deepEqual((await client(urls).c.getDictationAccount() as any).amounts, [5, 10, 20])
+  assert.deepEqual((await client({ 20: urls[20], 5: urls[5], 10: '', 15: 'https://shop.lemonsqueezy.com/buy/fifteen' } as any).c.getDictationAccount() as any).amounts, [5, 20])
   assert.deepEqual((await client(urls, { error: 'no_addon' }).c.getDictationAccount() as any), { state: 'hidden' }) // 200 with a bad body
   assert.deepEqual(await client({}).c.getDictationAccount(), { state: 'hidden' })
 })
@@ -49,7 +48,7 @@ test('unknown, unset or non-number amounts never open a checkout', async () => {
 
 test('a disabled account opens no checkout for any amount', async () => {
   const { c, opened } = client(urls, { ...reply, disabled: true })
-  for (const amount of [5, 10, 15, 20]) assert.equal(await c.openDictationCheckout(amount), false)
+  for (const amount of [5, 10, 20]) assert.equal(await c.openDictationCheckout(amount), false)
   assert.deepEqual(opened, [])
 })
 
@@ -71,7 +70,7 @@ function render(account: unknown, chosen?: number): string {
   new Function('require', 'module', 'exports', rowCode)(rowRequire, mod, mod.exports)
   return renderToStaticMarkup(mod.exports.DictationAccountRow()).replaceAll('&#x27;', "'")
 }
-const four = [5, 10, 15, 20]
+const four = [5, 10, 20]
 
 test('low and empty show the amount choice and an Add button for the chosen amount', () => {
   for (const state of ['low', 'empty']) {
@@ -80,7 +79,7 @@ test('low and empty show the amount choice and an Add button for the chosen amou
     for (const a of four) assert.ok(html.includes(`>$${a}</button>`), `${state} $${a}`)
     assert.ok(html.includes('aria-pressed="true">$5</button>'))
     assert.ok(html.includes('Add $5</button>'))
-    assert.ok(render({ ...reply, state, amounts: four }, 15).includes('Add $15</button>'))
+    assert.ok(render({ ...reply, state, amounts: four }, 10).includes('Add $10</button>'))
   }
   assert.ok(render({ ...reply, state: 'empty', amounts: four }).includes('Dictation is paused. Top up to keep going.'))
 })
@@ -98,6 +97,14 @@ test('unset amounts are hidden; one amount shows no choice', () => {
   assert.ok(!one.includes('Top-up amount') && one.includes('Add $10</button>'))
   assert.ok(!render({ ...reply, amounts: four }).includes('Top-up amount'), 'ok balance offers nothing')
   assert.ok(!render({ ...reply, state: 'empty', disabled: true, amounts: four }).includes('<button'), 'disabled offers nothing')
+})
+
+test('[NO15] there is no $15 top-up anywhere in the app (the store sells $5, $10 and $20)', () => {
+  const read = (p: string): string => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8')
+  assert.deepEqual([...core.TOPUP_AMOUNTS], [5, 10, 20])
+  for (const f of ['src/shared/dictation-account.ts', 'src/main/dictation/account-core.ts', 'src/main/dictation/account.ts', 'src/main/env.d.ts', 'src/main/dictation/addon.ts']) {
+    assert.ok(!/TOPUP_URL_15|\$15|\b5 \| 10 \| 15|\b15: import/.test(read(f)), f)
+  }
 })
 
 test('no row text or pill text still promises a fixed $5 top-up', () => {
@@ -120,7 +127,7 @@ test('[AM1] with one amount and no choice shown, Get dictation names the price',
 })
 
 test('[AM2] a chosen amount that is no longer offered falls back to the smallest offered one', () => {
-  const html = render({ ...reply, state: 'low', amounts: [5, 20] }, 15)
+  const html = render({ ...reply, state: 'low', amounts: [5, 20] }, 10)
   assert.ok(html.includes('aria-pressed="true">$5</button>') && html.includes('Add $5</button>'))
   assert.ok(render({ ...reply, state: 'low', amounts: [10, 20] }, 20).includes('Add $20</button>'))
 })
