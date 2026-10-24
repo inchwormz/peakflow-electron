@@ -1,45 +1,52 @@
 // Release guard: the dictation top-up links are baked into out/main at build
 // time from MAIN_VITE_DICTATION_TOPUP_URL_5/_10/_20 (src/main/dictation/account.ts).
-// If they were missing at build time, PeakFlow ships with no top-up links.
+// If a tier's link was missing at build time, PeakFlow ships without it.
 // Run after `npm run build`, before electron-builder. Never prints env values.
+// Env is loaded exactly as electron-vite does for production builds.
+// TOPUP_CHECK_OUT_DIR overrides the built main folder (used only for testing the guard).
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadEnv } from 'vite'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const names = ['MAIN_VITE_DICTATION_TOPUP_URL_5', 'MAIN_VITE_DICTATION_TOPUP_URL_10', 'MAIN_VITE_DICTATION_TOPUP_URL_20']
-const urlPattern = /https:\/\/[a-z0-9-]+\.lemonsqueezy\.com\/checkout\/buy\/[A-Za-z0-9-]+/g
-const fail = (message) => { console.error(`topup-links: FAIL. ${message}`); process.exit(1) }
+const outDir = process.env.TOPUP_CHECK_OUT_DIR || join(root, 'out', 'main')
 
-// Names set in .env (values are only checked for presence, never printed).
-const envNames = new Set()
-const envPath = join(root, '.env')
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
-    if (m && m[2].trim() !== '') envNames.add(m[1])
-  }
+// Same resolution as vite: .env, .env.local, .env.production, .env.production.local,
+// then real process.env values (with the MAIN_VITE_ prefix) take precedence.
+const env = { ...loadEnv('production', root, 'MAIN_VITE_') }
+for (const [key, value] of Object.entries(process.env)) {
+  if (key.startsWith('MAIN_VITE_') && value !== undefined) env[key] = value
 }
-const missingEnv = names.filter((n) => !envNames.has(n) && !(process.env[n] || '').trim())
 
-// Collect every built main-process chunk.
-const mainDir = join(root, 'out', 'main')
-if (!existsSync(mainDir)) fail('out/main is missing. Run `npm run build` first.')
+// Mirrors src/main/dictation/account.ts: _5 falls back to the legacy single link.
+const tiers = [
+  { name: 'US$5', value: env.MAIN_VITE_DICTATION_TOPUP_URL_5 || env.MAIN_VITE_DICTATION_TOPUP_URL },
+  { name: 'US$10', value: env.MAIN_VITE_DICTATION_TOPUP_URL_10 },
+  { name: 'US$20', value: env.MAIN_VITE_DICTATION_TOPUP_URL_20 },
+]
+
+const problems = []
+for (const tier of tiers) {
+  if (!tier.value) problems.push(`${tier.name} link not set`)
+}
+
+if (!existsSync(outDir)) {
+  console.error(`topup-links: FAIL. built main process folder is missing. Run \`npm run build\` first.`)
+  process.exit(1)
+}
 const walk = (dir) => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f)
   return statSync(p).isDirectory() ? walk(p) : p.endsWith('.js') ? [p] : []
 })
-const found = new Set()
-for (const file of walk(mainDir)) {
-  for (const url of readFileSync(file, 'utf8').match(urlPattern) ?? []) found.add(url)
+const built = walk(outDir).map((file) => readFileSync(file, 'utf8')).join('\n')
+
+for (const tier of tiers) {
+  if (tier.value && !built.includes(tier.value)) problems.push(`${tier.name} link not in the built bundle`)
 }
 
-if (missingEnv.length) console.error(`topup-links: not set in .env or the environment: ${missingEnv.join(', ')}`)
-if (found.size < names.length) {
-  fail(`built main process has ${found.size} of ${names.length} dictation top-up checkout links. ` +
-    'Release builds need the three dictation top-up links; see .env.example')
+if (problems.length) {
+  for (const problem of problems) console.error(`topup-links: FAIL. ${problem}. Release builds need all three dictation top-up links; see .env.example`)
+  process.exit(1)
 }
-if (missingEnv.length) {
-  fail(`${missingEnv.length} top-up link name(s) missing. Release builds need the three dictation top-up links; see .env.example`)
-}
-console.log(`topup-links: OK. built main process contains ${found.size} distinct top-up checkout links.`)
+console.log('topup-links: OK. all three top-up links are in the built main process.')
