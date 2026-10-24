@@ -62,7 +62,7 @@ function render(account: unknown, chosen?: number): string {
   const mod = { exports: {} as any }
   let reads = 0
   const rowRequire = (id: string): unknown => {
-    if (id === 'react') return { ...React, useState: (initial: unknown) => { const i = reads++; return [i === 0 ? account : i === 3 && chosen !== undefined ? chosen : initial, () => {}] }, useEffect: () => {} }
+    if (id === 'react') return { ...React, useState: (initial: unknown) => { const i = reads++; return [i === 0 ? account : i === 3 && chosen !== undefined ? chosen : initial, () => {}] }, useEffect: () => {}, useRef: (v: unknown) => ({ current: v }) }
     if (id === '@shared/ipc-types') return { IPC_INVOKE: {}, IPC_SEND: {} }
     if (id === '../panel/hooks') return { invoke: () => { throw new Error('unexpected IPC') } }
     return require(id)

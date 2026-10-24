@@ -755,6 +755,7 @@ function acceleratorFrom(e: React.KeyboardEvent): string | null {
 
 function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void; onWords: () => void }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
+  const [offer, setOffer] = useState(false)
   const set = (key: string, value: unknown): void => void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SET_SETTING, key, value).then(onChange)
   const usable = (aiStatus?.providers ?? []).filter((p) => p.installed && p.signedIn !== false)
   const selectedAi = usable.find((p) => p.id === aiStatus?.selected)
@@ -830,8 +831,8 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
           </span>
         </div>
       )}
-      <DictationAccountRow />
-      <DictationRows onWords={onWords} />
+      <DictationAccountRow onState={(s) => setOffer(s === 'no_addon')} />
+      <DictationRows onWords={onWords} offer={offer} />
       <div className="lc-set">
         <div>
           <div className="lbl">Snippets and quick links</div>
@@ -846,6 +847,11 @@ const HOLD_KEYS: Array<[DictationHoldKey, string]> = isMac()
   ? [['fn', 'fn'], ['ropt', 'Right ⌥'], ['rcmd', 'Right ⌘'], ['rctrl', 'Right ⌃']]
   : [['rctrl', 'Right Ctrl'], ['ralt', 'Right Alt']]
 
+// copy: Your own OpenAI key (the label, only while the add-on row above offers dictation)
+const OWN_KEY_LABEL = 'Your own OpenAI key'
+// copy: Or use your own key: about 1 cent for 2 minutes of talking.
+const OWN_KEY_OFFER = 'Or use your own key: about 1 cent for 2 minutes of talking.'
+
 const KEY_ERRORS: Record<string, string> = {
   bad_key: 'OpenAI didn’t accept that key',
   network: 'Couldn’t reach OpenAI: check the internet connection',
@@ -853,13 +859,16 @@ const KEY_ERRORS: Record<string, string> = {
 }
 
 /** Dictation: hold a key, talk, let go. Needs the person's own OpenAI key. */
-function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element | null {
+function DictationRows({ onWords, offer }: { onWords: () => void; offer: boolean }): React.JSX.Element | null {
   const [d, setD] = useState<DictationSettings | null>(null)
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   useEffect(() => {
-    void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
+    const load = (): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
+    load()
+    // A top-up (or a used-up balance) changes whether dictation runs on the add-on
+    return window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, load)
   }, [])
   if (!d) return null
   const set = (k: string, v: unknown): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v).then(setD)
@@ -877,8 +886,8 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
     return (
       <div className="lc-set">
         <div>
-          <div className="lbl">Dictation</div>
-          <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 2 minutes of talking).'}</div>
+          <div className="lbl">{offer ? OWN_KEY_LABEL : 'Dictation'}</div>
+          <div className="sub">{err || (offer ? OWN_KEY_OFFER : 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 2 minutes of talking).')}</div>
         </div>
         <span className="row">
           <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" className="lc-field" style={{ width: 150 }} aria-label="OpenAI API key" />

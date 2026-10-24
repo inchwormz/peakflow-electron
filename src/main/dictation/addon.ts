@@ -62,6 +62,11 @@ export function mapBalanceReply(status: number, body: unknown): AddonStatus {
   }
 }
 
+/** True when what the server said differs from what main last held (so windows need telling) */
+export function addonChanged(before: AddonStatus, next: AddonStatus): boolean {
+  return JSON.stringify(before) !== JSON.stringify(next)
+}
+
 export interface AddonAuth {
   licence: string
   deviceId: string

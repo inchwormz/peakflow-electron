@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationAccount, TopupAmount } from '@shared/dictation-account'
 import { invoke } from '../panel/hooks'
@@ -26,30 +26,44 @@ const DAILY_LIMIT = "You've used today's 3 hours. Dictation is back within 24 ho
 // copy: Couldn’t open the checkout. Try again.
 const CHECKOUT_ERROR = 'Couldn’t open the checkout. Try again.'
 
-export function DictationAccountRow(): React.JSX.Element | null {
+/** When to re-ask the server on a window focus: now, and (right after a checkout was opened) once more a few seconds on, in case the payment's webhook was still on its way */
+export const recheckDelays = (afterCheckout: boolean): number[] => (afterCheckout ? [0, 6000] : [0])
+
+export function DictationAccountRow({ onState }: { onState?: (state: DictationAccount['state']) => void } = {}): React.JSX.Element | null {
   const [account, setAccount] = useState<DictationAccount>({ state: 'hidden' })
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState('')
   const [chosen, setChosen] = useState<TopupAmount | null>(null)
+  const returning = useRef(false)
   useEffect(() => {
     let live = true
     let revision = 0
+    const timers: ReturnType<typeof setTimeout>[] = []
     const refresh = (): void => {
       const request = ++revision
       void invoke<DictationAccount>(IPC_INVOKE.DICTATION_ACCOUNT).then((value) => {
-        if (live && request === revision) setAccount(value)
+        if (live && request === revision) { setAccount(value); onState?.(value.state) }
       }).catch(() => {
-        if (live && request === revision) setAccount({ state: 'hidden' })
+        if (live && request === revision) { setAccount({ state: 'hidden' }); onState?.('hidden') }
       })
     }
     refresh()
-    window.addEventListener('focus', refresh)
+    const onFocus = (): void => {
+      const afterCheckout = returning.current
+      returning.current = false
+      for (const ms of recheckDelays(afterCheckout)) {
+        if (ms === 0) refresh()
+        else timers.push(setTimeout(refresh, ms))
+      }
+    }
+    window.addEventListener('focus', onFocus)
     const shown = window.peakflow.on(IPC_SEND.LAUNCHER_SHOWN, refresh)
     const changed = window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)
     const licensed = window.peakflow.on(IPC_SEND.LICENSE_STATUS_CHANGED, refresh)
     return () => {
       live = false
-      window.removeEventListener('focus', refresh)
+      window.removeEventListener('focus', onFocus)
+      timers.forEach(clearTimeout)
       shown()
       licensed()
       changed()
@@ -76,7 +90,8 @@ export function DictationAccountRow(): React.JSX.Element | null {
     setOpening(true)
     setError('')
     try {
-      if (!await invoke<boolean>(IPC_INVOKE.DICTATION_CHECKOUT, amount)) setError(CHECKOUT_ERROR)
+      if (await invoke<boolean>(IPC_INVOKE.DICTATION_CHECKOUT, amount)) returning.current = true
+      else setError(CHECKOUT_ERROR)
     } catch {
       setError(CHECKOUT_ERROR)
     } finally {

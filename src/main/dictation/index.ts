@@ -29,7 +29,7 @@ import { transcribe, checkKey, warmConnection, type DictationModel, type Transcr
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
-import { allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
+import { addonChanged, allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
 
 const isMac = process.platform === 'darwin'
 const CRED_TOOL = 'Dictation'
@@ -120,8 +120,9 @@ function refreshAddon(force = false): Promise<void> {
     if (temporary && viaAddon()) return
     const before = addon.state
     const wasUsable = viaAddon()
+    const changed = addonChanged(addon, next)
     addon = next
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
+    if (changed) for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
     if (addon.state !== before || viaAddon() !== wasUsable) {
       console.log(`[Dictation] add-on: ${addon.state}${addon.error ? ` (${addon.error})` : ''}`)
       applyWatcher()
@@ -476,7 +477,12 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
-  h(IPC_INVOKE.DICTATION_ACCOUNT, (e) => fromLauncher(e) ? getDictationAccount() : { state: 'hidden' })
+  h(IPC_INVOKE.DICTATION_ACCOUNT, async (e) => {
+    if (!fromLauncher(e)) return { state: 'hidden' }
+    // One request answers both: the row's balance and main's own view (so the dictation rows below it follow a top-up)
+    const [account] = await Promise.all([getDictationAccount(), refreshAddon(true)])
+    return account
+  })
   h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromLauncher(e) ? openDictationCheckout(amount) : false)
   h(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
   h(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {

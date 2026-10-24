@@ -6,7 +6,7 @@ import { transformSync } from 'esbuild'
 import * as core from '../../src/main/dictation/account-core.ts'
 import { accountHash, checkoutUrl, accountFromStatus } from '../../src/main/dictation/account-core.ts'
 
-import { mapBalanceReply as parseBalanceReply } from '../../src/main/dictation/addon.ts'
+import { addonChanged, mapBalanceReply as parseBalanceReply } from '../../src/main/dictation/addon.ts'
 const mapBalanceReply = (status: number, body: unknown) => accountFromStatus(parseBalanceReply(status, body))
 
 const hash = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
@@ -46,7 +46,7 @@ function render(account: unknown): string {
   const mod = { exports: {} as any }
   let reads = 0
   const rowRequire = (id: string): unknown => {
-    if (id === 'react') return { ...React, useState: (initial: unknown) => [reads++ === 0 ? account : initial, () => {}], useEffect: () => {} }
+    if (id === 'react') return { ...React, useState: (initial: unknown) => [reads++ === 0 ? account : initial, () => {}], useEffect: () => {}, useRef: (v: unknown) => ({ current: v }) }
     if (id === '@shared/ipc-types') return { IPC_INVOKE: {}, IPC_SEND: {} }
     if (id === '../panel/hooks') return { invoke: () => { throw new Error('unexpected IPC') } }
     return require(id)
@@ -188,7 +188,7 @@ test('one server client and device source, one add-on settings row, and clip ref
   const row = read('src/renderer/src/launcher/DictationAccountRow.tsx')
   assert.ok(row.includes('window.peakflow.on(IPC_SEND.DICTATION_ACCOUNT_CHANGED, refresh)'))
   const settings = read('src/renderer/src/launcher/LauncherApp.tsx')
-  assert.equal(settings.split('<DictationAccountRow />').length - 1, 1)
+  assert.equal(settings.split('<DictationAccountRow onState=').length - 1, 1)
   assert.ok(!settings.includes('d.usage') && !settings.includes('Dictation add-on</div>'))
   assert.ok(settings.includes('{d.ownKey && ('))
 })
@@ -199,7 +199,7 @@ test('same-state disabled changes reapply the hold watcher', async () => {
   const code = transformSync(path, { loader: 'ts', format: 'cjs' }).code
   for (const disabled of [{ disabled: true, blocked: null }, { disabled: false, blocked: 'disabled' }]) {
     let next = { ...reply, ...disabled }
-    const run = new Function('fetchAddonStatus', `
+    const run = new Function('fetchAddonStatus', 'addonChanged', `
       let addon = { state: 'none' }, addonCheckedAt = 0, addonRefresh = null, addonRetry = null
       let watcherUpdates = 0
       const addonAuth = () => ({ licence: 'abc', deviceId: 'device' })
@@ -211,7 +211,7 @@ test('same-state disabled changes reapply the hold watcher', async () => {
       const console = { log: () => {} }
       ${code}
       return { refresh: () => refreshAddon(true), updates: () => watcherUpdates, usable: viaAddon }
-    `)(async () => next)
+    `)(async () => next, addonChanged)
     await run.refresh()
     assert.equal(run.usable(), false)
     assert.equal(run.updates(), 1)
