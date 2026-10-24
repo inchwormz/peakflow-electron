@@ -58,7 +58,7 @@ test('wiring: failures keep the clip, every transcription call gets the scaled l
 test('[R2] a connection that drops mid-stream keeps the clip and frees dictation', () => {
   const main = src('src/main/dictation/index.ts')
   const run = main.slice(main.indexOf('async function runClip('), main.indexOf('async function runClipSteps'))
-  assert.ok(/try \{\s*await runClipSteps\(clip\)\s*\} catch/.test(run))
+  assert.ok(/try \{\s*await runClipSteps\(clip, streamed, generation\)\s*\} catch/.test(run))
   assert.ok(run.includes('keepClip(clip)') && run.includes("fail('network', true)"), 'fail() also clears busy')
   assert.ok(/function fail[^]*?busy = false/.test(main))
 })
@@ -80,7 +80,7 @@ test('[R3] a kept clip stays with the account it was first sent under', () => {
 test('[R3] wiring: the owner is fixed before the first request and checked before every retry', () => {
   const main = src('src/main/dictation/index.ts')
   const run = main.slice(main.indexOf('async function runClip('), main.indexOf('async function runClipSteps'))
-  assert.ok(run.indexOf('ownerForSend(sent.owner, clipOwner())') < run.indexOf('await runClipSteps(clip)'))
+  assert.ok(run.indexOf('ownerForSend(sent.owner, clipOwner())') < run.indexOf('await runClipSteps(clip, streamed, generation)'))
   assert.ok(main.includes("owner: clip.owner ?? ''"), 'keepClip never takes the current credentials')
   assert.ok(main.includes('!mayRetry(keptClip.owner, clipOwner())'))
   assert.ok(main.includes("return key || licence ? createHash('sha256')"))

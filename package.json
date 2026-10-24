@@ -26,7 +26,8 @@
     "electron-store": "^10.0.0",
     "electron-updater": "^6.3.0",
     "koffi": "^2.15.1",
-    "node-ical": "^0.25.4"
+    "node-ical": "^0.25.4",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-ts": "^3.0.0",
@@ -39,6 +40,7 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
     "electron": "^33.2.0",

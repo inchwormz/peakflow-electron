@@ -32,6 +32,8 @@ export const LAUNCHER_INVOKE = {
   DICTATION_READY: 'dictation:ready',
   /** The pill sends the recorded audio (ArrayBuffer, mime) */
   DICTATION_AUDIO: 'dictation:audio',
+  /** Development own-key prototype: PCM16 mono 24 kHz, pill sender only. */
+  DICTATION_PCM: 'dictation:pcm',
   /** The pill couldn't open the microphone ('denied' | 'none' | 'failed') */
   DICTATION_MIC_ERROR: 'dictation:mic-error',
   DICTATION_ACCOUNT: 'dictation:account',

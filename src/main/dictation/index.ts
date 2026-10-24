@@ -10,6 +10,8 @@
  */
 
 import { serial } from './serial'
+import { RecordingStart } from './recording-start'
+import { createRealtimeTranscription, realtimeEnabled, type RealtimeTranscription } from './realtime'
 import { autoEnable, toggleChoice } from './activation'
 import { normalizeHoldKey, holdKeyFromCode, type NativeHoldKey } from '@shared/dictation-key'
 import { createDictationAccountClient } from './account'
@@ -29,7 +31,7 @@ import { getPanel, hidePanel, showPanel } from '../panel'
 import { missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
 import { onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
-import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
+import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError, type TranscribeResult } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
@@ -79,6 +81,14 @@ let maxTimer: ReturnType<typeof setTimeout> | null = null
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 let showTimer: ReturnType<typeof setTimeout> | null = null
 let busy = false
+let sessionId = 0
+let audioReceived = false
+let stopTimer: ReturnType<typeof setTimeout> | null = null
+let live: { stream: RealtimeTranscription; owner: string } | null = null
+const recordingStart = new RecordingStart<{ at: number; processing: boolean; realtime: boolean; sessionId: number }>((opts) => {
+  state({ phase: 'listening' })
+  sendPill(IPC_SEND.DICTATION_START, opts)
+})
 /** gpt-transcribe unless this key turned out not to have it (remembered until restart) */
 let model: DictationModel = 'gpt-transcribe'
 /** Read on key-down while the person talks: the app and the text around the cursor */
@@ -253,6 +263,7 @@ function applyWatcher(): void {
 
 function getPill(): BrowserWindow {
   if (pill && !pill.isDestroyed()) return pill
+  recordingStart.reset()
   const w = new BrowserWindow({
     width: PILL_W,
     height: PILL_H,
@@ -287,7 +298,15 @@ function getPill(): BrowserWindow {
     w.hide()
   })
   w.on('closed', () => {
+    recordingStart.reset()
     pill = null
+  })
+  w.webContents.on('render-process-gone', () => {
+    const active = recording || busy
+    cancel()
+    busy = false
+    w.destroy()
+    if (active) fail('failed')
   })
   const query = { toolId: SystemWindowId.Dictation }
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -344,6 +363,13 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
 }
 
 function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
+  recordingStart.cancel()
+  if (maxTimer) clearTimeout(maxTimer)
+  if (stopTimer) clearTimeout(stopTimer)
+  maxTimer = stopTimer = null
+  live?.stream.abort()
+  live = null
+  sendPill(IPC_SEND.DICTATION_STOP, { send: false, sessionId })
   clearShowTimer()
   recording = false
   busy = false
@@ -359,7 +385,14 @@ function onDown(): void {
   if (recording || busy || !settings().enabled) return
   downAt = Date.now()
   recording = true
-  // Recording starts now (nothing said is lost) but the pill waits until this is
+  sessionId++
+  audioReceived = false
+  getPill()
+  const key = getCredential(CRED_TOOL, CRED_TYPE)
+  live = !viaAddon() && realtimeEnabled(app.isPackaged, !!key)
+    ? { stream: createRealtimeTranscription({ key, prompt: transcriptionPrompt(parseMyWords(store.get('words')), {}) }), owner: clipOwner() }
+    : null
+  // Request the microphone now and keep captured samples; the pill waits until this is
   // clearly a hold, so taps and double taps (SnapGrid) never flash it
   clearShowTimer()
   showTimer = setTimeout(() => {
@@ -368,9 +401,9 @@ function onDown(): void {
   }, MIN_HOLD_MS)
   state({ phase: 'listening' })
   // PEAKFLOW_DICTATION_MIC_RAW=1 (testing): no echo cancelling, noise suppression or auto gain
-  sendPill(IPC_SEND.DICTATION_START, { at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1' })
+  recordingStart.start({ at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1', realtime: !!live, sessionId })
   // While they talk: open the connection to OpenAI and read where the text is going
-  warmConnection(getCredential(CRED_TOOL, CRED_TYPE))
+  if (!live) warmConnection(key)
   context = readContext()
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = setTimeout(() => onUp(), MAX_HOLD_MS)
@@ -383,11 +416,16 @@ function onUp(): void {
   recording = false
   clearShowTimer()
   if (Date.now() - downAt < MIN_HOLD_MS) return cancel()
+  // Never open a mic after release if the renderer was still loading.
+  if (!recordingStart.isReady) return fail('no_speech')
   showPill()
   releasedAt = Date.now()
   busy = true
   state({ phase: 'transcribing' })
-  setTimeout(() => sendPill(IPC_SEND.DICTATION_STOP, { send: true }), RELEASE_PAD_MS)
+  stopTimer = setTimeout(() => {
+    stopTimer = null
+    sendPill(IPC_SEND.DICTATION_STOP, { send: true, sessionId })
+  }, RELEASE_PAD_MS)
 }
 
 /** The front app and up to 500 characters each side of the cursor (never password fields). */
@@ -414,27 +452,52 @@ function clearShowTimer(): void {
 }
 
 function cancel(): void {
+  recordingStart.cancel()
+  if (stopTimer) clearTimeout(stopTimer)
+  stopTimer = null
+  live?.stream.abort()
+  live = null
   clearShowTimer()
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = null
   recording = false
-  sendPill(IPC_SEND.DICTATION_STOP, { send: false })
+  sendPill(IPC_SEND.DICTATION_STOP, { send: false, sessionId })
+  sessionId++ // Invalidate async work from the canceled hold, including a crashed renderer.
+  busy = false
   state({ phase: 'idle' })
   hidePill()
 }
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
+  const generation = sessionId
+  const activeLive = live
   const ctx = await context
-  await runClip({ buf, mime, durationMs: releasedAt - downAt + RELEASE_PAD_MS, ctx, at: Date.now() })
+  if (generation !== sessionId) { activeLive?.stream.abort(); return }
+  const clip = { buf, mime, durationMs: releasedAt - downAt + RELEASE_PAD_MS, ctx, at: Date.now(), ...(activeLive ? { owner: activeLive.owner } : {}) }
+  if (activeLive && activeLive.owner !== clipOwner()) {
+    activeLive.stream.abort()
+    keepClip(clip)
+    return fail('failed', true)
+  }
+  const streamed = activeLive ? await activeLive.stream.finish() : undefined
+  if (live === activeLive) live = null
+  if (generation !== sessionId) return
+  if (activeLive && activeLive.owner !== clipOwner()) {
+    keepClip(clip)
+    return fail('failed', true)
+  }
+  await runClip(clip, streamed)
 }
 
 /** Speech to text, clean-up and typing for one clip (a new recording, or a kept one tried again). */
-async function runClip(sent: Clip): Promise<void> {
+async function runClip(sent: Clip, streamed?: TranscribeResult): Promise<void> {
+  const generation = sessionId
   // Whose account pays is decided now, before anything is sent (Sol review R3)
   const clip = { ...sent, owner: ownerForSend(sent.owner, clipOwner()) }
   try {
-    await runClipSteps(clip)
+    await runClipSteps(clip, streamed, generation)
   } catch (err) {
+    if (generation !== sessionId) return
     // A connection that drops mid-stream rejects instead of answering: keep the clip and free dictation (Sol review R2)
     console.warn(`[Dictation] clip failed: ${(err as Error)?.name ?? 'error'}`)
     keepClip(clip)
@@ -442,17 +505,18 @@ async function runClip(sent: Clip): Promise<void> {
   }
 }
 
-async function runClipSteps(clip: Clip): Promise<void> {
+async function runClipSteps(clip: Clip, streamed: TranscribeResult | undefined, generation: number): Promise<void> {
   const { buf, mime, durationMs, ctx } = clip
   const key = getCredential(CRED_TOOL, CRED_TYPE)
   const words = parseMyWords(store.get('words'))
   const prompt = transcriptionPrompt(words, ctx)
   // Long clips get longer to upload and come back (S11: a fixed 30 s lost long dictations on slow connections)
   const timeoutMs = transcribeTimeoutMs(durationMs)
-  let auth = viaAddon() ? addonAuth() : null
-  let r = auth
+  let auth = !streamed && viaAddon() ? addonAuth() : null
+  let r = streamed ?? (auth
     ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) })
-    : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
+    : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs }))
+  if (generation !== sessionId) return
   if (auth) void refreshAddon(true)
   // The add-on couldn't do it (switched off, used up, offline …) but they have their own key: don't lose what they said
   if (auth && !r.ok && r.error !== 'no_speech' && key) {
@@ -460,12 +524,14 @@ async function runClipSteps(clip: Clip): Promise<void> {
     auth = null
     r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
   }
-  if (!auth && r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
+  if (generation !== sessionId) return
+  if (!streamed && !auth && r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
     console.warn(`[Dictation] ${model} not available on this key (${r.detail}); using gpt-4o-mini-transcribe`)
     model = 'gpt-4o-mini-transcribe'
     r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
   }
   const sttMs = Date.now() - releasedAt
+  if (generation !== sessionId) return
   if (!r.ok || !r.text) {
     if (r.detail) console.warn(`[Dictation] ${r.error}: ${r.detail}`)
     // Keep the audio so nothing said is lost; it can be tried again for 30 minutes
@@ -485,8 +551,10 @@ async function runClipSteps(clip: Clip): Promise<void> {
     tidyNote = c.cleaned ? `${c.ms} ms` : `kept as spoken: ${c.rejected}`
   }
   text = applyReplacements(text, words.replacements)
+  if (generation !== sessionId) return
   last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
   const ok = await typeText(text)
+  if (generation !== sessionId) return
   console.log(
     `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
@@ -648,19 +716,31 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     })
   })
 
-  h(IPC_INVOKE.DICTATION_READY, (e, m?: { micMs?: number }) => {
+  h(IPC_INVOKE.DICTATION_READY, (e, m?: { micMs?: number; sessionId?: number; realtimeCapture?: boolean }) => {
+    if (!fromPill(e)) return
+    if (!m) recordingStart.ready()
+    if (m?.sessionId === sessionId && m.realtimeCapture === false) {
+      live?.stream.abort()
+      live = null
+    }
     // The pill reports how long the microphone took to open after the key went down
-    if (fromPill(e) && m && typeof m.micMs === 'number') console.log(`[Dictation] microphone open ${Math.round(m.micMs)} ms after key-down`)
+    if (m?.sessionId === sessionId && typeof m.micMs === 'number') console.log(`[Dictation] first audio sample ${Math.round(m.micMs)} ms after key-down`)
   })
-  h(IPC_INVOKE.DICTATION_AUDIO, (e, buf: unknown, mime: unknown) => {
-    if (!fromPill(e) || !busy) return
+  h(IPC_INVOKE.DICTATION_PCM, (e, buf: unknown, id: unknown) => {
+    if (!fromPill(e) || id !== sessionId || (!recording && !busy) || !live || audioReceived) return
+    if (!(buf instanceof ArrayBuffer) || buf.byteLength > 48_000 || buf.byteLength % 2) return
+    live.stream.append(new Uint8Array(buf))
+  })
+  h(IPC_INVOKE.DICTATION_AUDIO, (e, buf: unknown, mime: unknown, id: unknown) => {
+    if (!fromPill(e) || !busy || id !== sessionId || audioReceived) return
+    audioReceived = true
     if (!(buf instanceof ArrayBuffer) && !ArrayBuffer.isView(buf)) return fail('failed')
     const ab = buf instanceof ArrayBuffer ? buf : (buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer)
     if (ab.byteLength > 25 * 1024 * 1024) return fail('failed')
     void onAudio(ab, typeof mime === 'string' && mime.length < 60 ? mime : 'audio/webm')
   })
-  h(IPC_INVOKE.DICTATION_MIC_ERROR, (e, kind: unknown) => {
-    if (!fromPill(e)) return
+  h(IPC_INVOKE.DICTATION_MIC_ERROR, (e, kind: unknown, id: unknown) => {
+    if (!fromPill(e) || id !== sessionId || (!recording && !busy)) return
     fail(kind === 'denied' ? 'mic_denied' : kind === 'none' ? 'mic_none' : 'failed')
     if (kind === 'denied') void ensureMediaAccess('Dictation', ['microphone'])
   })
@@ -840,6 +920,7 @@ async function recordPillFrames(dir: string): Promise<void> {
 
 export function destroyDictation(): void {
   quitting = true
+  cancel()
   if (maxTimer) clearTimeout(maxTimer)
   if (pill && !pill.isDestroyed()) pill.destroy()
 }
