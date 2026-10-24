@@ -38,6 +38,9 @@ mac:
   # Custom sign hook: identical to the default signing, except the Swift
   # helper (peakflow-helper) is signed with sidecar/darwin/entitlements.helper.plist
   # (none) instead of the inherited JIT entitlements Electron's helpers need.
+  # Every Mac build is signed by this hook: Developer ID if electron-builder finds one,
+  # else PEAKFLOW_MAC_SIGN_IDENTITY (self-signed, scripts/mac/make-selfsigned-identity.sh),
+  # else ad-hoc with a warning. Identifiers pinned: pro.getpeakflow.core (helper .helper).
   sign: scripts/mac-sign.js
   # Signing: electron-builder uses a "Developer ID Application" identity from
   # the keychain (or CSC_LINK/CSC_KEY_PASSWORD). With none present it skips
