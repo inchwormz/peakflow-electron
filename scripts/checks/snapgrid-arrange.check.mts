@@ -97,7 +97,9 @@ installTsHooks({
   '../security/access-check': fake(`export const checkAccess = async () => ({ allowed: true })`),
   '../security/access-guard': fake(`export const withToolAccess = (_c, _id, fn) => fn()`),
   // Closing the panel with focus in it hands focus back to the previous app
-  '../panel': fake(`export const hidePanel = (force) => { ${S}.log.push('hidePanel'); if (!force && ${S}.previousPid) globalThis.__sgActivate(${S}.previousPid) }`),
+  '../panel': fake(`export const hidePanel = (force) => { ${S}.log.push('hidePanel'); if (!force && ${S}.previousPid) globalThis.__sgActivate(${S}.previousPid) }; export const showPanel = () => {}`),
+  // Release 2.1.1: snapgrid.ts also listens for licence changes (fix/licence-checks)
+  '../security/license': fake(`export const onLicenceChanged = () => () => {}`),
   './focus-dim': fake(`export const getFocusDimService = () => ({ getState: () => ({ enabled: false }) })`),
   '../launcher/window-commands': fake(`export const setWindowCommandHandler = () => {}`),
   './platform': fake(`export const isMac = true; export const isWindows = false; export const isLinux = false`),
