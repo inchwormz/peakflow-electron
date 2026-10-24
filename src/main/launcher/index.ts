@@ -9,7 +9,7 @@
  * compromised page can't open arbitrary files or run commands.
  */
 
-import { app, clipboard, globalShortcut, ipcMain, shell } from 'electron'
+import { app, clipboard, globalShortcut, ipcMain, Notification, shell } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { chmodSync, existsSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -20,6 +20,7 @@ import type {
   LauncherRunResult, LauncherSettings, LauncherSnippet
 } from '@shared/launcher/types'
 import { launcherStore, DEFAULT_LAUNCHER_HOTKEY } from './store'
+import { chooseLauncherKey } from '@shared/global-keys'
 import { getApps, isIndexedApp, isIndexedStartApp, settingsItems, settingsUrl } from './apps'
 import { searchFiles, filePathFor } from './files'
 import { listProcesses, quitProcess } from './processes'
@@ -35,8 +36,9 @@ import {
 } from './window'
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
-import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation } from '../dictation'
-import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier } from '../services/local-ai'
+import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation, getKeptDictation, retryDictation } from '../dictation'
+import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier, type AiLookup } from '../services/local-ai'
+import { hidePanel } from '../panel'
 
 const isMac = process.platform === 'darwin'
 
@@ -76,7 +78,7 @@ function builtInItems(): LauncherItem[] {
     { id: 'view:kill', kind: 'command', title: 'Kill Process', subtitle: 'Quit apps that are stuck or using memory', keywords: ['force quit', 'task manager', 'quit app', 'memory', 'end task'], glyph: 'kill', view: 'kill' },
     { id: 'view:snippet-form', kind: 'command', title: 'Add Snippet', subtitle: 'Save text you type a lot, then type its keyword anywhere', keywords: ['snippet', 'text expansion', 'new snippet'], glyph: 'plus', view: 'snippet-form' },
     { id: 'view:link-form', kind: 'command', title: 'Add Quick Link', subtitle: 'Save a website or folder to open from here', keywords: ['bookmark', 'quick link', 'new link'], glyph: 'plus', view: 'link-form' },
-    { id: 'view:settings', kind: 'command', title: 'Launcher Settings', subtitle: 'Shortcut, snippets, AI, dictation', keywords: ['launcher', 'hotkey', 'shortcut', 'preferences', 'dictation', 'voice', 'speech', 'talk'], glyph: 'settings', view: 'settings' },
+    { id: 'view:settings', kind: 'command', title: 'Launcher Settings', subtitle: 'Shortcut, snippets, AI', keywords: ['launcher', 'hotkey', 'shortcut', 'preferences'], glyph: 'settings', view: 'settings' },
     { id: 'view:ai-setup', kind: 'ai', title: 'Connect ChatGPT or Claude', subtitle: 'Free AI with your own plan', keywords: ['ai', 'chatgpt', 'claude', 'codex', 'connect'], glyph: 'sparkle', view: 'ai-setup' }
   ]
   return [...own, ...folders, ...engines]
@@ -96,10 +98,16 @@ function userItems(): LauncherItem[] {
 
 /** The last dictation, and the same words as spoken when the clean-up changed them. */
 function dictationItems(): LauncherItem[] {
+  // A clip that didn't go through (no connection …) is kept to try again (S11)
+  const kept = getKeptDictation()
+  const retry: LauncherItem[] = kept
+    ? [{ id: 'dictation:retry', kind: 'command', title: 'Try Last Dictation Again', subtitle: `${kept.seconds} s of talking that didn’t go through`, keywords: ['dictation', 'voice', 'again', 'retry'], glyph: 'dictation' }]
+    : []
   const d = getLastDictation()
-  if (!d) return []
+  if (!d) return retry
   const preview = (t: string): string => t.replace(/\s+/g, ' ').slice(0, 80)
   const items: LauncherItem[] = [
+    ...retry,
     { id: 'dictation:paste', kind: 'command', title: 'Paste Last Dictation', subtitle: preview(d.typed), keywords: ['dictation', 'voice', 'again'], glyph: 'text' }
   ]
   if (d.raw !== d.typed) {
@@ -160,6 +168,12 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
     const p = id.slice(4)
     if (!isIndexedApp(p)) return { ok: false }
     return done(await openPath(p, !!opts.alt))
+  }
+  if (id === 'dictation:retry') {
+    if (!getKeptDictation()) return { ok: false, message: 'Nothing to try again', keepOpen: true }
+    hideLauncher({ restoreFocus: true })
+    await new Promise((r) => setTimeout(r, 250)) // the app underneath takes the keyboard back
+    return done({ ok: await retryDictation() })
   }
   if (id === 'dictation:paste' || id === 'dictation:paste-raw') {
     const d = getLastDictation()
@@ -256,9 +270,13 @@ const QUICK_ASK_SYSTEM = 'You answer quick questions inside a desktop launcher. 
 let aiSeq = 0
 const aiRuns = new Map<number, AbortController>()
 
+const MAX_AI_PROMPT = 20_000
+const MAX_AI_TEXT = 60_000
+
 const AI_ERRORS: Record<string, string> = {
   no_provider: 'No AI is connected yet. Choose “Connect ChatGPT or Claude”.',
   not_signed_in: 'You’re signed out of that AI. Choose “Connect ChatGPT or Claude” to sign in again.',
+  codex_outdated: 'Your Codex app is too old for PeakFlow. Update it in Terminal with “npm install -g @openai/codex”, then try again.',
   timeout: 'The AI took too long to answer. Try again.',
   failed: 'The AI couldn’t answer that. Try again, or switch to another AI.'
 }
@@ -270,8 +288,16 @@ function askAi(p: AiAskPayload): number {
   const chunk = (c: Omit<AiChunk, 'reqId'>): void => sendToLauncher(IPC_SEND.LAUNCHER_AI_CHUNK, { reqId, ...c } satisfies AiChunk)
   const provider = p.provider && (['codex', 'claude', 'ollama'] as const).includes(p.provider) ? p.provider : undefined
   const action = p.action && p.action in ACTION_SYSTEM ? p.action : undefined
-  const prompt = String(p.prompt ?? '').slice(0, 20_000)
-  const text = String(p.text ?? '').slice(0, 60_000)
+  const prompt = String(p.prompt ?? '')
+  const text = String(p.text ?? '')
+  // Too long: say so. A shortened answer would replace the person's whole selection when pasted.
+  if (prompt.length > MAX_AI_PROMPT || text.length > MAX_AI_TEXT) {
+    aiRuns.delete(reqId)
+    const n = Math.max(prompt.length, text.length).toLocaleString('en')
+    const max = (prompt.length > MAX_AI_PROMPT ? MAX_AI_PROMPT : MAX_AI_TEXT).toLocaleString('en')
+    setTimeout(() => chunk({ text: '', done: true, error: `The selected text has ${n} characters. AI can take up to ${max}. Select a shorter part and try again.` }), 20)
+    return reqId
+  }
   const lang = String(p.language ?? 'English').replace(/[^\p{L} -]/gu, '').slice(0, 40) || 'English'
   const system = action ? ACTION_SYSTEM[action].replace('{lang}', lang) : QUICK_ASK_SYSTEM
   const fullPrompt = action ? `${prompt ? `Extra instruction: ${prompt}\n\n` : ''}Text:\n${text}` : prompt
@@ -295,12 +321,18 @@ function askAi(p: AiAskPayload): number {
   return reqId
 }
 
-async function aiStatus(): Promise<AiStatus> {
-  const [list, selected] = await Promise.all([listAiProviders(), getDefaultAiProvider()])
+async function aiStatus(look: AiLookup = {}): Promise<AiStatus> {
+  const [list, selected] = await Promise.all([listAiProviders(look), getDefaultAiProvider(look)])
   return {
     providers: list.map((p) => ({ id: p.id, name: p.id === 'ollama' ? 'Local model' : p.label, installed: p.installed, signedIn: p.signedIn ?? null, model: p.id === 'ollama' && p.installed ? p.label.replace(/^.*\((.*)\)$/, '$1') : undefined, tier: getAiTier(p.id) })),
     selected
   }
+}
+
+/** QuickBoard's Connect button: the launcher's Connect AI screen, in place of the panel. */
+function openAiSetup(): void {
+  showLauncher({ at: Date.now(), view: 'ai-setup' })
+  hidePanel(true)
 }
 
 /** Open a terminal that installs and signs in to ChatGPT (Codex) or Claude. */
@@ -349,10 +381,66 @@ function registerHotkey(accel: string): boolean {
   return false
 }
 
+/** "⌃⌥Space" on a Mac, "Ctrl+Alt+Space" on Windows (notification text and the tray menu). */
+function keyLabel(accel: string): string {
+  const parts = accel.split('+')
+  if (!isMac) return parts.map((p) => (/^(control|commandorcontrol)$/i.test(p) ? 'Ctrl' : p)).join('+')
+  const sym: Record<string, string> = { control: '⌃', alt: '⌥', option: '⌥', shift: '⇧', command: '⌘', cmd: '⌘', commandorcontrol: '⌘' }
+  return parts.map((p) => sym[p.toLowerCase()] ?? p).join('')
+}
+
+let hotkeyMovedFrom: string | undefined
+
+/**
+ * Start-up: the saved shortcut, or the first free fallback when another app
+ * (Raycast, Alfred) has it. The fallback is saved, and the customer is told
+ * which one PeakFlow picked. Returns the shortcut in use, or null.
+ */
+function registerStartupHotkey(): string | null {
+  const saved = launcherStore.hotkey
+  // A key PeakFlow itself already uses is skipped, not stolen
+  const { key, movedFrom } = chooseLauncherKey(saved, process.platform, (a) => !globalShortcut.isRegistered(a) && registerHotkey(a))
+  if (key && movedFrom) {
+    launcherStore.hotkey = key
+    hotkeyMovedFrom = movedFrom
+    console.log(`[Launcher] ${movedFrom} is taken; switched to ${key}`)
+    tell(`Launcher shortcut: ${keyLabel(key)}`, `Another app uses ${keyLabel(movedFrom)}, so PeakFlow’s launcher now opens with ${keyLabel(key)}. You can change it in Launcher Settings.`)
+  }
+  if (key) return key
+  tell('Launcher has no shortcut', `Another app uses ${keyLabel(saved)}. Open the launcher from the PeakFlow ${isMac ? 'menu-bar icon' : 'tray icon'} and pick a shortcut in Launcher Settings.`)
+  return null
+}
+
+function tell(title: string, body: string): void {
+  try {
+    if (!Notification.isSupported()) return
+    const n = new Notification({ title, body, silent: true })
+    n.on('click', () => openLauncherSettings())
+    n.show()
+  } catch (err) {
+    console.warn('[Launcher] Notification failed:', err)
+  }
+}
+
+/** The tray menu: open the bar, or its settings (the only other way in is the bar itself). */
+export function openLauncher(): void {
+  showLauncher({ at: Date.now() })
+}
+
+export function openLauncherSettings(): void {
+  showLauncher({ at: Date.now(), view: 'settings' })
+}
+
+/** The shortcut that opens the launcher now, or null when none could be registered. */
+export function launcherHotkey(): string | null {
+  return registeredHotkey
+}
+
 function settings(): LauncherSettings {
   return {
     hotkey: launcherStore.hotkey,
     hotkeyRegistered: registeredHotkey === launcherStore.hotkey,
+    hotkeyMovedFrom: registeredHotkey === launcherStore.hotkey ? hotkeyMovedFrom : undefined,
     expansionEnabled: launcherStore.expansion,
     expansionActive: isExpansionActive(),
     keepAwake: isKeepAwake()
@@ -439,15 +527,19 @@ function registerIpc(): void {
     if (key === 'hotkey' && typeof value === 'string' && value.length < 60) {
       const prev = launcherStore.hotkey
       const next = value || DEFAULT_LAUNCHER_HOTKEY
-      if (registerHotkey(next)) launcherStore.hotkey = next
-      else registerHotkey(prev)
+      if (registerHotkey(next)) {
+        launcherStore.hotkey = next
+        hotkeyMovedFrom = undefined
+      } else registerHotkey(prev)
     } else if (key === 'expansion' && typeof value === 'boolean') {
       launcherStore.expansion = value
       changed()
     }
     return settings()
   })
-  h(IPC_INVOKE.LAUNCHER_AI_STATUS, () => aiStatus())
+  // { deep, fresh } from the Connect AI screen and Ask: see AiLookup in local-ai.ts
+  h(IPC_INVOKE.LAUNCHER_AI_STATUS, (_e, look?: AiLookup) => aiStatus({ deep: look?.deep === true, fresh: look?.fresh === true }))
+  h(IPC_INVOKE.LAUNCHER_AI_OPEN_SETUP, () => openAiSetup())
   h(IPC_INVOKE.LAUNCHER_AI_SET_PROVIDER, (e, id: unknown) => {
     if (fromLauncher(e) && (id === 'codex' || id === 'claude' || id === 'ollama')) setDefaultAiProvider(id as AiProviderId)
     return aiStatus()
@@ -472,7 +564,7 @@ function registerIpc(): void {
 export function initLauncher(): void {
   registerIpc()
   initLauncherWindow()
-  registerHotkey(launcherStore.hotkey)
+  registerStartupHotkey()
   updateExpansion(launcherStore.expansion, launcherStore.snippets())
   initDictation(() => getLauncherWindow()?.webContents)
   // Warm the app index and the AI check so the first open has everything

@@ -26,6 +26,9 @@ interface RawWindow {
   bundleId?: string
   title?: string
   frame: SnapRect | null
+  /** Accessibility subrole (sg-windows only): "AXStandardWindow" for ordinary windows, "" if not found */
+  subrole?: string
+  minimized?: boolean
 }
 
 function toSnapWindow(r: RawWindow): SnapWindow | null {
@@ -36,6 +39,7 @@ function toSnapWindow(r: RawWindow): SnapWindow | null {
     appName: r.appName || '',
     icon: r.bundleId ? { bundleId: r.bundleId, name: r.appName } : { name: r.appName },
     frame: r.frame,
+    ...(typeof r.subrole === 'string' ? { normal: r.subrole === 'AXStandardWindow' && r.minimized !== true } : {}),
     handle: { pid: r.pid, windowId: r.windowId || 0 }
   }
 }
@@ -81,9 +85,14 @@ export async function setWindowFrame(w: SnapWindow, r: SnapRect): Promise<SnapRe
   return res.frame ?? null
 }
 
-export async function raiseWindow(w: SnapWindow): Promise<void> {
+/**
+ * Bring a window to the front. Activating an app on macOS also brings every
+ * other window of that app forward, so `activate: false` only lifts this
+ * window (used to put arranged windows back above the app's other windows).
+ */
+export async function raiseWindow(w: SnapWindow, opts: { activate?: boolean } = {}): Promise<void> {
   const h = handleOf(w)
-  if (h) await ask(`sg-raise ${h.pid} ${h.windowId}`)
+  if (h) await ask(`sg-raise ${h.pid} ${h.windowId}${opts.activate === false ? ' 0' : ''}`)
 }
 
 /** macOS 15+ snaps windows dragged to a screen edge itself (unless turned off). */

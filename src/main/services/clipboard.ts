@@ -26,6 +26,7 @@ import { IPC_SEND } from '@shared/ipc-types'
 import { getConfig } from './config-store'
 import { looksLikeSecret, isPrivateClipboard } from '../security/secret-detection'
 import { isExcludedApp } from '../security/excluded-apps'
+import { isCapturePaused, isOwnWrite } from './clipboard-own-writes'
 import type { QuickBoardConfig } from '@shared/config-schemas'
 import { simulateCtrlV } from '../native/keyboard'
 import { writeClip, type ClipWriters } from './clip-write'
@@ -93,6 +94,8 @@ class ClipboardService {
   private currentSourceApp: string | null = null
   /** Raw active window title for excluded-app filtering */
   private currentWindowTitle = ''
+  /** Exe name (Windows) or bundle ID (Mac) of the active window, for excluded-app filtering */
+  private currentAppId: string | null = null
 
   constructor() {
     this.imagesDir = join(app.getPath('userData'), 'quickboard-images')
@@ -125,7 +128,10 @@ class ClipboardService {
           tags: item.tags ?? [],
           sourceApp: item.sourceApp ?? null,
           contentType: item.contentType ?? this.detectContentType(item),
-          ocrText: item.ocrText ?? null
+          ocrText: item.ocrText ?? null,
+          // Older versions stored the site's own favicon address, which the
+          // window then loaded straight from that site: drop it
+          linkFavicon: item.linkFavicon?.startsWith('data:') ? item.linkFavicon : undefined
         }))
         this.expireOldEntries()
       }
@@ -223,20 +229,23 @@ class ClipboardService {
       if (!win) {
         this.currentSourceApp = null
         this.currentWindowTitle = ''
+        this.currentAppId = null
         return
       }
       this.currentWindowTitle = win.title
       const exe = getProcessExeName(win.pid)
+      this.currentAppId = exe
       this.currentSourceApp = this.formatAppName(exe, win.title)
     } catch {
       this.currentSourceApp = null
       this.currentWindowTitle = ''
+      this.currentAppId = null
     }
   }
 
   private isCaptureBlocked(): boolean {
-    if (!this.currentWindowTitle) return false
-    return isExcludedApp(this.currentWindowTitle)
+    if (!this.currentWindowTitle && !this.currentAppId) return false
+    return isExcludedApp(this.currentWindowTitle, this.currentAppId)
   }
 
   private maybeRunSuggestions(): void {
@@ -300,6 +309,8 @@ class ClipboardService {
   // ─── Clipboard polling ──────────────────────────────────────────────────
 
   private checkClipboard(): void {
+    // PeakFlow is pasting and will put the clipboard back: look again afterwards
+    if (isCapturePaused()) return
     try {
       this.captureSourceApp()
       // Fast bail: check if clipboard formats changed before doing expensive reads.
@@ -307,6 +318,11 @@ class ClipboardService {
       const formats = clipboard.availableFormats().join(',')
       const formatsChanged = formats !== this.lastFormats
       this.lastFormats = formats
+
+      // PeakFlow's own short-lived write (dictation, snippet, launcher answer):
+      // never record it, and keep the last-seen hashes so the clip it replaced
+      // isn't recorded again when it comes back
+      if (isOwnWrite((f) => clipboard.has(f))) return
 
       // Files copied in Finder (macOS): the clipboard also holds their names as
       // text, so record one file clip and don't record the names as a text clip
@@ -428,23 +444,31 @@ class ClipboardService {
     this.saveHistory()
     this.broadcastChange()
 
-    // Auto-fetch link preview for URL clips (async, non-blocking)
-    if (item.contentType === 'url' && item.text) {
-      this.fetchLinkPreviewAsync(item.id, item.text)
-    }
-
     this.maybeRunSuggestions()
   }
 
-  /** Fetch link preview in background and update item when done. */
-  private fetchLinkPreviewAsync(itemId: string, url: string): void {
-    import('./clipboard-link-preview').then(({ fetchLinkPreview }) => {
-      fetchLinkPreview(url).then(({ title, favicon }) => {
-        if (title || favicon) {
-          this.setLinkPreview(itemId, title, favicon)
-        }
-      }).catch(() => {})
-    }).catch(() => {})
+  /** Links already looked up (or being looked up) this session, by clip ID. */
+  private linkPreviewTried = new Set<string>()
+
+  /**
+   * Fetch the page title for a link clip that QuickBoard is showing. Only
+   * when the person has switched on link titles (off by default), once per
+   * clip per session; never at copy time. The guard in clipboard-link-preview
+   * refuses private and local addresses.
+   */
+  requestLinkPreview(itemId: string): void {
+    if (!this.getConf().link_previews) return
+    const item = this.history.find((h) => h.id === itemId)
+    if (!item || item.type !== 'text' || item.contentType !== 'url' || !item.text || item.linkTitle) return
+    if (this.linkPreviewTried.has(itemId)) return
+    this.linkPreviewTried.add(itemId)
+    const url = item.text.trim()
+    import('./clipboard-link-preview')
+      .then(({ fetchLinkPreview }) => fetchLinkPreview(url))
+      .then(({ title }) => {
+        if (title && this.getConf().link_previews) this.setLinkPreview(itemId, title, null)
+      })
+      .catch(() => {})
   }
 
   private handleNewImage(img: Electron.NativeImage): void {

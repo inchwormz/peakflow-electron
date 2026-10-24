@@ -14,6 +14,7 @@ import { invoke, useInvoke, useToolConfig } from '../../hooks'
 import { Btn, Empty, Grp, IconBtn, Note, NumIn, Picker, Rec, Row, Toggle } from '../../kit'
 import { useNav } from '../../nav'
 import { aiAccessNote, type AiAccess } from './ai-run'
+import { ConnectAiBtn, needsConnect } from './ConnectAi'
 import { applySteps, clipText, setQB, STEP_NAME, useQB, OPEN_KEY, QUEUE_CANCEL_KEY, QUEUE_NEXT_KEY, WIZARD_START, type Clip, type Pipeline, type TransformStep } from './store'
 
 type Transforms = { pipelines: Pipeline[]; available: TransformStep[] }
@@ -92,6 +93,10 @@ export function General(): React.JSX.Element {
         <Row label="Paste as plain text" right={<Toggle label="Paste as plain text" checked={cfg.plain_text_mode} onChange={(v) => set('plain_text_mode', v)} />} />
         <Row label="Open QuickBoard" right={<Rec value={OPEN_KEY} />} />
       </Grp>
+      <Grp>
+        <Row label="Show page titles for links" right={<Toggle label="Show page titles for links" checked={!!cfg.link_previews} onChange={(v) => set('link_previews', v)} />} />
+      </Grp>
+      <Note style={{ marginTop: 10 }}>To get a title, QuickBoard opens the link when it appears in your list. Opening a link can use up a one-time sign-in link, and the site sees your internet address. Links to this computer or your own network are never opened.</Note>
       <Note style={{ marginTop: 10 }}>QuickBoard skips anything that looks like a password, API key or card number, and ignores password managers and banking apps.</Note>
       <Grp>
         <Row label="Clear all history" icon="trash" tone="danger" onClick={unpinned ? () => void clear() : () => nav.toast('No unpinned clips to clear')} />
@@ -300,6 +305,11 @@ export function AiSettings(): React.JSX.Element {
         />
       </Grp>
       {access ? <Note style={{ marginTop: 10 }}>{access.allowed ? `AI runs on your own ${access.provider}. PeakFlow never sees it.` : aiAccessNote(access.reason)}</Note> : null}
+      {access && !access.allowed && needsConnect(access.reason) ? (
+        <div style={{ marginTop: 8 }}>
+          <ConnectAiBtn block />
+        </div>
+      ) : null}
     </>
   )
 }

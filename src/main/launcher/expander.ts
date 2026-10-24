@@ -18,7 +18,7 @@ import { clipboard } from 'electron'
 import { existsSync } from 'fs'
 import type { LauncherSnippet } from '@shared/launcher/types'
 import { getMacHelperPath } from '../native/mac-helper'
-import { simulateCtrlV } from '../native/keyboard'
+import { pasteAndRestore } from './selection'
 import { checkAccessibility } from '../services/permissions-darwin'
 import { KeyTaps } from './key-taps'
 
@@ -122,10 +122,8 @@ function sendSnippets(): void {
 async function expandOnWindows(keyword: string): Promise<void> {
   const s = current.find((x) => x.keyword === keyword)
   if (!s) return
-  const before = clipboard.readText()
-  clipboard.writeText(fillPlaceholders(s.text))
-  await simulateCtrlV()
-  setTimeout(() => clipboard.writeText(before), 400)
+  // Pastes, then puts the clipboard back with every format (selection.ts)
+  await pasteAndRestore(fillPlaceholders(s.text))
 }
 
 function onLine(line: string): void {

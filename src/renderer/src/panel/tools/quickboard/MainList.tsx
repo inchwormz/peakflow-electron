@@ -13,6 +13,7 @@ import { isPrimaryMod, modLabel } from '@shared/mod-key'
 import { AppIcon, Banner, Btn, Empty, IconBtn, LinkBtn, Note } from '../../kit'
 import { Icon, type IconName } from '../../icons'
 import { useNav, type NavApi } from '../../nav'
+import { PermissionNotice } from '../../permission'
 import {
   canEdit, clipLines, deleteClip, getQB, reloadHistory, reloadPasteStatus, reloadTags, setQB, timeAgo, togglePin, useQB, visibleClips,
   OPEN_KEY, QUEUE_NEXT_KEY, type Clip, type Suggestion, type TypeFilter
@@ -149,6 +150,7 @@ export function MainList(): React.JSX.Element {
 
   return (
     <>
+      <PermissionNotice kind="accessibility" why="QuickBoard uses it to paste into the app you were in." onlyIfLost />
       {s.paste.active ? (
         <Banner style={{ marginBottom: 10 }} action={<LinkBtn onClick={cancelPaste}>Cancel</LinkBtn>}>
           <b>{s.paste.kind === 'form' ? 'Filling' : 'Pasting'} {s.paste.current} of {s.paste.total}</b>
@@ -242,6 +244,7 @@ export function MainList(): React.JSX.Element {
               onClick={() => onClip(c, i)}
               onContext={c.type === 'text' && !s.selectMode ? () => nav.go(`quickboard/transform/${encodeURIComponent(c.id)}`) : undefined}
               onEdit={() => nav.go(`quickboard/edit/${encodeURIComponent(c.id)}`)}
+              linkPreview={!!cfg?.link_previews && visible}
             />
           ))}
         </div>
@@ -261,7 +264,30 @@ export function MainList(): React.JSX.Element {
   )
 }
 
-function ClipRow({ clip, index, selected, pick, top, onClick, onContext, onEdit }: {
+/**
+ * Ask for a link clip's page title once the row is on screen (only when
+ * "Show page titles for links" is on and the panel is open). The main
+ * process fetches each link at most once and refuses local addresses.
+ */
+function useLinkPreview(clip: Clip, enabled: boolean): React.RefObject<HTMLDivElement | null> {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const wanted = enabled && clip.contentType === 'url' && !clip.linkTitle
+  useEffect(() => {
+    const el = ref.current
+    if (!wanted || !el) return
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting) && document.visibilityState === 'visible') {
+        io.disconnect()
+        invoke(IPC_INVOKE.CLIPBOARD_LINK_PREVIEW, clip.id).catch(() => {})
+      }
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [wanted, clip.id])
+  return ref
+}
+
+function ClipRow({ clip, index, selected, pick, top, onClick, onContext, onEdit, linkPreview }: {
   clip: Clip
   index: number
   selected: boolean
@@ -270,10 +296,13 @@ function ClipRow({ clip, index, selected, pick, top, onClick, onContext, onEdit 
   onClick: () => void
   onContext?: () => void
   onEdit: () => void
+  linkPreview: boolean
 }): React.JSX.Element {
   const [main, sub] = clipLines(clip)
+  const ref = useLinkPreview(clip, linkPreview)
   return (
     <div
+      ref={ref}
       className={selected ? 'clip sel' : 'clip'}
       role="button"
       tabIndex={-1}

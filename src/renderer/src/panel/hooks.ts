@@ -8,6 +8,7 @@ import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { AppIconQuery } from '@shared/ipc-types'
 import type { ToolId } from '@shared/tool-ids'
 import { createLatest } from '@shared/latest-only'
+import { builtInAccel } from '@shared/global-keys'
 
 export function invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T> {
   return window.peakflow.invoke(channel, ...args) as Promise<T>
@@ -145,6 +146,12 @@ export function useAppIcon(q: AppIconQuery | null | undefined): string | null {
 }
 
 export const isMac = (): boolean => window.peakflow.platform === 'darwin'
+
+/** A built-in shortcut on this computer, or '' when it has none here (Ctrl+Alt+letter or digit on Windows). */
+export const builtInKey = (accel: string): string => builtInAccel(accel, window.peakflow.platform) ?? ''
+
+/** Shown under shortcut lists on Windows, where the Ctrl+Alt letter and number keys are off (review B5). */
+export const ALTGR_NOTE = 'On Windows, Ctrl+Alt plus a letter, number or symbol types characters such as €, @ and [ on many keyboards, so PeakFlow doesn’t use those keys.'
 
 /** 'CommandOrControl+Shift+V' → '⌘⇧V' on macOS, 'Ctrl+Shift+V' elsewhere. */
 export function formatAccelerator(accel: string): string {

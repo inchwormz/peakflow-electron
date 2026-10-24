@@ -21,7 +21,7 @@ export type LauncherKind =
 export type LauncherGlyph =
   | 'app' | 'file' | 'folder' | 'settings' | 'power' | 'lock' | 'moon' | 'trash' | 'eject' | 'restart'
   | 'logout' | 'coffee' | 'kill' | 'calc' | 'globe' | 'search' | 'link' | 'text' | 'sparkle' | 'plus'
-  | 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'window' | 'keyboard'
+  | 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'window' | 'keyboard' | 'dictation'
 
 export interface LauncherItem {
   /** Stable id, e.g. 'app:/Applications/Safari.app', 'cmd:sleep', 'snip:3' */
@@ -130,6 +130,8 @@ export interface LauncherLink {
 export interface LauncherSettings {
   hotkey: string
   hotkeyRegistered: boolean
+  /** Set when the saved shortcut was taken at start-up and PeakFlow switched to `hotkey` */
+  hotkeyMovedFrom?: string
   expansionEnabled: boolean
   /** Snippet expansion is running (has the keyboard permission it needs) */
   expansionActive: boolean
@@ -179,6 +181,8 @@ export interface DictationSettings {
   viaAddon?: boolean
   /** Their own OpenAI key is saved (it can be removed even while the add-on is in use) */
   ownKey?: boolean
+  /** A clip that couldn't be turned into text is kept to try again: its length in seconds */
+  kept?: number
 }
 
 export interface DictationState {

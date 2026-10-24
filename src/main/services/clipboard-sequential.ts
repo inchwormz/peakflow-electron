@@ -11,6 +11,7 @@ import type { ClipboardItem } from './clipboard'
 import { getClipboardService } from './clipboard'
 import type { Tray } from 'electron'
 import { simulateCtrlV } from '../native/keyboard'
+import { pasteRunChanged } from './paste-run'
 
 interface PasteQueue {
   items: ClipboardItem[]
@@ -37,6 +38,7 @@ export function startQueue(itemIds: string[]): void {
   queue = { items, currentIndex: 0 }
   console.log(`[QuickBoard] Queue started with ${items.length} items`)
   updateTrayTooltip()
+  pasteRunChanged()
 }
 
 export function pasteNext(): boolean {
@@ -73,8 +75,10 @@ export function pasteNext(): boolean {
 }
 
 export function cancelQueue(): void {
+  const was = queue !== null
   queue = null
   if (trayRef) trayRef.setToolTip('PeakFlow')
+  if (was) pasteRunChanged()
 }
 
 export function isQueueActive(): boolean {

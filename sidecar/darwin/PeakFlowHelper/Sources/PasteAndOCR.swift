@@ -30,8 +30,13 @@ private func previousAppPid(excluding excludedPid: Int32) -> Int32? {
 /// Send Cmd+V to the focused app. If PeakFlow (our parent process) is still
 /// frontmost, hand focus back to the previous app first.
 func pasteCmdV() -> String {
+    return jsonLine(sendPaste())
+}
+
+/// The keystroke behind `paste`, as {"ok", "trusted", "error"?}.
+func sendPaste() -> [String: Any] {
     guard AXIsProcessTrusted() else {
-        return jsonLine(["ok": false, "trusted": false])
+        return ["ok": false, "trusted": false]
     }
 
     let peakflowPid = getppid()
@@ -47,13 +52,13 @@ func pasteCmdV() -> String {
     let vKey: CGKeyCode = 9 // kVK_ANSI_V
     guard let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
           let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false) else {
-        return jsonLine(["ok": false, "trusted": true, "error": "could not create key event"])
+        return ["ok": false, "trusted": true, "error": "could not create key event"]
     }
     down.flags = .maskCommand
     up.flags = .maskCommand
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
-    return jsonLine(["ok": true, "trusted": true])
+    return ["ok": true, "trusted": true]
 }
 
 /// Recognise text in an image file with Vision. Returns {"text": "..."}.

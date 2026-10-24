@@ -10,6 +10,9 @@
  * - macOS only: dragging a window to a screen edge snaps it, unless macOS's
  *   own edge tiling (macOS 15+) is on, because two previews would fight.
  *   Windows always has Snap for drags, so SnapGrid adds keys and layouts there.
+ * - Without access (trial ended, licence ended) drag-snapping is off: no
+ *   preview, no snap. The first blocked key press or drag opens the panel's
+ *   "trial ended" screen once per run, then the drag watch stops (S14, 24 Oct 2026).
  */
 
 import { BrowserWindow, screen, shell } from 'electron'
@@ -23,7 +26,9 @@ import { getConfig, setConfig } from './config-store'
 import { checkAccess } from '../security/access-check'
 import { withToolAccess } from '../security/access-guard'
 import { windowSnap } from '../native/window-snap'
-import { hidePanel } from '../panel'
+import { arrangeCandidates, fillSlots } from './snapgrid-arrange'
+import { hidePanel, showPanel } from '../panel'
+import { onLicenceChanged } from '../security/license'
 import { getFocusDimService } from './focus-dim'
 import { setWindowCommandHandler } from '../launcher/window-commands'
 import type { SnapRect, SnapWindow, DragEvent } from '../native/window-snap'
@@ -50,6 +55,18 @@ function place(f: FracRect, d: Display): SnapRect {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
 }
 
+/** A move counts when the window now fills the slot, or at least moved its
+ *  top-left corner there (an app may keep a fixed or minimum size). A window
+ *  that didn't change at all refused the move. */
+function landedIn(after: SnapRect, slot: SnapRect, before: SnapRect): boolean {
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= 40
+  const atOrigin = near(after.x, slot.x) && near(after.y, slot.y)
+  if (!atOrigin) return false
+  if (near(after.w, slot.w) && near(after.h, slot.h)) return true
+  const unchanged = [after.x - before.x, after.y - before.y, after.w - before.w, after.h - before.h].every((d) => Math.abs(d) < 2)
+  return !unchanged
+}
+
 class SnapGridService {
   private target: SnapWindow | null = null
   private history = new Map<string, SnapRect[]>()
@@ -60,7 +77,10 @@ class SnapGridService {
   private overlayReady: Promise<void> | null = null
   /** Bumped on every preview change, so a slow window lookup can't show a stale preview */
   private previewSeq = 0
-  private drag: { pid: number; windowId: number; zone: FracRect | null; display: Display | null } | null = null
+  /** allowed: null while the access check for this drag is still running */
+  private drag: { pid: number; windowId: number; zone: FracRect | null; display: Display | null; allowed: boolean | null } | null = null
+  private trialNoticeShown = false
+  private stopLicenceWatch: (() => void) | null = null
 
   private conf(): SnapGridConfig {
     return getConfig(ToolId.SnapGrid) as SnapGridConfig
@@ -71,9 +91,13 @@ class SnapGridService {
     this.pollTimer = setInterval(() => void this.poll(), POLL_MS)
     void this.poll()
     void this.refreshDragWatch()
+    // A licence entered, ended or removed starts or stops drag-snapping at once
+    this.stopLicenceWatch = onLicenceChanged(() => void this.refreshDragWatch())
   }
 
   destroy(): void {
+    this.stopLicenceWatch?.()
+    this.stopLicenceWatch = null
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = null
     windowSnap.destroy()
@@ -113,14 +137,10 @@ class SnapGridService {
     return this.target
   }
 
-  /** Windows on the target's screen, target first, then front to back. */
+  /** Normal windows on the target's screen, target first, then front to back, each once. */
   private async windowsOnTargetScreen(target: SnapWindow | null): Promise<SnapWindow[]> {
     const all = (await windowSnap.listWindows()).filter((w) => !ownPid(w))
-    if (!target) return all
-    const d = displayOf(target.frame)
-    const same = all.filter((w) => w.id !== target.id && displayOf(w.frame).id === d.id)
-    const self = all.find((w) => w.id === target.id) ?? target
-    return [self, ...same]
+    return arrangeCandidates(target, all, (a, b) => displayOf(a.frame).id === displayOf(b.frame).id)
   }
 
   private remember(w: SnapWindow): void {
@@ -180,29 +200,43 @@ class SnapGridService {
       if (opts.fromPanel) await this.finishFromPanel(w)
       this.broadcast()
       return `${w.appName}: ${SNAP_LAYOUT_BY_KEY[key].name.toLowerCase()}`
-    }, () => 'Your trial has ended')
+    }, () => this.blocked(!opts.fromPanel))
   }
 
   arrange(key: ArrangeKey): Promise<string> {
     return withToolAccess(checkAccess, ToolId.SnapGrid, async () => {
       this.hidePreview()
       const target = await this.currentTarget()
-      const wins = (await this.windowsOnTargetScreen(target)).slice(0, ARRANGE_BY_KEY[key].max)
+      const wins = await this.windowsOnTargetScreen(target)
       if (!wins.length) return 'No windows to arrange'
       const d = displayOf(wins[0].frame)
-      const rects = ARRANGE_BY_KEY[key].rects(wins.length).map((f) => place(f, d))
-      let moved = 0
-      // Back to front, so the front window is moved (and raised) last
-      for (let i = rects.length - 1; i >= 0; i--) {
-        this.remember(wins[i])
-        if (await windowSnap.setWindowFrame(wins[i], rects[i])) moved++
-        else this.history.get(wins[i].id)?.pop()
+      const rects = ARRANGE_BY_KEY[key].rects(Math.min(wins.length, ARRANGE_BY_KEY[key].max)).map((f) => place(f, d))
+      // Slot by slot from the main one; a window that won't move passes its slot on
+      const placed = await fillSlots(rects, wins, async (w, r) => {
+        const before = { ...w.frame }
+        this.remember(w)
+        const after = await windowSnap.setWindowFrame(w, r)
+        // The helper reports the frame it reads back; a window that refused
+        // the move is still where it was, so its slot goes to the next one
+        if (after && landedIn(after, r, before)) return true
+        this.history.get(w.id)?.pop()
+        return false
+      })
+      const moved = placed.length
+      if (placed.length) {
+        // Bring the main window's app forward first. On a Mac that also brings
+        // every other window of that app forward (a second Chrome window, say),
+        // which covered the other slots. Then lift the arranged windows above
+        // them, back to front, so the main one ends on top.
+        await windowSnap.raiseWindow(placed[0])
+        for (let i = placed.length - 1; i >= 0; i--) await windowSnap.raiseWindow(placed[i], { activate: false })
       }
-      for (let i = rects.length - 1; i >= 0; i--) await windowSnap.raiseWindow(wins[i])
-      this.hidePanelSoon()
+      // Hide without handing focus back: that would activate the app again and
+      // bring its other windows back over the slots
+      hidePanel(true)
       this.broadcast()
       return moved === 1 ? '1 window arranged' : `${moved} windows arranged`
-    }, () => 'Your trial has ended')
+    }, () => this.blocked(false))
   }
 
   async undo(opts: { fromPanel?: boolean } = {}): Promise<string> {
@@ -285,12 +319,45 @@ class SnapGridService {
     void shell.openExternal(process.platform === 'darwin' ? 'x-apple.systempreferences:com.apple.Desktop-Settings.extension' : 'ms-settings:multitasking')
   }
 
+  /**
+   * No access. Outside the panel (a shortcut, a drag) the first block of this
+   * run opens the panel's trial-ended screen; later ones stay quiet.
+   */
+  private blocked(notify: boolean): string {
+    if (notify && !this.trialNoticeShown) {
+      this.trialNoticeShown = true
+      try {
+        showPanel(ToolId.SnapGrid)
+      } catch (err) {
+        console.warn('[SnapGrid] trial-ended notice failed:', err)
+      }
+      // Notice shown: the drag watch is no longer needed without access
+      void this.refreshDragWatch()
+    }
+    return 'Your trial has ended'
+  }
+
+  private async hasAccess(): Promise<boolean> {
+    try {
+      return (await checkAccess(ToolId.SnapGrid)).allowed === true
+    } catch {
+      return false
+    }
+  }
+
   // ─── drag to edge (macOS) ─────────────────────────────────────────────────
+
+  private dragSeq = 0
 
   private async refreshDragWatch(): Promise<void> {
     if (process.platform !== 'darwin') return
+    const seq = ++this.dragSeq
     this.osDrag = await windowSnap.osHandlesEdgeDrag()
-    if (this.conf().drag_snap && !this.osDrag) windowSnap.startDragWatch((e) => this.onDrag(e))
+    // Without access the watch stays on only until the one "trial ended"
+    // notice has been shown, so the first drag can explain why nothing snaps.
+    const wanted = this.conf().drag_snap && !this.osDrag && ((await this.hasAccess()) || !this.trialNoticeShown)
+    if (seq !== this.dragSeq) return // a newer refresh decides
+    if (wanted) windowSnap.startDragWatch((e) => this.onDrag(e))
     else windowSnap.stopDragWatch()
   }
 
@@ -320,11 +387,24 @@ class SnapGridService {
   private onDrag(e: DragEvent): void {
     if (e.e === 'start') {
       if (e.pid === process.pid) return
-      this.drag = { pid: e.pid, windowId: e.windowId, zone: null, display: null }
+      const drag: NonNullable<SnapGridService['drag']> = { pid: e.pid, windowId: e.windowId, zone: null, display: null, allowed: null }
+      this.drag = drag
+      // Access is checked when the drag starts, so an ended trial never shows a preview
+      void this.hasAccess().then((ok) => {
+        drag.allowed = ok
+        if (ok) return
+        if (this.drag === drag) {
+          this.drag = null
+          this.hidePreview()
+        }
+        void this.refreshDragWatch()
+        this.blocked(true)
+      })
       return
     }
     if (!this.drag) return
     if (e.e === 'move') {
+      if (this.drag.allowed !== true) return
       const { rect, display } = this.zoneAt(e.x, e.y)
       if (rect !== this.drag.zone || display.id !== this.drag.display?.id) {
         this.drag.zone = rect
@@ -338,6 +418,7 @@ class SnapGridService {
       const drag = this.drag
       this.drag = null
       this.hidePreview()
+      if (drag.allowed !== true) return
       const { rect, display } = this.zoneAt(e.x, e.y)
       if (!rect) return
       void withToolAccess(checkAccess, ToolId.SnapGrid, async () => {

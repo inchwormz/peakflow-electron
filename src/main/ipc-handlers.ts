@@ -18,8 +18,8 @@ import { rebuildTray } from './tray'
 import { resizePanel, hidePanel, showPanel, setPanelRoute, getPanel, isPanelVisible, visiblePanelTool, panelRendererReady } from './panel'
 import { applyMiniTheme, layoutMini, moveMini, refreshMiniSize } from './mini-window'
 import { getAppIcon } from './services/app-icons'
-import { checkAccessibility, requestAccessibility } from './services/permissions-darwin'
-import { checkForUpdates } from './services/auto-updater'
+import { checkAccessibility, requestAccessibility, permissionStatus, openPermissionPane, appLocation, moveToApplications, watchForFix } from './services/permissions-darwin'
+import { checkForUpdates, getUpdateProgress } from './services/auto-updater'
 import { registerToolHotkey, getRegisteredHotkeys } from './hotkeys'
 import { setItemTags, getAllTags, manageTags } from './services/clipboard-collections'
 import { cancelQueue, getQueueStatus } from './services/clipboard-sequential'
@@ -55,7 +55,7 @@ import { runOcr } from './services/clipboard-ocr'
 import { checkAccess } from './security/access-check'
 import { withToolAccess } from './security/access-guard'
 import { guardedQueueStart, guardedQueueNext, guardedWorkflowPasteNext, guardedFormPasteNext } from './quickboard-paste'
-import { activateLicense } from './security/license'
+import { activateLicense, deactivateLicense } from './security/license'
 import { getTrialDaysRemaining, TRIAL_DAYS, installTool, isToolInstalled, getToolTrialDaysRemaining } from './security/trial'
 import { getConfig, setConfig } from './services/config-store'
 import { getFocusDimService, initFocusDim } from './services/focus-dim'
@@ -155,6 +155,11 @@ export function registerIpcHandlers(): void {
       if (result.success && isToolInstalled(ToolId.ScreenSlap)) void getScreenSlapService().start()
       return result
     }
+  )
+
+  ipcMain.handle(
+    IPC_INVOKE.SECURITY_DEACTIVATE_LICENSE,
+    async (): Promise<LicenseActivationResult> => deactivateLicense()
   )
 
   ipcMain.handle(
@@ -432,6 +437,10 @@ export function registerIpcHandlers(): void {
       return getClipboardService().getHistory()
     }
   )
+
+  ipcMain.handle(IPC_INVOKE.CLIPBOARD_LINK_PREVIEW, (_event, itemId: unknown): void => {
+    if (typeof itemId === 'string') getClipboardService().requestLinkPreview(itemId)
+  })
 
   ipcMain.handle(
     IPC_INVOKE.CLIPBOARD_WRITE_TEXT,
@@ -1170,7 +1179,27 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_INVOKE.APP_OPEN_ACCESSIBILITY, (): void => {
     hidePanel()
     requestAccessibility()
+    watchForFix('accessibility', () => showPanel('app/setup'))
   })
+  const isPermission = (k: unknown): k is 'accessibility' | 'microphone' | 'camera' => k === 'accessibility' || k === 'microphone' || k === 'camera'
+  ipcMain.handle(IPC_INVOKE.APP_PERMISSION_STATUS, (_e, kind: unknown) => (isPermission(kind) ? permissionStatus(kind) : null))
+  ipcMain.handle(IPC_INVOKE.APP_OPEN_PERMISSION, (_e, kind: unknown): void => {
+    if (!isPermission(kind)) return
+    hidePanel()
+    openPermissionPane(kind)
+    // The moment it works, open the panel where the customer was, now saying "All set"
+    watchForFix(kind, () => showPanel())
+  })
+  ipcMain.handle(IPC_INVOKE.APP_RESTART, (): void => {
+    app.relaunch()
+    app.quit()
+  })
+  ipcMain.handle(IPC_INVOKE.APP_SETUP_INFO, () => ({
+    location: appLocation(),
+    permissions: (['accessibility', 'microphone', 'camera'] as const).map((k) => permissionStatus(k))
+  }))
+  ipcMain.handle(IPC_INVOKE.APP_MOVE_TO_APPLICATIONS, (): boolean => moveToApplications())
+  ipcMain.handle(IPC_INVOKE.APP_UPDATE_STATUS, () => getUpdateProgress())
   ipcMain.handle(IPC_INVOKE.APP_GET_ICON, async (_event, q: AppIconQuery): Promise<string | null> => {
     if (!q || typeof q !== 'object') return null
     const clean: AppIconQuery = {}

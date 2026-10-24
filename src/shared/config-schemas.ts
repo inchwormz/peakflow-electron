@@ -33,6 +33,8 @@ export interface QuickBoardConfig {
   ai_suggestions_enabled: boolean
   ai_last_suggestion_date: string
   ai_dismissed_suggestions: string[]
+  /** Fetch page titles for link clips while QuickBoard shows them (off by default: it visits the link) */
+  link_previews: boolean
 }
 
 export interface ScreenSlapConfig {
@@ -123,7 +125,8 @@ export const DEFAULT_CONFIGS: Record<ToolId, ToolConfig> = {
     ai_translate_default_lang: '',
     ai_suggestions_enabled: false,
     ai_last_suggestion_date: '',
-    ai_dismissed_suggestions: []
+    ai_dismissed_suggestions: [],
+    link_previews: false
   },
   [ToolId.ScreenSlap]: {
     alert_minutes_before: 1,

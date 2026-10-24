@@ -7,6 +7,7 @@
 import Store from 'electron-store'
 import { simulateCtrlV } from '../native/keyboard'
 import { getClipboardService } from './clipboard'
+import { pasteRunChanged } from './paste-run'
 
 export interface WorkflowItem {
   label: string
@@ -116,6 +117,7 @@ export function startWorkflow(workflowId: string): { active: boolean; current: n
     return { active: false, current: 0, total: 0, label: '' }
   }
   activeWorkflow = { workflow: wf, currentIndex: 0 }
+  pasteRunChanged()
   // Write first item to clipboard (via service so poll loop does not re-capture)
   getClipboardService().writeText(wf.items[0].text)
   return {
@@ -142,6 +144,7 @@ export function workflowPasteNext(): { active: boolean; current: number; total: 
   if (activeWorkflow.currentIndex >= items.length) {
     const total = items.length
     activeWorkflow = null
+    pasteRunChanged()
     return { active: false, current: total, total, label: '' }
   }
 
@@ -155,7 +158,9 @@ export function workflowPasteNext(): { active: boolean; current: number; total: 
 }
 
 export function cancelWorkflow(): void {
+  const was = activeWorkflow !== null
   activeWorkflow = null
+  if (was) pasteRunChanged()
 }
 
 export function getWorkflowStatus(): { active: boolean; current: number; total: number; label: string } {

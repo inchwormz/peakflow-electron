@@ -17,7 +17,7 @@ registerHooks({
     // /dev/null is a file, so making a folder inside it always fails
     if (spec === 'electron') return { url: stub("export const app = { getPath: () => '/dev/null/peakflow' }"), shortCircuit: true }
     if (spec === 'electron-store') return { url: stub('export default class { get() {} set() {} delete() {} }'), shortCircuit: true }
-    if (spec === './local-ai-args') return { url: pathToFileURL(join(root, 'src/main/services/local-ai-args.ts')).href, shortCircuit: true }
+    if (spec === './local-ai-args' || spec === './local-ai-spawn') return { url: pathToFileURL(join(root, `src/main/services/${spec.slice(2)}.ts`)).href, shortCircuit: true }
     return next(spec, ctx)
   }
 })

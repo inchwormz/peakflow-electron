@@ -20,6 +20,10 @@ export interface AccessStatus {
   isToolLicensed: boolean
   /** True when the license covers the full suite (subscription / bundle / legacy key) */
   isSuiteLicense?: boolean
+  /** A saved key that isn't unlocking anything: Lemon Squeezy ended it, or it couldn't be checked for 14 days */
+  licence?: 'ended' | 'offline'
+  /** A licence key is saved on this computer (so it can be removed) */
+  hasLicenceKey?: boolean
 }
 
 export interface LicenseActivationResult {
@@ -53,6 +57,7 @@ export const IPC_INVOKE = {
   SECURITY_CHECK_ACCESS: 'security:check-access',
   SECURITY_CHECK_TOOL_ACCESS: 'security:check-tool-access',
   SECURITY_ACTIVATE_LICENSE: 'security:activate-license',
+  SECURITY_DEACTIVATE_LICENSE: 'security:deactivate-license',
   SECURITY_GET_TRIAL_STATUS: 'security:get-trial-status',
 
   // Tool install (storefront)
@@ -121,6 +126,7 @@ export const IPC_INVOKE = {
   CLIPBOARD_DELETE_TRANSFORM: 'clipboard:delete-transform',
   CLIPBOARD_PASTE_WITH_TRANSFORM: 'clipboard:paste-with-transform',
   CLIPBOARD_RUN_OCR: 'clipboard:run-ocr',
+  CLIPBOARD_LINK_PREVIEW: 'clipboard:link-preview',
 
   // QuickBoard AI
   CLIPBOARD_AI_TRANSFORM: 'clipboard:ai-transform',
@@ -229,6 +235,16 @@ export const IPC_INVOKE = {
   APP_GET_ICON: 'app:get-icon',
   APP_CHECK_ACCESSIBILITY: 'app:check-accessibility',
   APP_OPEN_ACCESSIBILITY: 'app:open-accessibility',
+  /** macOS permission status with the shared advice text (shared/mac-permissions.ts) */
+  APP_PERMISSION_STATUS: 'app:permission-status',
+  APP_OPEN_PERMISSION: 'app:open-permission',
+  /** Quit and open PeakFlow again (after a permission comes back) */
+  APP_RESTART: 'app:restart',
+  /** macOS set-up page: where PeakFlow runs from, and its permissions */
+  APP_SETUP_INFO: 'app:setup-info',
+  APP_MOVE_TO_APPLICATIONS: 'app:move-to-applications',
+  /** Mac update download progress (UpdateProgress) */
+  APP_UPDATE_STATUS: 'app:update-status',
 
   // Bug Report
   BUGREPORT_SEND_EMAIL: 'bugreport:send-email',
@@ -267,6 +283,8 @@ export const IPC_SEND = {
   // One-app panel (v2): main asks the panel to show a route (e.g. 'quickboard')
   PANEL_NAVIGATE: 'panel:navigate',
   PANEL_VISIBILITY: 'panel:visibility',
+  /** Mac update download progress changed (UpdateProgress) */
+  APP_UPDATE_PROGRESS: 'app:update-progress',
   /** v2 mini timer: its colour changed ('dark' | 'light') */
   LIQUIDFOCUS_MINI_THEME: 'liquidfocus:mini-theme',
   /** v2: the detector's state, forwarded to the mini timer */

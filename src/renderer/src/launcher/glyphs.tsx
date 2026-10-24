@@ -19,7 +19,7 @@ const OWN: Partial<Record<LauncherGlyph, string>> = {
 const FROM_PANEL: Partial<Record<LauncherGlyph, IconName>> = {
   file: 'file', settings: 'settings', power: 'power', lock: 'lock', trash: 'trash', globe: 'globe', search: 'search',
   link: 'link', text: 'text', sparkle: 'sparkle', plus: 'plus', keyboard: 'keyboard', focusdim: 'focusdim',
-  liquidfocus: 'liquidfocus', screenslap: 'screenslap', quickboard: 'quickboard'
+  liquidfocus: 'liquidfocus', screenslap: 'screenslap', quickboard: 'quickboard', dictation: 'mic'
 }
 
 export function Glyph({ name }: { name: LauncherGlyph | undefined }): React.JSX.Element {

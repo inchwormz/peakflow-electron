@@ -26,6 +26,7 @@ import { initTodoist, destroyTodoist } from './services/todoist'
 import { initExtensionServer, destroyExtensionServer } from './services/extension-server'
 import { initAutoUpdater } from './services/auto-updater'
 import { initLogger, flushLogger, crashWrite } from './services/logger'
+import { sendViaEmail } from './services/bug-report' // static: a relative require() is unresolved in the bundle
 import { initWatchdog, destroyWatchdog, getCrashMarkerPath } from './services/watchdog'
 import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools, ensureTrialExpiry } from './security/trial'
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
@@ -35,7 +36,7 @@ import { runDevShots } from './dev-shots'
 import { initLauncher, destroyLauncher } from './launcher'
 import { setTrayTitle } from './tray'
 import { getLiquidFocusService } from './services/liquidfocus'
-import { runMacFirstRunPermissions } from './services/permissions-darwin'
+import { macStartupRoute } from './services/permissions-darwin'
 import { destroyActiveWindowHelper } from './native/active-window'
 import { ToolId, PANEL_TOOLS, TODOIST_ENABLED, EXTENSION_ENABLED } from '@shared/tool-ids'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
@@ -94,8 +95,7 @@ function checkCrashMarker(): void {
     })
 
     if (result.response === 0) {
-      const { sendViaEmail } = require('./services/bug-report')
-      sendViaEmail()
+      void sendViaEmail()
     }
   }, 2000)
 }
@@ -246,16 +246,15 @@ if (!gotLock) {
 
     // v2: open the one-app panel on startup so new users aren't left hunting
     // the menu-bar icon (replaces the old Dashboard hub window)
+    // macOS: the first launch, a permission an update reset, or running from
+    // Downloads / the disk image opens the panel on its set-up page instead
+    // (inside the panel, so nothing steals focus and closes it; review S13)
     initPanel()
-    setTimeout(() => showPanel(), 600)
+    const startRoute = macStartupRoute() ?? undefined
+    setTimeout(() => showPanel(startRoute), 600)
     // Free ⌥Space / Alt+Space launcher (hidden window kept ready)
     initLauncher()
     void runDevShots() // development screenshots only (env-gated, never in packaged builds)
-
-    // macOS: one-time plain-English explainer for the Accessibility permission
-    if (process.platform === 'darwin') {
-      setTimeout(() => { void runMacFirstRunPermissions() }, 1500)
-    }
 
     console.log('[PeakFlow] Core started — running in system tray')
   })

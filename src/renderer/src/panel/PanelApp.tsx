@@ -14,8 +14,9 @@ import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { AccessStatus } from '@shared/ipc-types'
 import { Icon } from './icons'
 import { NavContext, matchRoute, type NavApi } from './nav'
-import { invoke, isMac, useIpcEvent, useInvoke, formatAccelerator } from './hooks'
+import { invoke, isMac, useIpcEvent, useInvoke, formatAccelerator, builtInKey } from './hooks'
 import { isPrimaryMod, isSwitchMod, modLabel } from '@shared/mod-key'
+import { SWITCH_ACCELS as SWITCH_KEYS } from '@shared/global-keys'
 import { panelHeight } from './panel-height'
 import { Btn, Hero, LinkBtn, Grp, Row, Gap, openExternal } from './kit'
 import { TOOL_MODULES, TOOL_BY_ID } from './tools'
@@ -24,7 +25,6 @@ import type { DialogSpec, PanelToolId, RouteDef, RouteTable } from './types'
 
 const ALL_ROUTES: RouteTable = Object.assign({}, ...TOOL_MODULES.map((m) => m.routes), APP_ROUTES)
 const LAST_KEY = 'pf.panel.last-tool'
-const SWITCH_KEYS = ['Alt+CommandOrControl+1', 'Alt+CommandOrControl+2', 'Alt+CommandOrControl+3', 'Alt+CommandOrControl+4', 'Alt+CommandOrControl+5']
 export const CHECKOUT_URL = 'https://getpeakflow.pro/#pricing'
 
 function readLast(): PanelToolId {
@@ -112,13 +112,14 @@ export function PanelApp(): React.JSX.Element {
     if (!v) setDdOpen(false)
   })
 
-  // Keyboard: ⌥⌘1–5 switch, ⌘, settings, Esc closes the menu / goes back / hides, ⌘Q quits
-  // (Alt+Ctrl+1–5, Ctrl+, and Ctrl+Q on Windows)
+  // Keyboard: ⌥⌘1–6 switch, ⌘, settings, Esc closes the menu / goes back / hides, ⌘Q quits
+  // (Alt+Ctrl+1–6, Ctrl+, and Ctrl+Q on Windows)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const typing = (e.target as HTMLElement)?.closest?.('input, textarea, select, .rec.on')
       const mac = isMac()
-      if (isSwitchMod(e, mac) && /^Digit[1-5]$/.test(e.code)) {
+      // (Windows: not while typing, where Alt+Ctrl+digit is AltGr+digit: @ # and so on)
+      if (isSwitchMod(e, mac) && /^Digit[1-6]$/.test(e.code) && (mac || !typing)) {
         e.preventDefault()
         go(TOOL_MODULES[Number(e.code.slice(5)) - 1].id)
         return
@@ -169,7 +170,9 @@ export function PanelApp(): React.JSX.Element {
   const View = def.view
   const title = def.kind === 'sub' ? (typeof def.title === 'function' ? def.title(match.params) : def.title) : ''
   const Right = def.kind === 'sub' ? def.right : undefined
-  const gatedTool = toolOf(route)
+  // Dictation has no trial screen (see PanelToolModule.ungated)
+  const routeTool = toolOf(route)
+  const gatedTool = routeTool && !TOOL_BY_ID[routeTool].ungated ? routeTool : null
 
   return (
     <NavContext.Provider value={nav}>
@@ -293,7 +296,7 @@ function Switcher({ innerRef, current, statuses, onGo, onClose }: {
           </span>
           {t.name}
           <span className={t.id === 'liquidfocus' && /\d:\d\d/.test(statuses[i]) ? 'st on' : 'st'}>{statuses[i]}</span>
-          <kbd style={{ marginLeft: 'auto' }}>{formatAccelerator(SWITCH_KEYS[i])}</kbd>
+          {builtInKey(SWITCH_KEYS[i]) ? <kbd style={{ marginLeft: 'auto' }}>{formatAccelerator(SWITCH_KEYS[i])}</kbd> : null}
         </div>
       ))}
       <div className="sep" />

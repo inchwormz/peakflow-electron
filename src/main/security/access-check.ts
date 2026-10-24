@@ -12,7 +12,7 @@
  */
 
 import type { AccessStatus } from '@shared/ipc-types'
-import { isLicensed, isToolLicensed as isLicenseForTool, isSuiteLicense } from './license'
+import { isLicensed, isToolLicensed as isLicenseForTool, isSuiteLicense, licenceProblem, hasLicenceKey } from './license'
 import { isToolInstalled, getTrialDaysRemaining } from './trial'
 
 /**
@@ -29,6 +29,18 @@ import { isToolInstalled, getTrialDaysRemaining } from './trial'
  * @returns An {@link AccessStatus} object describing the current access state
  */
 export async function checkAccess(toolId = 'PeakFlow'): Promise<AccessStatus> {
+  const status = await checkAccessInner(toolId)
+  try {
+    status.hasLicenceKey = hasLicenceKey()
+    const problem = status.isLicensed ? undefined : licenceProblem()
+    if (problem) status.licence = problem
+  } catch {
+    /* extra detail only */
+  }
+  return status
+}
+
+async function checkAccessInner(toolId: string): Promise<AccessStatus> {
   try {
     const licensed = await isLicensed()
 

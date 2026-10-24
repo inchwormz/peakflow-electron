@@ -6,7 +6,7 @@
  *   sg-front                         → the frontmost app's focused window
  *   sg-windows                       → standard on-screen windows, front to back
  *   sg-set <pid> <wid> <x> <y> <w> <h> → move/resize that window (wid 0 = the app's focused window)
- *   sg-raise <pid> <wid>             → raise that window and activate its app
+ *   sg-raise <pid> <wid> [0]         → activate its app (unless 0), then raise that window
  *   sg-tiling                        → {"edgeDrag": bool}: macOS's own drag-to-edge tiling is on
  *
  * Long-running mode `peakflow-helper drag-watch` prints one JSON line per
@@ -112,11 +112,44 @@ func sgFront() -> String {
     return jsonString(result)
 }
 
-/// sg-windows: normal on-screen windows (layer 0), front to back.
+/// Accessibility facts about one app's windows, by CGWindowID. Every AX call
+/// times out after 0.25 s and the loop stops at `deadline`, so a hung app
+/// can't stall the helper. `complete` is false when it stopped early: windows
+/// it didn't reach are then "not known", not "not a window".
+private func axWindowInfo(pid: Int32, deadline: Date) -> (byId: [Int: (subrole: String, minimized: Bool)], complete: Bool) {
+    var info: [Int: (subrole: String, minimized: Bool)] = [:]
+    let app = AXUIElementCreateApplication(pid)
+    AXUIElementSetMessagingTimeout(app, 0.25)
+    var windowsRef: AnyObject?
+    let err = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
+    if err == .cannotComplete { return (info, false) } // timed out: not known
+    guard err == .success, let windows = windowsRef as? [AXUIElement] else { return (info, true) }
+    for w in windows {
+        if Date() >= deadline { return (info, false) }
+        AXUIElementSetMessagingTimeout(w, 0.25)
+        let wid = axWindowId(w)
+        if wid == 0 { continue }
+        var subroleRef: AnyObject?
+        var minRef: AnyObject?
+        AXUIElementCopyAttributeValue(w, kAXSubroleAttribute as CFString, &subroleRef)
+        AXUIElementCopyAttributeValue(w, kAXMinimizedAttribute as CFString, &minRef)
+        info[wid] = ((subroleRef as? String) ?? "", (minRef as? Bool) == true)
+    }
+    return (info, true)
+}
+
+/// sg-windows: on-screen windows (layer 0), front to back. Each carries its
+/// Accessibility subrole ("AXStandardWindow" for ordinary windows; "" when
+/// Accessibility can't see it, so it can't be moved either) so callers can
+/// skip panels, dialogs and invisible helper windows.
 func sgWindows() -> String {
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
         return "[]"
     }
+    var axByPid: [Int32: (byId: [Int: (subrole: String, minimized: Bool)], complete: Bool)] = [:]
+    // The caller waits 2 s at most: after 1 s, list the rest without
+    // Accessibility facts (no "subrole" means "not known", and they're kept)
+    let axDeadline = Date().addingTimeInterval(1.0)
     var out: [[String: Any]] = []
     for info in list {
         if out.count >= 30 { break }
@@ -131,6 +164,15 @@ func sgWindows() -> String {
         if title == "__peakflow_dim__" { continue }
         var row: [String: Any] = ["pid": Int(pid), "windowId": wid, "title": title,
                                   "frame": ["x": Double(x), "y": Double(y), "w": Double(w), "h": Double(h)]]
+        if axByPid[pid] == nil && Date() < axDeadline { axByPid[pid] = axWindowInfo(pid: pid, deadline: axDeadline) }
+        if let facts = axByPid[pid] {
+            if let ax = facts.byId[wid] {
+                row["subrole"] = ax.subrole
+                if ax.minimized { row["minimized"] = true }
+            } else if facts.complete {
+                row["subrole"] = "" // Accessibility can't see it, so it can't be moved either
+            }
+        }
         row.merge(appInfo(pid)) { a, _ in a }
         out.append(row)
     }
@@ -162,17 +204,24 @@ func sgSet(_ arg: String?) -> String {
     return jsonString(result)
 }
 
-/// sg-raise <pid> <wid>
+/// sg-raise <pid> <wid> [0]
+/// Brings that app to the front, then raises the window above the app's
+/// others. Bringing an app to the front raises every window it has (like
+/// Cmd-Tab), so a trailing "0" raises the window alone, without activating:
+/// Arrange uses that to lift its windows back above the app's other windows.
 func sgRaise(_ arg: String?) -> String {
     let parts = (arg ?? "").split(separator: " ").map(String.init)
-    guard parts.count == 2, let pid = Int32(parts[0]), pid > 0, let wid = Int(parts[1]) else {
+    guard parts.count == 2 || parts.count == 3, let pid = Int32(parts[0]), pid > 0, let wid = Int(parts[1]) else {
         return jsonString(["ok": false])
     }
+    let activate = parts.count == 2 || parts[2] != "0"
+    // Activate first: activating afterwards would put the app's other windows on top again
+    let activated = activate ? activateApp(pid: pid) : true
+    var raised = false
     if let (_, window) = findWindow(pid: pid, wid: wid) {
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
     }
-    let ok = NSRunningApplication(processIdentifier: pid)?.activate(options: []) ?? false
-    return jsonString(["ok": ok])
+    return jsonString(["ok": activated && raised])
 }
 
 /// sg-tiling: is macOS's own "drag windows to screen edges to tile" on?

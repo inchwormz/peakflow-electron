@@ -9,7 +9,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import type { IconName } from './icons'
 
-export type PanelToolId = 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'snapgrid'
+export type PanelToolId = 'focusdim' | 'liquidfocus' | 'screenslap' | 'quickboard' | 'snapgrid' | 'dictation'
 
 export type RouteParams = Record<string, string>
 
@@ -46,6 +46,8 @@ export interface PanelToolModule {
   useStatus: () => string
   /** Must include the main route `<id>` and `<id>/settings`. */
   routes: RouteTable
+  /** No trial or licence screen (Dictation keeps the free launcher's access rule). */
+  ungated?: boolean
   /** Optional always-mounted component (sounds, camera detector) that lives while the panel is hidden. */
   Background?: ComponentType
 }

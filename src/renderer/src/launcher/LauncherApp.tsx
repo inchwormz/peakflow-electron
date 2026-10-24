@@ -12,8 +12,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type {
   AiChunk, AiProviderId, AiStatus, AiTextAction, CurrencyRates, LauncherItem, LauncherOpenInfo, LauncherProcess,
-  LauncherRunResult, LauncherSettings, SelectionResult, DictationHoldKey, DictationSettings
+  LauncherRunResult, LauncherSettings, SelectionResult
 } from '@shared/launcher/types'
+import type { PermissionStatus } from '@shared/mac-permissions'
 import { rankItems, type Usage } from '@shared/launcher/rank'
 import { calculate, type CalcResult } from '@shared/launcher/calc'
 import { invoke, isMac, formatAccelerator } from '../panel/hooks'
@@ -21,9 +22,8 @@ import { Icon } from '../panel/icons'
 import { Glyph } from './glyphs'
 import '../panel/panel.css'
 import './launcher.css'
-import { DictationAccountRow } from './DictationAccountRow'
 
-type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup' | 'words'
+type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup'
 
 interface AiRun {
   reqId: number
@@ -160,6 +160,8 @@ export function LauncherApp(): React.JSX.Element {
   }, [])
 
   const loadAiStatus = useCallback(() => invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS).then(setAiStatus), [])
+  // The Connect AI screen: look everywhere, and don't trust an earlier "signed out"
+  const checkAiStatus = useCallback(() => invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS, { deep: true, fresh: true }).then(setAiStatus), [])
 
   // ── open / close ──
   useEffect(() => {
@@ -175,7 +177,8 @@ export function LauncherApp(): React.JSX.Element {
       const info = raw as LauncherOpenInfo
       openAt.current = info.at
       searchTimed.current = false
-      setView('search')
+      // QuickBoard's Connect button opens straight on Connect AI
+      setView(info.view === 'ai-setup' ? 'ai-setup' : 'search')
       setQuery('')
       setSel(0)
       setConfirm(null)
@@ -185,6 +188,11 @@ export function LauncherApp(): React.JSX.Element {
       setFiles({ q: '', list: [] })
       loadItems()
       void loadAiStatus()
+      // Opened on its settings (the tray menu's "Launcher Settings")
+      if (info.view === 'settings') {
+        void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SETTINGS).then(setSettings)
+        setView('settings')
+      }
       if (!rates) void invoke<CurrencyRates | null>(IPC_INVOKE.LAUNCHER_RATES).then(setRates)
       inputRef.current?.focus()
       // Open time: hotkey pressed → bar painted
@@ -304,7 +312,7 @@ export function LauncherApp(): React.JSX.Element {
   const startAi = useCallback(
     async (title: string, redo: AiRun['redo'], provider?: AiProviderId) => {
       // Main picks the saved choice when no provider is given, so a stale list here can't send it to the wrong AI
-      const status = await invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS)
+      const status = await invoke<AiStatus>(IPC_INVOKE.LAUNCHER_AI_STATUS, { deep: true, fresh: true })
       setAiStatus(status)
       if (!(provider ?? status.selected)) {
         setView('ai-setup')
@@ -455,7 +463,7 @@ export function LauncherApp(): React.JSX.Element {
   const inputShown = view === 'search' || view === 'kill'
   const crumb: Partial<Record<View, string>> = {
     kill: 'Kill Process', ai: ai?.title, 'snippet-form': editing ? 'Edit Snippet' : 'Add Snippet', 'link-form': editing ? 'Edit Quick Link' : 'Add Quick Link',
-    settings: 'Launcher Settings', 'ai-setup': 'Connect AI', words: 'My words'
+    settings: 'Launcher Settings', 'ai-setup': 'Connect AI'
   }
 
   return (
@@ -544,9 +552,8 @@ export function LauncherApp(): React.JSX.Element {
 
         {view === 'snippet-form' && <SnippetForm editing={editing} onDone={(m) => { flash(m); back() }} />}
         {view === 'link-form' && <LinkForm editing={editing} onDone={(m) => { flash(m); back() }} />}
-        {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} onWords={() => setView('words')} />}
-        {view === 'words' && <WordsForm onDone={(m) => { flash(m); setView('settings') }} />}
-        {view === 'ai-setup' && <AiSetup status={aiStatus} reload={loadAiStatus} onPick={(s) => setAiStatus(s)} />}
+        {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} />}
+        {view === 'ai-setup' && <AiSetup status={aiStatus} reload={checkAiStatus} onPick={(s) => setAiStatus(s)} />}
       </div>
 
       <div className="lc-foot">
@@ -671,40 +678,6 @@ function SnippetForm({ editing, onDone }: { editing: LauncherItem | null; onDone
   )
 }
 
-/** "My words": names and terms to spell the person's way, one per line; "X -> Y" always replaces. */
-function WordsForm({ onDone }: { onDone: (m: string) => void }): React.JSX.Element {
-  const [text, setText] = useState<string | null>(null)
-  useEffect(() => {
-    void invoke<string>(IPC_INVOKE.DICTATION_WORDS).then((t) => setText(t ?? ''))
-  }, [])
-  const lines = (text ?? '').split(/[\n,]/).map((l) => l.trim()).filter(Boolean)
-  const hints = lines.filter((l) => !/(->|→)/.test(l)).length
-  const reps = lines.length - hints
-  const submit = (): void => {
-    void invoke(IPC_INVOKE.DICTATION_SET_WORDS, text ?? '').then(() => onDone(hints ? `Saved ${hints} words` : 'Saved'))
-  }
-  const onKey = useSubmitOnModEnter(submit)
-  if (text === null) return <div className="lc-form" />
-  return (
-    <div className="lc-form" onKeyDown={onKey}>
-      <label>
-        One per line
-        <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={'Siobhan\nPeakFlow\nManukora'} style={{ minHeight: 150 }} />
-        <span className="hint">
-          Names, products and jargon that come out wrong. Dictation uses them as hints, so ordinary words still come through as spoken.
-          To always swap a word, write it as <b>teh -&gt; the</b>.
-        </span>
-      </label>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className={hints > 50 ? 'err' : 'hint'}>
-          {hints > 50 ? `${hints} words: lists over 50 make mistakes more likely. Keep the ones that actually come out wrong.` : `${hints} word${hints === 1 ? '' : 's'}${reps ? `, ${reps} always replaced` : ''}`}
-        </span>
-        <button className="btn primary" onClick={submit}>Save <kbd>{MOD}↵</kbd></button>
-      </div>
-    </div>
-  )
-}
-
 function LinkForm({ editing, onDone }: { editing: LauncherItem | null; onDone: (m: string) => void }): React.JSX.Element {
   const [name, setName] = useState(editing?.title ?? '')
   const [target, setTarget] = useState(editing?.target ?? '')
@@ -736,6 +709,32 @@ function LinkForm({ editing, onDone }: { editing: LauncherItem | null; onDone: (
 
 // ─── settings ────────────────────────────────────────────────────────────────
 
+/**
+ * The line under snippet and dictation rows when Accessibility is missing:
+ * the shared "macOS forgot PeakFlow" wording after an update (review S1).
+ */
+function useAccessibilityNote(): { note: string; lost: boolean } {
+  const [ax, setAx] = useState<PermissionStatus | null>(null)
+  useEffect(() => {
+    if (isMac()) void invoke<PermissionStatus | null>(IPC_INVOKE.APP_PERMISSION_STATUS, 'accessibility').then(setAx).catch(() => {})
+  }, [])
+  return ax?.lost
+    ? { note: 'macOS forgot PeakFlow after the update. Show me how walks you through the fix.', lost: true }
+    : { note: 'Needs the Accessibility permission (the same one QuickBoard uses)', lost: false }
+}
+
+/**
+ * Allow (opens System Settings), or after an update made macOS forget
+ * PeakFlow, Show me how: the panel's step-by-step guide with pictures.
+ */
+function AllowButton({ lost }: { lost: boolean }): React.JSX.Element {
+  return lost ? (
+    <button className="btn" onClick={() => void invoke(IPC_INVOKE.PANEL_SHOW, 'app/setup')}>Show me how</button>
+  ) : (
+    <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>
+  )
+}
+
 function acceleratorFrom(e: React.KeyboardEvent): string | null {
   const key = e.key
   if (['Meta', 'Control', 'Alt', 'Shift'].includes(key)) return null
@@ -753,8 +752,9 @@ function acceleratorFrom(e: React.KeyboardEvent): string | null {
   return [...mods, k].join('+')
 }
 
-function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void; onWords: () => void }): React.JSX.Element {
+function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
+  const axNote = useAccessibilityNote()
   const set = (key: string, value: unknown): void => void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SET_SETTING, key, value).then(onChange)
   const usable = (aiStatus?.providers ?? []).filter((p) => p.installed && p.signedIn !== false)
   const selectedAi = usable.find((p) => p.id === aiStatus?.selected)
@@ -763,7 +763,13 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
       <div className="lc-set">
         <div>
           <div className="lbl">Open the launcher</div>
-          <div className="sub">{settings.hotkeyRegistered ? 'Press it from any app' : 'Another app is using this shortcut: pick a different one'}</div>
+          <div className="sub">
+            {!settings.hotkeyRegistered
+              ? 'Another app is using this shortcut: pick a different one'
+              : settings.hotkeyMovedFrom
+                ? `Another app uses ${formatAccelerator(settings.hotkeyMovedFrom)}, so PeakFlow picked this one`
+                : 'Press it from any app'}
+          </div>
         </div>
         <button
           className="btn lc-rec"
@@ -788,13 +794,11 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
         <div>
           <div className="lbl">Expand snippets as you type</div>
           <div className="sub">
-            {!settings.expansionEnabled ? 'Off' : settings.expansionActive ? 'On in every app' : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
+            {!settings.expansionEnabled ? 'Off' : settings.expansionActive ? 'On in every app' : isMac() ? axNote.note : 'Starting…'}
           </div>
         </div>
         <span className="row">
-          {settings.expansionEnabled && !settings.expansionActive && isMac() && (
-            <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>
-          )}
+          {settings.expansionEnabled && !settings.expansionActive && isMac() && <AllowButton lost={axNote.lost} />}
           <button className="switch" role="switch" aria-checked={settings.expansionEnabled} onClick={() => set('expansion', !settings.expansionEnabled)} />
         </span>
       </div>
@@ -830,8 +834,13 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
           </span>
         </div>
       )}
-      <DictationAccountRow />
-      <DictationRows onWords={onWords} />
+      <div className="lc-set">
+        <div>
+          <div className="lbl">Dictation</div>
+          <div className="sub">Dictation has moved to its own page in PeakFlow</div>
+        </div>
+        <button className="btn" onClick={() => void invoke(IPC_INVOKE.PANEL_SHOW, 'dictation')}>Open</button>
+      </div>
       <div className="lc-set">
         <div>
           <div className="lbl">Snippets and quick links</div>
@@ -842,110 +851,10 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
   )
 }
 
-const HOLD_KEYS: Array<[DictationHoldKey, string]> = isMac()
-  ? [['fn', 'fn'], ['ropt', 'Right ⌥'], ['rcmd', 'Right ⌘'], ['rctrl', 'Right ⌃']]
-  : [['rctrl', 'Right Ctrl'], ['ralt', 'Right Alt']]
-
-const KEY_ERRORS: Record<string, string> = {
-  bad_key: 'OpenAI didn’t accept that key',
-  network: 'Couldn’t reach OpenAI: check the internet connection',
-  failed: 'Couldn’t save the key'
-}
-
-/** Dictation: hold a key, talk, let go. Needs the person's own OpenAI key. */
-function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element | null {
-  const [d, setD] = useState<DictationSettings | null>(null)
-  const [key, setKey] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState('')
-  useEffect(() => {
-    void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
-  }, [])
-  if (!d) return null
-  const set = (k: string, v: unknown): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v).then(setD)
-  const save = async (): Promise<void> => {
-    setSaving(true)
-    setErr('')
-    const r = await invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
-    setSaving(false)
-    setD(r.settings)
-    if (r.ok) setKey('')
-    else setErr(KEY_ERRORS[r.error ?? 'failed'] ?? KEY_ERRORS.failed)
-  }
-  const holdName = HOLD_KEYS.find(([k]) => k === d.holdKey)?.[1] ?? d.holdKey
-  if (!d.hasKey) {
-    return (
-      <div className="lc-set">
-        <div>
-          <div className="lbl">Dictation</div>
-          <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 2 minutes of talking).'}</div>
-        </div>
-        <span className="row">
-          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" className="lc-field" style={{ width: 150 }} aria-label="OpenAI API key" />
-          <button className="btn" disabled={!key || saving} onClick={() => void save()}>{saving ? 'Checking…' : 'Save'}</button>
-        </span>
-      </div>
-    )
-  }
-  return (
-    <>
-      <div className="lc-set">
-        <div>
-          <div className="lbl">Dictation</div>
-          <div className="sub">
-            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? 'Needs the Accessibility permission (the same one QuickBoard uses)' : 'Starting…'}
-          </div>
-        </div>
-        <span className="row">
-          {d.enabled && !d.active && isMac() && <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>}
-          <button className="switch" role="switch" aria-checked={d.enabled} aria-label="Dictation" onClick={() => set('enabled', !d.enabled)} />
-        </span>
-      </div>
-      {d.enabled && (
-        <>
-          <div className="lc-set">
-            <div>
-              <div className="lbl">Hold to talk</div>
-              {d.hint && <div className="sub" role="note">{d.hint}</div>}
-            </div>
-            <span className="seg">
-              {HOLD_KEYS.map(([k, name]) => (
-                <button key={k} aria-pressed={d.holdKey === k} onClick={() => set('holdKey', k)}>{name}</button>
-              ))}
-            </span>
-          </div>
-          <div className="lc-set">
-            <div>
-              <div className="lbl">My words</div>
-              <div className="sub">{d.wordCount ? `${d.wordCount} names and terms spelt your way` : 'Names and terms dictation should spell your way'}</div>
-            </div>
-            <button className="btn" onClick={onWords}>{d.wordCount ? 'Edit' : 'Add'}</button>
-          </div>
-          <div className="lc-set">
-            <div>
-              <div className="lbl">Clean up as you go</div>
-              <div className="sub">Takes out “um”, adds punctuation, and keeps only the fix when you say “no wait”. Never changes names, numbers or “not”.</div>
-            </div>
-            <button className="switch" role="switch" aria-checked={d.cleanup} aria-label="Clean up as you go" onClick={() => set('cleanup', !d.cleanup)} />
-          </div>
-        </>
-      )}
-      {d.ownKey && (
-        <div className="lc-set">
-          <div>
-            <div className="lbl">OpenAI key</div>
-            <div className="sub">Saved encrypted on this computer</div>
-          </div>
-          <button className="btn" onClick={() => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then(setD)}>Remove</button>
-        </div>
-      )}
-    </>
-  )
-}
-
 function AiSetup({ status, reload, onPick }: { status: AiStatus | null; reload: () => Promise<void>; onPick: (s: AiStatus) => void }): React.JSX.Element {
   // While this screen is open, check every few seconds so it turns to "Connected" after sign-in
   useEffect(() => {
+    void reload()
     const t = setInterval(() => void reload(), 3000)
     return () => clearInterval(t)
   }, [reload])
