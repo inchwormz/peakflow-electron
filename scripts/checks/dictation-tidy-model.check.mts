@@ -127,7 +127,7 @@ test('a 300-byte app name, the full word list and a 1000-byte dictation stay wit
   assert.ok(messages[0].content.includes('Term0Word'), 'some word list still sent')
 })
 
-test('a dictation too long for one request is not sent: raw text returned, logged once', async () => {
+test('add-on path: a dictation over the server cap is not sent: raw text returned, logged once', async () => {
   const warnings: string[] = []
   const realWarn = console.warn
   console.warn = (...a: unknown[]) => { warnings.push(a.join(' ')) }
@@ -135,8 +135,9 @@ test('a dictation too long for one request is not sent: raw text returned, logge
     let calls = 0
     const fetchImpl = (async () => { calls++; return new Response('{}') }) as typeof fetch
     const raw = 'word '.repeat(1700) // 8500 bytes on its own
-    const r1 = await cleanUp(raw, { key: 'k', words, fetchImpl })
-    const r2 = await cleanUp(raw, { key: 'k', words, fetchImpl })
+    const addon = { key: 'add-on', words, fetchImpl, skipOverBytes: 8000 }
+    const r1 = await cleanUp(raw, addon)
+    const r2 = await cleanUp(raw, addon)
     assert.equal(calls, 0, 'no request sent')
     assert.equal(r1.text, raw)
     assert.equal(r1.cleaned, false)
@@ -146,6 +147,18 @@ test('a dictation too long for one request is not sent: raw text returned, logge
   } finally {
     console.warn = realWarn
   }
+})
+
+test('own-key path: a dictation over 8000 bytes is still cleaned up (OpenAI has no such cap), word list trimmed to nothing', async () => {
+  const raw = 'word '.repeat(1700) // 8500 bytes on its own
+  const reply = `${raw.trim()}.` // same words, so the guard accepts it
+  const { sent, fetchImpl } = capture(reply)
+  const r = await cleanUp(raw, { key: 'k', words, fetchImpl })
+  assert.equal(sent.url, 'https://api.openai.com/v1/chat/completions')
+  assert.equal(r.cleaned, true, r.rejected)
+  assert.equal(r.text, reply)
+  const system = (sent.body?.messages as Array<{ content: string }>)[0].content
+  assert.equal(system.includes('Spell these exactly'), false, 'no word list left to send')
 })
 
 test('the add-on tidy fetch sends only { messages } and never the add-on placeholder as a key', async () => {
