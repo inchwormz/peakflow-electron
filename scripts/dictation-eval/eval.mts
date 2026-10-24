@@ -91,13 +91,13 @@ if (mode === 'all' || mode === 'models') {
     raw[c.id] = r.text ?? ''
     return { out: r.text ?? `[${r.error}]`, ms: Date.now() - t0 }
   })
-  for (const model of (process.env.CLEANUP_MODELS ?? 'gpt-4.1-nano,gpt-5.4-nano,gpt-4.1-mini').split(',')) {
+  for (const model of (process.env.CLEANUP_MODELS ?? 'gpt-6-luna,gpt-5.4-nano,gpt-4.1-mini').split(',')) {
     await setup(`C: B + light clean-up (${model})`, async (c) => {
       const r = await cleanUp(raw[c.id], { key, words, ctx: c.ctx ?? {}, model })
       return { out: r.text, ms: r.ms, cleaned: r.cleaned, note: r.rejected ? `guard used raw: ${r.rejected}` : undefined }
     })
   }
-  await setup('D: shipped (hints + clean-up only when needed, gpt-4.1-nano)', async (c) => {
+  await setup('D: shipped (hints + clean-up only when needed, gpt-6-luna)', async (c) => {
     if (!needsTidy(raw[c.id], words)) return { out: raw[c.id], ms: 0, cleaned: false, note: 'clean-up not needed' }
     const r = await cleanUp(raw[c.id], { key, words, ctx: c.ctx ?? {} })
     return { out: r.text, ms: r.ms, cleaned: r.cleaned, note: r.rejected ? `guard used raw: ${r.rejected}` : undefined }
