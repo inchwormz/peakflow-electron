@@ -364,3 +364,14 @@
 .pf .mini .tx b .det { display: inline-flex; vertical-align: middle; margin-left: 6px; color: var(--text-2); transition: opacity .2s; }
 .pf .mini .tx b .det svg { width: 12px; height: 12px; }
 .pf .mini .tx b .det.away { opacity: 0.35; }
+
+/* Permission guide (permission.tsx): numbered steps, each with a drawing of System Settings */
+.pf .pg-title { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.35; }
+.pf .pg-steps { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 14px; }
+.pf .pg-text { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text); line-height: 1.45; }
+.pf .pg-n { flex: none; width: 18px; height: 18px; border-radius: 9px; background: var(--text); color: var(--bg); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.pf .pg-art { margin: 8px 0 0 26px; }
+.pf .pg-art svg { display: block; width: 100%; height: auto; }
+.pf .pg-row { display: flex; gap: 8px; align-items: center; }
+.pf .pg-row .note { flex: 1; }
+.pf .pg-head { font-size: 12px; font-weight: 600; color: var(--text); margin: 0 0 2px; }

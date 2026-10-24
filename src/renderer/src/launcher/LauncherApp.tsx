@@ -746,12 +746,26 @@ function LinkForm({ editing, onDone }: { editing: LauncherItem | null; onDone: (
  * The line under snippet and dictation rows when Accessibility is missing:
  * the shared "macOS forgot PeakFlow" wording after an update (review S1).
  */
-function useAccessibilityNote(): string {
+function useAccessibilityNote(): { note: string; lost: boolean } {
   const [ax, setAx] = useState<PermissionStatus | null>(null)
   useEffect(() => {
     if (isMac()) void invoke<PermissionStatus | null>(IPC_INVOKE.APP_PERMISSION_STATUS, 'accessibility').then(setAx).catch(() => {})
   }, [])
-  return ax?.lost ? ax.advice : 'Needs the Accessibility permission (the same one QuickBoard uses)'
+  return ax?.lost
+    ? { note: 'macOS forgot PeakFlow after the update. Show me how walks you through the fix.', lost: true }
+    : { note: 'Needs the Accessibility permission (the same one QuickBoard uses)', lost: false }
+}
+
+/**
+ * Allow (opens System Settings), or after an update made macOS forget
+ * PeakFlow, Show me how: the panel's step-by-step guide with pictures.
+ */
+function AllowButton({ lost }: { lost: boolean }): React.JSX.Element {
+  return lost ? (
+    <button className="btn" onClick={() => void invoke(IPC_INVOKE.PANEL_SHOW, 'app/setup')}>Show me how</button>
+  ) : (
+    <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>
+  )
 }
 
 function acceleratorFrom(e: React.KeyboardEvent): string | null {
@@ -813,13 +827,11 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
         <div>
           <div className="lbl">Expand snippets as you type</div>
           <div className="sub">
-            {!settings.expansionEnabled ? 'Off' : settings.expansionActive ? 'On in every app' : isMac() ? axNote : 'Starting…'}
+            {!settings.expansionEnabled ? 'Off' : settings.expansionActive ? 'On in every app' : isMac() ? axNote.note : 'Starting…'}
           </div>
         </div>
         <span className="row">
-          {settings.expansionEnabled && !settings.expansionActive && isMac() && (
-            <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>
-          )}
+          {settings.expansionEnabled && !settings.expansionActive && isMac() && <AllowButton lost={axNote.lost} />}
           <button className="switch" role="switch" aria-checked={settings.expansionEnabled} onClick={() => set('expansion', !settings.expansionEnabled)} />
         </span>
       </div>
@@ -919,11 +931,11 @@ function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element 
         <div>
           <div className="lbl">Dictation</div>
           <div className="sub">
-            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? axNote : 'Starting…'}
+            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? axNote.note : 'Starting…'}
           </div>
         </div>
         <span className="row">
-          {d.enabled && !d.active && isMac() && <button className="btn" onClick={() => void invoke(IPC_INVOKE.APP_OPEN_ACCESSIBILITY)}>Allow</button>}
+          {d.enabled && !d.active && isMac() && <AllowButton lost={axNote.lost} />}
           <button className="switch" role="switch" aria-checked={d.enabled} aria-label="Dictation" onClick={() => set('enabled', !d.enabled)} />
         </span>
       </div>

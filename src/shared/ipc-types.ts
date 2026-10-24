@@ -232,6 +232,8 @@ export const IPC_INVOKE = {
   /** macOS permission status with the shared advice text (shared/mac-permissions.ts) */
   APP_PERMISSION_STATUS: 'app:permission-status',
   APP_OPEN_PERMISSION: 'app:open-permission',
+  /** Quit and open PeakFlow again (after a permission comes back) */
+  APP_RESTART: 'app:restart',
   /** macOS set-up page: where PeakFlow runs from, and its permissions */
   APP_SETUP_INFO: 'app:setup-info',
   APP_MOVE_TO_APPLICATIONS: 'app:move-to-applications',

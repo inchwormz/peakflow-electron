@@ -30,7 +30,7 @@ import { dirname, join } from 'path'
 import { readMacSignature } from './mac-signature'
 import { isNewer, shouldOffer, percentOf, type UpdateProgress } from '@shared/update-offer'
 import { IPC_SEND } from '@shared/ipc-types'
-import { FORGOT_ACCESSIBILITY } from '@shared/mac-permissions'
+import { AFTER_UPDATE_TITLE, FORGOT_ACCESSIBILITY, PERMISSION_GUIDE_URL } from '@shared/mac-permissions'
 import { showPanel } from '../panel'
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
 
@@ -109,8 +109,9 @@ async function offerMacUpdate(latest: string, current: string, detail: string): 
 
 /** What to do after installing an unsigned update: the Keychain prompt and lost permissions. */
 const MAC_AFTER_UPDATE =
-  'When the new version opens, macOS may ask for your password for “PeakFlow Safe Storage”. Click Always Allow. ' +
-  `If a tool then says it needs Accessibility, ${FORGOT_ACCESSIBILITY.charAt(0).toLowerCase()}${FORGOT_ACCESSIBILITY.slice(1)}`
+  'When the new version opens, macOS may ask for your password for “PeakFlow Safe Storage”. Click Always Allow.\n\n' +
+  `${AFTER_UPDATE_TITLE}: if a tool stops working, ${FORGOT_ACCESSIBILITY.charAt(0).toLowerCase()}${FORGOT_ACCESSIBILITY.slice(1)} ` +
+  `PeakFlow’s Updates page shows each step with pictures, and so does ${PERMISSION_GUIDE_URL.replace('https://', '')}.`
 
 // ─── Windows ────────────────────────────────────────────────────────────────
 
