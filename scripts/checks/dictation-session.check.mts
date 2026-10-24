@@ -20,24 +20,22 @@ test('release sends current identity even before getUserMedia resolves', () => {
   assert.deepEqual(boot.sent,[['stop',{send:true,sessionId:17}]])
 })
 
-test('cancel during realtime finalization aborts the socket and never dispatches stale clip', async()=>{
+test('cancel while context is pending never dispatches stale clip', async()=>{
   const js=code('function cancel()', '/** Speech to text, clean-up')
   const boot=new Function(`
-    let sessionId=4,live,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
-    let finish,aborted=false,runs=0
-    const stream={finish:()=>new Promise(r=>finish=r),abort:()=>{aborted=true;finish?.({ok:false,error:'failed'})}}
-    live={stream,owner:'A'}
-    const context=Promise.resolve({}),RELEASE_PAD_MS=150,IPC_SEND={},recordingStart={cancel:()=>{}}
-    const clipOwner=()=>'A',keepClip=()=>{},fail=()=>{},runClip=async()=>runs++
+    let sessionId=4,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
+    let finish,runs=0
+    const context=new Promise(r=>finish=r),RELEASE_PAD_MS=150,IPC_SEND={},recordingStart={cancel:()=>{}}
+    const runClip=async()=>runs++
     const clearShowTimer=()=>{},sendPill=()=>{},state=()=>{},hidePill=()=>{}
     ${js}
-    return {audio:()=>onAudio(new ArrayBuffer(2000),'audio/webm'),cancel,aborted:()=>aborted,runs:()=>runs,busy:()=>busy}
+    return {audio:()=>onAudio(new ArrayBuffer(2000),'audio/webm'),cancel,complete:()=>finish({}),runs:()=>runs,busy:()=>busy}
   `)()
   const pending=boot.audio()
   await tick()
   boot.cancel()
+  boot.complete()
   await pending
-  assert.equal(boot.aborted(),true)
   assert.equal(boot.runs(),0)
   assert.equal(boot.busy(),false)
 })
@@ -52,7 +50,7 @@ test('a canceled upload completion cannot paste or change a newer recording',asy
     const parseMyWords=()=>({replacements:[]}),transcriptionPrompt=()=>'',transcribeTimeoutMs=()=>1000
     const typeText=async()=>{typed++;return true},applyReplacements=t=>t,keepClip=()=>{},state=()=>{},hidePill=()=>{}
     ${js}
-    return {run:()=>runClipSteps({buf:new ArrayBuffer(2000),mime:'audio/webm',durationMs:1000,ctx:{}},undefined,1),
+    return {run:()=>runClipSteps({buf:new ArrayBuffer(2000),mime:'audio/webm',durationMs:1000,ctx:{}},1),
       cancel:()=>sessionId++,complete:()=>resolveUpload({ok:true,text:'stale text'}),typed:()=>typed,busy:()=>busy}
   `)()
   const pending=boot.run()

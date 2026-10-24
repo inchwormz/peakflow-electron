@@ -38,7 +38,7 @@ export function DictationPill(): React.JSX.Element {
   const phaseAt = useRef(0)
   const level = useRef(0)
   const canvas = useRef<HTMLCanvasElement>(null)
-  const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; an?: AnalyserNode; source?: MediaStreamAudioSourceNode; worklet?: AudioWorkletNode; chunks: Blob[]; drain?: () => Promise<void>; pcm: Promise<unknown>; sessionId?: number; sendPcm: boolean } | null>(null)
+  const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; an?: AnalyserNode; source?: MediaStreamAudioSourceNode; worklet?: AudioWorkletNode; chunks: Blob[]; sessionId?: number } | null>(null)
   const startId = useRef(0)
   // One audio graph for the level meter, kept between dictations (suspended when idle)
   const ctxRef = useRef<AudioContext | null>(null)
@@ -51,9 +51,8 @@ export function DictationPill(): React.JSX.Element {
     // Warm the graph and processor without opening a microphone. In a preloaded
     // hidden pill this work finishes before the first hold-key press.
     const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext({ sampleRate: 24000 }))
-    let workletLoaded = false
-    const workletReady = ctx.audioWorklet.addModule(captureWorkletUrl).then(() => { workletLoaded = true })
-    void workletReady.catch(() => {}) // MediaRecorder remains a complete retry clip
+    const workletReady = ctx.audioWorklet.addModule(captureWorkletUrl)
+    void workletReady.catch(() => {}) // Timing is optional; MediaRecorder preserves the complete clip
     void ctx.suspend().catch(() => {})
     void navigator.mediaDevices.enumerateDevices().catch(() => {})
 
@@ -69,7 +68,7 @@ export function DictationPill(): React.JSX.Element {
       if (rec.current === r) rec.current = null
     }
 
-    const start = async (opts: { at?: number; processing?: boolean; realtime?: boolean; sessionId?: number }): Promise<void> => {
+    const start = async (opts: { at?: number; processing?: boolean; sessionId?: number }): Promise<void> => {
       const id = ++startId.current
       activeSessionId = opts.sessionId
       const processing = opts.processing !== false
@@ -94,18 +93,12 @@ export function DictationPill(): React.JSX.Element {
         closeGraph(previous)
       }
       try {
-        const realtime = !!opts.realtime && workletLoaded
-        if (opts.realtime && !realtime) {
-          // If the module was cold, the complete clip contains opening audio
-          // that the processor has not seen. Prefer the intact upload.
-          void invoke(IPC_INVOKE.DICTATION_READY, { realtimeCapture: false, sessionId: opts.sessionId })
-        }
         const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
         const mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 32000 })
-        const r: Recording = { mr, stream, chunks: [], pcm: Promise.resolve(), sessionId: opts.sessionId, sendPcm: true }
+        const r: Recording = { mr, stream, chunks: [], sessionId: opts.sessionId }
         mr.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data) }
         rec.current = r
-        // Preserve audio immediately, including while the realtime connection opens.
+        // Buffer audio immediately, before setting up the optional timing graph.
         mr.start(250)
         void ctx.resume().catch(() => {})
         r.an = ctx.createAnalyser()
@@ -116,22 +109,11 @@ export function DictationPill(): React.JSX.Element {
         if (id !== startId.current || disposed || rec.current !== r) return
         const worklet = new AudioWorkletNode(ctx, 'dictation-capture', { channelCount: 1, channelCountMode: 'explicit' })
         r.worklet = worklet
-        let drained: (() => void) | undefined
-        worklet.port.onmessage = ({ data }: MessageEvent<{ firstSampleAt?: number; pcm?: ArrayBuffer; drained?: boolean }>) => {
+        worklet.port.onmessage = ({ data }: MessageEvent<{ firstSampleAt?: number }>) => {
           if (data.firstSampleAt && opts.at) {
             void invoke(IPC_INVOKE.DICTATION_READY, { micMs: Math.max(0, data.firstSampleAt - opts.at), sessionId: opts.sessionId })
           }
-          if (data.pcm && realtime && r.sendPcm && !disposed) {
-            r.pcm = r.pcm.then(() => invoke(IPC_INVOKE.DICTATION_PCM, data.pcm!, opts.sessionId)).catch(() => {})
-          }
-          if (data.drained) drained?.()
         }
-        r.drain = () => new Promise<void>((resolve) => {
-          // A broken audio device must never leave the upload or cleanup waiting.
-          const timeout = setTimeout(resolve, 300)
-          drained = () => { clearTimeout(timeout); resolve() }
-          worklet.port.postMessage({ flush: true })
-        })
         r.source.connect(worklet)
         // The processor outputs silence, but a destination connection keeps the
         // rendering graph running. Microphone audio is never played back.
@@ -146,10 +128,7 @@ export function DictationPill(): React.JSX.Element {
           if (!disposed && id === startId.current) void invoke(IPC_INVOKE.DICTATION_MIC_ERROR, 'failed', opts.sessionId)
           return
         }
-        // Graph/worklet failure does not discard an active recorder's complete clip.
-        if (opts.realtime && !disposed && id === startId.current) {
-          void invoke(IPC_INVOKE.DICTATION_READY, { realtimeCapture: false, sessionId: opts.sessionId })
-        }
+        // Optional timing graph failure leaves the complete recording intact.
         if (!rec.current || rec.current.stream !== stream) stream.getTracks().forEach((t) => t.stop())
       }
     }
@@ -163,12 +142,8 @@ export function DictationPill(): React.JSX.Element {
         if (send && !disposed) void invoke(IPC_INVOKE.DICTATION_AUDIO, new ArrayBuffer(0), 'audio/webm', sessionId)
         return
       }
-      r.sendPcm = send
-      const drained = r.drain?.() ?? Promise.resolve()
       r.mr.onstop = () => {
         void (async () => {
-          await drained
-          await r.pcm
           closeGraph(r)
           if (!send || disposed) return
           const type = r.mr.mimeType || 'audio/webm'
@@ -181,7 +156,7 @@ export function DictationPill(): React.JSX.Element {
       release(r)
     }
 
-    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean; realtime?: boolean; sessionId?: number }))
+    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean; sessionId?: number }))
     const offStop = window.peakflow.on(IPC_SEND.DICTATION_STOP, (raw) => { const opts = raw as { send?: boolean; sessionId?: number } | undefined; stop(!!opts?.send, opts?.sessionId) })
     const offState = window.peakflow.on(IPC_SEND.DICTATION_STATE, (raw) => {
       const s = raw as DictationState

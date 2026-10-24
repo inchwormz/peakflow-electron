@@ -13,15 +13,14 @@ vm.runInNewContext(readFileSync(new URL('../../src/renderer/public/dictation-cap
   sampleRate: 24000, Date, Int16Array, Math
 })
 const capture = new Processor()
+capture.process([])
+assert.equal(messages.length, 0, 'no timing before microphone samples arrive')
 capture.process([[new Float32Array([0.5, -0.5, 1, -1])]])
-assert.equal(messages[0].firstSampleAt > 0, true, 'first sample timing is emitted before waiting for a chunk')
-assert.equal(messages.length, 1, 'short input is buffered, not discarded')
-capture.port.onmessage({ data: { flush: true } })
-assert.deepEqual(Array.from(new Int16Array(messages[1].pcm)), [16384, -16384, 32767, -32768], 'flush includes the very first input samples and clips PCM16 safely')
-assert.equal(messages[2].drained, true, 'drained follows all PCM messages')
+assert.equal(messages[0].firstSampleAt > 0, true, 'first sample timing is emitted immediately')
 capture.process([[new Float32Array(2400).fill(0.25)]])
-assert.equal(messages.length, 3, 'no chunks appear after flush')
-console.log('dictation-capture: first sample timing, PCM buffering and ordered final flush passed')
+assert.equal(messages.length, 1, 'timing processor reports once and never transports audio')
+assert.deepEqual(Object.keys(messages[0]), ['firstSampleAt'])
+console.log('dictation-capture: first-sample timing only; audio stays in MediaRecorder')
 
 // Exercise the actual pill effect with fake devices: no microphone is opened.
 const { transformSync } = await import('esbuild')
@@ -56,12 +55,12 @@ const boot = (moduleReady: Promise<void> = Promise.resolve(), failure?: 'constru
     stop() { this.state = 'inactive' } // deliberately do not deliver onstop yet
   }
   class Worklet {
-    port = { onmessage: null as any, postMessage: () => { queueMicrotask(() => this.port.onmessage?.({ data: { drained: true } })) } }
+    port = { onmessage: null as any }
     constructor() { worklets.push(this) }
     connect() {}
     disconnect() {}
   }
-  const ipc = Object.fromEntries(['DICTATION_READY', 'DICTATION_MIC_ERROR', 'DICTATION_AUDIO', 'DICTATION_PCM', 'DICTATION_START', 'DICTATION_STOP', 'DICTATION_STATE'].map((name) => [name, name]))
+  const ipc = Object.fromEntries(['DICTATION_READY', 'DICTATION_MIC_ERROR', 'DICTATION_AUDIO', 'DICTATION_START', 'DICTATION_STOP', 'DICTATION_STATE'].map((name) => [name, name]))
   const cleanup = new Function('document', 'navigator', 'AudioContext', 'MediaRecorder', 'AudioWorkletNode', 'captureWorkletUrl', 'invoke', 'IPC_INVOKE', 'IPC_SEND', 'window', 'rec', 'ctxRef', 'startId', 'phase', 'phaseAt', 'setSt', js)(
     { documentElement: { style: {} }, body: { style: {} } },
     { mediaDevices: { enumerateDevices: async () => [], getUserMedia: () => new Promise((resolve, reject) => opens.push({ resolve, reject })) } },
@@ -91,20 +90,21 @@ const boot = (moduleReady: Promise<void> = Promise.resolve(), failure?: 'constru
 }
 {
   const r = boot()
-  r.listeners.get('DICTATION_START')!({ at: 100, realtime: true, sessionId: 2 })
+  r.listeners.get('DICTATION_START')!({ at: 100, sessionId: 2 })
   const track = r.resolveOpen(0)
   await tick()
   assert.equal(r.recorders[0].state, 'recording')
   assert.equal(r.calls.some(([channel]) => channel === 'DICTATION_READY' && r.calls.length > 1), false, 'device open alone is not first-sample timing')
-  const pcm = new ArrayBuffer(2)
-  r.worklets[0].port.onmessage({ data: { firstSampleAt: 142, pcm } })
+  r.recorders[0].ondataavailable({ data: new Blob(['opening words']) })
+  r.worklets[0].port.onmessage({ data: { firstSampleAt: 142 } })
   await tick()
   assert.deepEqual(r.calls.find(([channel, value]) => channel === 'DICTATION_READY' && value), ['DICTATION_READY', { micMs: 42, sessionId: 2 }])
   r.listeners.get('DICTATION_STOP')!({ send: true, sessionId: 2 })
   assert.equal(track.stopped, true, 'microphone closes before delayed recorder onstop')
   r.recorders[0].onstop()
   await tick()
-  assert.equal(r.calls.findIndex(([ch]) => ch === 'DICTATION_PCM') < r.calls.findIndex(([ch]) => ch === 'DICTATION_AUDIO'), true, 'PCM drain precedes complete fallback audio')
+  const audio = r.calls.find(([ch]) => ch === 'DICTATION_AUDIO')?.[1] as ArrayBuffer
+  assert.equal(new TextDecoder().decode(audio), 'opening words', 'complete buffered audio is uploaded on release')
   assert.equal(r.calls.find(([ch]) => ch === 'DICTATION_AUDIO')?.[3], 2, 'completed audio keeps its session identity')
   r.cleanup()
 }
@@ -122,16 +122,20 @@ console.log('dictation-capture: idle prewarm, early release/unmount races, promp
 {
   let load!: () => void
   const r = boot(new Promise<void>((resolve) => { load = resolve }))
-  r.listeners.get('DICTATION_START')!({ realtime: true, sessionId: 4 })
+  r.listeners.get('DICTATION_START')!({ sessionId: 4 })
   const track = r.resolveOpen(0)
   await tick()
-  assert.equal(r.recorders[0].state, 'recording', 'cold worklet does not postpone preserving microphone audio')
-  assert.deepEqual(r.calls.find(([ch, value]) => ch === 'DICTATION_READY' && value), ['DICTATION_READY', { realtimeCapture: false, sessionId: 4 }], 'cold worklet opts into intact upload instead of missing opening words')
+  assert.equal(r.recorders[0].state, 'recording', 'cold timing module does not postpone buffering microphone audio')
+  r.recorders[0].ondataavailable({ data: new Blob(['first samples']) })
+  r.listeners.get('DICTATION_STOP')!({ send: true, sessionId: 4 })
+  assert.equal(track.stopped, true)
+  r.recorders[0].onstop()
+  await tick()
+  const audio = r.calls.find(([ch]) => ch === 'DICTATION_AUDIO')?.[1] as ArrayBuffer
+  assert.equal(new TextDecoder().decode(audio), 'first samples', 'upload never waits for the timing module')
   load()
   await tick()
-  r.worklets[0].port.onmessage({ data: { pcm: new ArrayBuffer(2) } })
-  await tick()
-  assert.equal(r.calls.some(([ch]) => ch === 'DICTATION_PCM'), false)
+  assert.equal(r.worklets.length, 0, 'a late timing module cannot reconnect a released microphone')
   r.cleanup()
   assert.equal(track.stopped, true)
 }
@@ -144,7 +148,7 @@ console.log('dictation-capture: idle prewarm, early release/unmount races, promp
   assert.equal(r.calls.some(([ch]) => ch === 'DICTATION_MIC_ERROR'), false, 'a cancelled pending request cannot replace a later session with an error')
   r.cleanup()
 }
-console.log('dictation-capture: cold graph preserves full fallback, late permission errors ignored')
+console.log('dictation-capture: cold graph preserves full recording, late permission errors ignored')
 
 for (const failure of ['constructor', 'start'] as const) {
   const r = boot(Promise.resolve(), failure)
