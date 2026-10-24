@@ -10,8 +10,8 @@
  */
 
 import { globalShortcut } from 'electron'
-import { ToolId, DEFAULT_HOTKEYS, PANEL_TOOLS, HIDDEN_TOOLS, isPanelTool } from '@shared/tool-ids'
-import { hidePanel, visiblePanelTool } from './panel'
+import { ToolId, DEFAULT_HOTKEYS, PANEL_TOOLS, HIDDEN_TOOLS, isPanelTool, DICTATION_PAGE, DICTATION_SWITCH_KEY } from '@shared/tool-ids'
+import { hidePanel, showPanel, visiblePanelTool } from './panel'
 import { getToolWindow, closeToolWindow, openToolWithAccessCheck } from './windows'
 import { getFocusDimService } from './services/focus-dim'
 import { toggleMicMute } from './services/mic-mute'
@@ -112,6 +112,15 @@ function registerSwitcherHotkeys(): void {
     // Same rule as the tool shortcuts: hide if this tool is already showing, else switch to it
     registerSingleHotkey(`switch:${toolId}`, accel, () => toggleTool(toolId))
   })
+  // ⌥⌘6: Dictation's page (hides the panel when it's already showing). Same
+  // AltGr rule as ⌥⌘1–5, so none on Windows (Ctrl+Alt+6 is AltGr+6)
+  const dictationAccel = builtInAccel(DICTATION_SWITCH_KEY, process.platform)
+  if (dictationAccel && !globalShortcut.isRegistered(dictationAccel)) {
+    registerSingleHotkey(`switch:${DICTATION_PAGE}`, dictationAccel, () => {
+      if (visiblePanelTool() === DICTATION_PAGE) hidePanel()
+      else showPanel(DICTATION_PAGE)
+    })
+  }
 }
 
 /**

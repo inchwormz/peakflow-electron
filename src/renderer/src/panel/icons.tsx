@@ -11,6 +11,7 @@ const P = {
     liquidfocus: '<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.2 1.6"/><path d="M10 2.5h4"/>',
     screenslap: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15l1.5-2z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
     quickboard: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9.5 10h5M9.5 13.5h5M9.5 17h3"/>',
+    mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v2.5"/>',
     snapgrid: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15M12 12h8.5"/>',
     chev: '<path d="m7 10 5 5 5-5"/>',
     chevR: '<path d="m10 7 5 5-5 5"/>',

@@ -42,7 +42,13 @@ export const LAUNCHER_INVOKE = {
   DICTATION_REMOVE_KEY: 'dictation:remove-key',
   /** My words: the raw text, and saving it */
   DICTATION_WORDS: 'dictation:words',
-  DICTATION_SET_WORDS: 'dictation:set-words'
+  DICTATION_SET_WORDS: 'dictation:set-words',
+  /** Microphone and Accessibility state (DictationPermissions) */
+  DICTATION_PERMISSIONS: 'dictation:permissions',
+  /** Ask for the first missing permission; returns DictationPermissions */
+  DICTATION_ALLOW: 'dictation:allow',
+  /** Try the kept clip again (it failed to turn into text); types into the app underneath */
+  DICTATION_RETRY: 'dictation:retry'
 } as const
 
 export const LAUNCHER_SEND = {
@@ -59,6 +65,8 @@ export const LAUNCHER_SEND = {
   DICTATION_STOP: 'dictation:stop',
   /** Refresh the prepaid balance after a clip or account update. */
   DICTATION_ACCOUNT_CHANGED: 'dictation:account-changed',
+  /** Dictation settings changed (switch, key, words, add-on, a kept clip): every page reloads them */
+  DICTATION_SETTINGS_CHANGED: 'dictation:settings-changed',
   /** What the pill shows (DictationState) */
   DICTATION_STATE: 'dictation:state'
 } as const

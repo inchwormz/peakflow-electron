@@ -88,3 +88,12 @@ export const EXTENSION_ENABLED = false
 export function isPanelTool(id: string): boolean {
   return (PANEL_TOOLS as readonly string[]).includes(id)
 }
+
+/**
+ * Dictation's page in the panel, the sixth in the switcher (⌥⌘6). John, 24 Oct
+ * 2026: "dictation should be its own simple product in the launch". It isn't a
+ * ToolId: it has no trial or licence gate of its own (it came from the free
+ * launcher; the prepaid balance is tied to the licence on the server).
+ */
+export const DICTATION_PAGE = 'dictation'
+export const DICTATION_SWITCH_KEY = 'Alt+CommandOrControl+6'

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type {
   AiChunk, AiProviderId, AiStatus, AiTextAction, CurrencyRates, LauncherItem, LauncherOpenInfo, LauncherProcess,
-  LauncherRunResult, LauncherSettings, SelectionResult, DictationHoldKey, DictationSettings
+  LauncherRunResult, LauncherSettings, SelectionResult
 } from '@shared/launcher/types'
 import type { PermissionStatus } from '@shared/mac-permissions'
 import { rankItems, type Usage } from '@shared/launcher/rank'
@@ -22,9 +22,8 @@ import { Icon } from '../panel/icons'
 import { Glyph } from './glyphs'
 import '../panel/panel.css'
 import './launcher.css'
-import { DictationAccountRow } from './DictationAccountRow'
 
-type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup' | 'words'
+type View = 'search' | 'kill' | 'ai' | 'snippet-form' | 'link-form' | 'settings' | 'ai-setup'
 
 interface AiRun {
   reqId: number
@@ -464,7 +463,7 @@ export function LauncherApp(): React.JSX.Element {
   const inputShown = view === 'search' || view === 'kill'
   const crumb: Partial<Record<View, string>> = {
     kill: 'Kill Process', ai: ai?.title, 'snippet-form': editing ? 'Edit Snippet' : 'Add Snippet', 'link-form': editing ? 'Edit Quick Link' : 'Add Quick Link',
-    settings: 'Launcher Settings', 'ai-setup': 'Connect AI', words: 'My words'
+    settings: 'Launcher Settings', 'ai-setup': 'Connect AI'
   }
 
   return (
@@ -553,8 +552,7 @@ export function LauncherApp(): React.JSX.Element {
 
         {view === 'snippet-form' && <SnippetForm editing={editing} onDone={(m) => { flash(m); back() }} />}
         {view === 'link-form' && <LinkForm editing={editing} onDone={(m) => { flash(m); back() }} />}
-        {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} onWords={() => setView('words')} />}
-        {view === 'words' && <WordsForm onDone={(m) => { flash(m); setView('settings') }} />}
+        {view === 'settings' && settings && <SettingsView settings={settings} onChange={setSettings} aiStatus={aiStatus} onAi={(s) => setAiStatus(s)} onConnect={() => { void loadAiStatus(); setView('ai-setup') }} />}
         {view === 'ai-setup' && <AiSetup status={aiStatus} reload={checkAiStatus} onPick={(s) => setAiStatus(s)} />}
       </div>
 
@@ -680,40 +678,6 @@ function SnippetForm({ editing, onDone }: { editing: LauncherItem | null; onDone
   )
 }
 
-/** "My words": names and terms to spell the person's way, one per line; "X -> Y" always replaces. */
-function WordsForm({ onDone }: { onDone: (m: string) => void }): React.JSX.Element {
-  const [text, setText] = useState<string | null>(null)
-  useEffect(() => {
-    void invoke<string>(IPC_INVOKE.DICTATION_WORDS).then((t) => setText(t ?? ''))
-  }, [])
-  const lines = (text ?? '').split(/[\n,]/).map((l) => l.trim()).filter(Boolean)
-  const hints = lines.filter((l) => !/(->|→)/.test(l)).length
-  const reps = lines.length - hints
-  const submit = (): void => {
-    void invoke(IPC_INVOKE.DICTATION_SET_WORDS, text ?? '').then(() => onDone(hints ? `Saved ${hints} words` : 'Saved'))
-  }
-  const onKey = useSubmitOnModEnter(submit)
-  if (text === null) return <div className="lc-form" />
-  return (
-    <div className="lc-form" onKeyDown={onKey}>
-      <label>
-        One per line
-        <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={'Siobhan\nPeakFlow\nManukora'} style={{ minHeight: 150 }} />
-        <span className="hint">
-          Names, products and jargon that come out wrong. Dictation uses them as hints, so ordinary words still come through as spoken.
-          To always swap a word, write it as <b>teh -&gt; the</b>.
-        </span>
-      </label>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className={hints > 50 ? 'err' : 'hint'}>
-          {hints > 50 ? `${hints} words: lists over 50 make mistakes more likely. Keep the ones that actually come out wrong.` : `${hints} word${hints === 1 ? '' : 's'}${reps ? `, ${reps} always replaced` : ''}`}
-        </span>
-        <button className="btn primary" onClick={submit}>Save <kbd>{MOD}↵</kbd></button>
-      </div>
-    </div>
-  )
-}
-
 function LinkForm({ editing, onDone }: { editing: LauncherItem | null; onDone: (m: string) => void }): React.JSX.Element {
   const [name, setName] = useState(editing?.title ?? '')
   const [target, setTarget] = useState(editing?.target ?? '')
@@ -788,7 +752,7 @@ function acceleratorFrom(e: React.KeyboardEvent): string | null {
   return [...mods, k].join('+')
 }
 
-function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void; onWords: () => void }): React.JSX.Element {
+function SettingsView({ settings, onChange, aiStatus, onAi, onConnect }: { settings: LauncherSettings; onChange: (s: LauncherSettings) => void; aiStatus: AiStatus | null; onAi: (s: AiStatus) => void; onConnect: () => void }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
   const axNote = useAccessibilityNote()
   const set = (key: string, value: unknown): void => void invoke<LauncherSettings>(IPC_INVOKE.LAUNCHER_SET_SETTING, key, value).then(onChange)
@@ -870,8 +834,13 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
           </span>
         </div>
       )}
-      <DictationAccountRow />
-      <DictationRows onWords={onWords} />
+      <div className="lc-set">
+        <div>
+          <div className="lbl">Dictation</div>
+          <div className="sub">Dictation has moved to its own page in PeakFlow</div>
+        </div>
+        <button className="btn" onClick={() => void invoke(IPC_INVOKE.PANEL_SHOW, 'dictation')}>Open</button>
+      </div>
       <div className="lc-set">
         <div>
           <div className="lbl">Snippets and quick links</div>
@@ -879,108 +848,6 @@ function SettingsView({ settings, onChange, aiStatus, onAi, onConnect, onWords }
         </div>
       </div>
     </div>
-  )
-}
-
-const HOLD_KEYS: Array<[DictationHoldKey, string]> = isMac()
-  ? [['fn', 'fn'], ['ropt', 'Right ⌥'], ['rcmd', 'Right ⌘'], ['rctrl', 'Right ⌃']]
-  : [['rctrl', 'Right Ctrl'], ['ralt', 'Right Alt']]
-
-const KEY_ERRORS: Record<string, string> = {
-  bad_key: 'OpenAI didn’t accept that key',
-  network: 'Couldn’t reach OpenAI: check the internet connection',
-  failed: 'Couldn’t save the key'
-}
-
-/** Dictation: hold a key, talk, let go. Needs the person's own OpenAI key. */
-function DictationRows({ onWords }: { onWords: () => void }): React.JSX.Element | null {
-  const [d, setD] = useState<DictationSettings | null>(null)
-  const [key, setKey] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState('')
-  const axNote = useAccessibilityNote()
-  useEffect(() => {
-    void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SETTINGS).then(setD)
-  }, [])
-  if (!d) return null
-  const set = (k: string, v: unknown): void => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_SET, k, v).then(setD)
-  const save = async (): Promise<void> => {
-    setSaving(true)
-    setErr('')
-    const r = await invoke<{ ok: boolean; error?: string; settings: DictationSettings }>(IPC_INVOKE.DICTATION_SAVE_KEY, key)
-    setSaving(false)
-    setD(r.settings)
-    if (r.ok) setKey('')
-    else setErr(KEY_ERRORS[r.error ?? 'failed'] ?? KEY_ERRORS.failed)
-  }
-  const holdName = HOLD_KEYS.find(([k]) => k === d.holdKey)?.[1] ?? d.holdKey
-  if (!d.hasKey) {
-    return (
-      <div className="lc-set">
-        <div>
-          <div className="lbl">Dictation</div>
-          <div className="sub">{err || 'Hold a key and talk; your words are typed for you. Needs your own OpenAI key (about 1 cent for 2 minutes of talking).'}</div>
-        </div>
-        <span className="row">
-          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && key && void save()} placeholder="sk-…" className="lc-field" style={{ width: 150 }} aria-label="OpenAI API key" />
-          <button className="btn" disabled={!key || saving} onClick={() => void save()}>{saving ? 'Checking…' : 'Save'}</button>
-        </span>
-      </div>
-    )
-  }
-  return (
-    <>
-      <div className="lc-set">
-        <div>
-          <div className="lbl">Dictation</div>
-          <div className="sub">
-            {!d.enabled ? 'Off' : d.active ? `Hold ${holdName}, talk, let go. The app’s name and the text before your cursor help it spell things right; password fields are never read.` : isMac() ? axNote.note : 'Starting…'}
-          </div>
-        </div>
-        <span className="row">
-          {d.enabled && !d.active && isMac() && <AllowButton lost={axNote.lost} />}
-          <button className="switch" role="switch" aria-checked={d.enabled} aria-label="Dictation" onClick={() => set('enabled', !d.enabled)} />
-        </span>
-      </div>
-      {d.enabled && (
-        <>
-          <div className="lc-set">
-            <div>
-              <div className="lbl">Hold to talk</div>
-              {d.hint && <div className="sub" role="note">{d.hint}</div>}
-            </div>
-            <span className="seg">
-              {HOLD_KEYS.map(([k, name]) => (
-                <button key={k} aria-pressed={d.holdKey === k} onClick={() => set('holdKey', k)}>{name}</button>
-              ))}
-            </span>
-          </div>
-          <div className="lc-set">
-            <div>
-              <div className="lbl">My words</div>
-              <div className="sub">{d.wordCount ? `${d.wordCount} names and terms spelt your way` : 'Names and terms dictation should spell your way'}</div>
-            </div>
-            <button className="btn" onClick={onWords}>{d.wordCount ? 'Edit' : 'Add'}</button>
-          </div>
-          <div className="lc-set">
-            <div>
-              <div className="lbl">Clean up as you go</div>
-              <div className="sub">Takes out “um”, adds punctuation, and keeps only the fix when you say “no wait”. Never changes names, numbers or “not”.</div>
-            </div>
-            <button className="switch" role="switch" aria-checked={d.cleanup} aria-label="Clean up as you go" onClick={() => set('cleanup', !d.cleanup)} />
-          </div>
-        </>
-      )}
-      {d.ownKey && (
-        <div className="lc-set">
-          <div>
-            <div className="lbl">OpenAI key</div>
-            <div className="sub">Saved encrypted on this computer</div>
-          </div>
-          <button className="btn" onClick={() => void invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY).then(setD)}>Remove</button>
-        </div>
-      )}
-    </>
   )
 }
 

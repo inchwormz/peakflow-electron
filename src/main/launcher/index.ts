@@ -36,7 +36,7 @@ import {
 } from './window'
 import { getAppIcon } from '../services/app-icons'
 import { runLauncherDevTest } from './dev-test'
-import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation } from '../dictation'
+import { initDictation, destroyDictation, runDictationDevTest, getLastDictation, pasteDictation, getKeptDictation, retryDictation } from '../dictation'
 import { listAiProviders, getDefaultAiProvider, setDefaultAiProvider, runLocalAi, refreshAiProviders, aiSetupCommand, getAiTier, setAiTier, type AiLookup } from '../services/local-ai'
 import { hidePanel } from '../panel'
 
@@ -78,7 +78,7 @@ function builtInItems(): LauncherItem[] {
     { id: 'view:kill', kind: 'command', title: 'Kill Process', subtitle: 'Quit apps that are stuck or using memory', keywords: ['force quit', 'task manager', 'quit app', 'memory', 'end task'], glyph: 'kill', view: 'kill' },
     { id: 'view:snippet-form', kind: 'command', title: 'Add Snippet', subtitle: 'Save text you type a lot, then type its keyword anywhere', keywords: ['snippet', 'text expansion', 'new snippet'], glyph: 'plus', view: 'snippet-form' },
     { id: 'view:link-form', kind: 'command', title: 'Add Quick Link', subtitle: 'Save a website or folder to open from here', keywords: ['bookmark', 'quick link', 'new link'], glyph: 'plus', view: 'link-form' },
-    { id: 'view:settings', kind: 'command', title: 'Launcher Settings', subtitle: 'Shortcut, snippets, AI, dictation', keywords: ['launcher', 'hotkey', 'shortcut', 'preferences', 'dictation', 'voice', 'speech', 'talk'], glyph: 'settings', view: 'settings' },
+    { id: 'view:settings', kind: 'command', title: 'Launcher Settings', subtitle: 'Shortcut, snippets, AI', keywords: ['launcher', 'hotkey', 'shortcut', 'preferences'], glyph: 'settings', view: 'settings' },
     { id: 'view:ai-setup', kind: 'ai', title: 'Connect ChatGPT or Claude', subtitle: 'Free AI with your own plan', keywords: ['ai', 'chatgpt', 'claude', 'codex', 'connect'], glyph: 'sparkle', view: 'ai-setup' }
   ]
   return [...own, ...folders, ...engines]
@@ -98,10 +98,16 @@ function userItems(): LauncherItem[] {
 
 /** The last dictation, and the same words as spoken when the clean-up changed them. */
 function dictationItems(): LauncherItem[] {
+  // A clip that didn't go through (no connection …) is kept to try again (S11)
+  const kept = getKeptDictation()
+  const retry: LauncherItem[] = kept
+    ? [{ id: 'dictation:retry', kind: 'command', title: 'Try Last Dictation Again', subtitle: `${kept.seconds} s of talking that didn’t go through`, keywords: ['dictation', 'voice', 'again', 'retry'], glyph: 'dictation' }]
+    : []
   const d = getLastDictation()
-  if (!d) return []
+  if (!d) return retry
   const preview = (t: string): string => t.replace(/\s+/g, ' ').slice(0, 80)
   const items: LauncherItem[] = [
+    ...retry,
     { id: 'dictation:paste', kind: 'command', title: 'Paste Last Dictation', subtitle: preview(d.typed), keywords: ['dictation', 'voice', 'again'], glyph: 'text' }
   ]
   if (d.raw !== d.typed) {
@@ -162,6 +168,12 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
     const p = id.slice(4)
     if (!isIndexedApp(p)) return { ok: false }
     return done(await openPath(p, !!opts.alt))
+  }
+  if (id === 'dictation:retry') {
+    if (!getKeptDictation()) return { ok: false, message: 'Nothing to try again', keepOpen: true }
+    hideLauncher({ restoreFocus: true })
+    await new Promise((r) => setTimeout(r, 250)) // the app underneath takes the keyboard back
+    return done({ ok: await retryDictation() })
   }
   if (id === 'dictation:paste' || id === 'dictation:paste-raw') {
     const d = getLastDictation()

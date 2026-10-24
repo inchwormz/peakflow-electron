@@ -300,9 +300,10 @@ function Tools(): React.JSX.Element {
   return (
     <>
       <Grp>
-        {TOOL_MODULES.map((m) => (
-          <ToolRow key={m.id} id={m.id} />
-        ))}
+        {TOOL_MODULES.map((m) =>
+          // Dictation is switched on and off on its own page, not installed like the trial tools
+          m.ungated ? <Row key={m.id} label={m.name} sub={m.desc} icon={m.icon} go={m.id} /> : <ToolRow key={m.id} id={m.id} />
+        )}
       </Grp>
       <Note style={{ marginTop: 10 }}>Turning a tool on starts it and its shortcut straight away.</Note>
     </>

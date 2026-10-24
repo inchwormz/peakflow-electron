@@ -36,8 +36,11 @@ export function builtInAccel(accel: string, platform: string): string | null {
   return clashesWithAltGr(accel, platform) ? null : accel
 }
 
-/** ⌥⌘1–5 open the panel on a tool (none on Windows: Alt+Ctrl+digit is AltGr+digit). */
-export const SWITCH_ACCELS: readonly string[] = [1, 2, 3, 4, 5].map((n) => `Alt+CommandOrControl+${n}`)
+/**
+ * ⌥⌘1–6 open the panel on a tool, in panel order; ⌥⌘6 is Dictation's page
+ * (DICTATION_SWITCH_KEY). None on Windows: Alt+Ctrl+digit is AltGr+digit.
+ */
+export const SWITCH_ACCELS: readonly string[] = [1, 2, 3, 4, 5, 6].map((n) => `Alt+CommandOrControl+${n}`)
 
 export function switchAccel(index: number, platform: string): string | null {
   const a = SWITCH_ACCELS[index]
