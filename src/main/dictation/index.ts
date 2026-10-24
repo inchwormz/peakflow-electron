@@ -12,7 +12,7 @@
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
-import { app, BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, systemPreferences } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
@@ -27,7 +27,7 @@ import { missingPermission, type DictationPermissions, type MediaStatus } from '
 import { onHoldKey, setHoldKey, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
-import { KEEP_CLIP_MS, keepsClip, mayRetry, ownerForSend, pasteKeys, sayTryAgain, transcribeTimeoutMs } from './retry'
+import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow } from '../native/active-window'
@@ -468,15 +468,14 @@ async function runClipSteps(clip: Clip): Promise<void> {
   text = applyReplacements(text, words.replacements)
   last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
   const ok = await typeText(text)
-  // Couldn't type it: put the words on the clipboard so "press ⌘V to paste" is
-  // true (pasteAndRestore leaves the old clipboard in place when it fails)
-  if (!ok) clipboard.writeText(text)
   console.log(
     `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
   )
   busy = false
-  state({ phase: ok ? 'done' : 'error', message: ok ? undefined : `Copied: press ${pasteKeys(isMac)} to paste` })
+  // Couldn't type it. The clipboard is left alone (#15: PeakFlow's own text never lands
+  // in QuickBoard history), so point at the launcher command that has the words
+  state({ phase: ok ? 'done' : 'error', message: ok ? undefined : NOT_TYPED_MESSAGE })
   hidePill(ok ? 500 : 2600)
 }
 

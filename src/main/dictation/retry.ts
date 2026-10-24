@@ -48,3 +48,10 @@ export function ownerForSend(clipOwner: string | undefined, current: string): st
 export function mayRetry(clipOwner: string, current: string): boolean {
   return clipOwner === '' || clipOwner === current
 }
+
+/**
+ * The pill's message when the words couldn't be typed. Nothing is put on the
+ * clipboard (it would bypass QuickBoard's own-write marker, #15); the words
+ * stay in the launcher's Paste Last Dictation for 30 minutes.
+ */
+export const NOT_TYPED_MESSAGE = 'Not typed: use Paste Last Dictation'

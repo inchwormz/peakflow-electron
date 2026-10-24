@@ -34,6 +34,12 @@ test('Ctrl+V on Windows, ⌘V on a Mac', () => {
   assert.equal(pasteKeys(false), 'Ctrl+V')
   assert.equal(pasteKeys(true), '⌘V')
   assert.ok(!src('src/main/dictation/index.ts').includes("'Copied: press ⌘V to paste'"))
+  // Release 2.1.1 (Sol review): a failed paste never writes the words to the clipboard
+  // unmarked, where QuickBoard would save them; the pill points at the launcher instead
+  const main = src('src/main/dictation/index.ts')
+  assert.ok(!/clipboard\.write/.test(main), 'dictation writes the clipboard only through pasteAndRestore')
+  assert.ok(main.includes('message: ok ? undefined : NOT_TYPED_MESSAGE'))
+  assert.ok(src('src/main/launcher/index.ts').includes("title: 'Paste Last Dictation'"), 'the command the message names exists')
 })
 
 test('wiring: failures keep the clip, every transcription call gets the scaled limit, and both places can try again', () => {
