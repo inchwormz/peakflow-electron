@@ -311,12 +311,14 @@ private var maxKeywordLength = 0
 private var typed = ""
 private var keywatchTap: CFMachPort?
 private var holdKeyCode: Int64 = -1
-private var holdDown = false
-private var holdPhysicalDown = false
 private var captureHoldKey = false
-private var capturedKeys: Set<Int64> = []
-private var swallowedKeys: Set<Int64> = []
-private var pressedKeys: Set<Int64> = []
+private var nativeKeyState = NativeKeyState()
+private func physicalKeyDown(_ code: Int64) -> Bool {
+    CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
+}
+private func emitHoldEvents(_ events: [String]) {
+    for event in events { emit(["e": "hold-" + event]) }
+}
 // Device-specific flags distinguish each side even while the opposite side stays held.
 private let modifierBits: [Int64: UInt64] = [55: 0x8, 54: 0x10, 58: 0x20, 61: 0x40,
                                             59: 0x1, 62: 0x2000, 56: 0x2, 60: 0x4,
@@ -399,6 +401,8 @@ private func expand(keyword: String, text: String) {
 
 private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        emitHoldEvents(nativeKeyState.interrupt())
+        typed = ""
         if let tap = keywatchTap { CGEvent.tapEnable(tap: tap, enable: true) }
         return Unmanaged.passUnretained(event)
     }
@@ -415,49 +419,23 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     let isModifier = modifierBits[code] != nil
     let isDown = type == .keyDown || (type == .flagsChanged && modifierIsDown(code, event.flags))
     let isUp = type == .keyUp || (type == .flagsChanged && !modifierIsDown(code, event.flags))
-    if isUp { pressedKeys.remove(code) }
-    // Recording consumes the whole physical press, even if settings change before release.
-    if capturedKeys.contains(code) {
-        if isUp { capturedKeys.remove(code) }
-        return nil
-    }
-    if captureHoldKey && (isDown || (type == .flagsChanged && code == 57)) {
+    let capsToggle = type == .flagsChanged && code == 57
+    let result = nativeKeyState.feed(code: code, down: isDown || capsToggle, up: isUp && !capsToggle,
+                                    repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+                                    modifier: isModifier, suppress: !isModifier || code == 63,
+                                    otherModifier: modifierBits.keys.contains { $0 != code && modifierIsDown($0, event.flags) },
+                                    physical: physicalKeyDown)
+    emitHoldEvents(result.events)
+    if let recorded = result.recorded {
         captureHoldKey = false
-        // Caps Lock is a toggle, so it has no matching release to retain. Main rejects it.
-        if isDown { capturedKeys.insert(code) }
-        holdDown = false
-        holdPhysicalDown = false
-        emit(["e": "hold-key-recorded", "code": code])
-        return nil
+        emit(["e": "hold-key-recorded", "code": recorded])
     }
-    let alreadyPressed = pressedKeys.contains(code)
-    if isDown { pressedKeys.insert(code) }
-    if swallowedKeys.contains(code) && code != holdKeyCode {
-        if isUp { swallowedKeys.remove(code) }
-        return nil
+    // Caps Lock is rejected by main and toggles without a paired release.
+    if capsToggle && result.recorded != nil {
+        _ = nativeKeyState.feed(code: code, down: false, up: true, repeated: false,
+                                modifier: false, suppress: false, otherModifier: false, physical: physicalKeyDown)
     }
-    if code == holdKeyCode {
-        if isDown && !holdPhysicalDown && !alreadyPressed {
-            holdPhysicalDown = true
-            let otherModifiers = modifierBits.keys.contains { $0 != code && modifierIsDown($0, event.flags) }
-            if !isModifier || (!otherModifiers && pressedKeys.allSatisfy { $0 == code }) {
-                holdDown = true
-                emit(["e": "hold-down"])
-            }
-        } else if isUp {
-            holdPhysicalDown = false
-            if holdDown { holdDown = false; emit(["e": "hold-up"]) }
-        }
-        // fn must also be hidden to prevent the emoji/input-source picker stealing the paste.
-        if !isModifier || code == 63 {
-            if isDown { swallowedKeys.insert(code) }
-            if isUp { swallowedKeys.remove(code) }
-            return nil
-        }
-    } else if (isDown || (type == .flagsChanged && code == 57)) && holdDown {
-        holdDown = false
-        emit(["e": "hold-cancel"])
-    }
+    if result.swallow { return nil }
     if type == .flagsChanged || type == .keyUp { return Unmanaged.passUnretained(event) }
     guard type == .keyDown else { return Unmanaged.passUnretained(event) }
     inputGeneration &+= 1
@@ -503,23 +481,17 @@ private func readSnippetUpdates() {
             guard let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
-            if obj.keys.contains("hold") {
+            if obj.keys.contains("hold") || obj.keys.contains("captureHoldKey") {
                 let key = obj["hold"] as? [String: Any]
                 let code = (key?["code"] as? NSNumber)?.int64Value ?? -1
+                let capture = obj["captureHoldKey"] as? Bool
                 DispatchQueue.main.async {
-                    holdKeyCode = (modifierBits[code] != nil || functionKeyCodes.contains(code)) ? code : -1
-                    holdDown = false
-                    holdPhysicalDown = false
-                }
-            }
-            if let capture = obj["captureHoldKey"] as? Bool {
-                DispatchQueue.main.async {
-                    captureHoldKey = capture
-                    if capture {
-                        if holdDown { emit(["e": "hold-cancel"]) }
-                        holdDown = false
-                        holdPhysicalDown = false
+                    if obj.keys.contains("hold") {
+                        holdKeyCode = (modifierBits[code] != nil || functionKeyCodes.contains(code)) ? code : -1
                     }
+                    if let capture = capture { captureHoldKey = capture }
+                    let physical = Set((0..<256).map { Int64($0) }.filter { physicalKeyDown($0) })
+                    emitHoldEvents(nativeKeyState.configure(key: holdKeyCode, capture: captureHoldKey, physical: physical))
                 }
             }
             if let map = obj["snippets"] as? [String: String] {

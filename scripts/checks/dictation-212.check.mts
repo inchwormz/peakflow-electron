@@ -52,7 +52,7 @@ test('native configuration refresh never resets the same active hold; Win suppre
   const hook=src('src/main/launcher/expander.ts')
   assert.ok(hook.includes('JSON.stringify(holdKey) === JSON.stringify(key) && dictating === dictate) return'))
   assert.ok(hook.includes("onKey('cancel')\n  holdKey = key"))
-  assert.ok(hook.includes('holdVk == 0x5B || holdVk == 0x5C) ThreadPool'))
+  assert.ok(hook.includes('holdVk == 0x5B || holdVk == 0x5C)) ThreadPool'))
   const main=src('src/main/dictation/index.ts')
   for (const event of ['blur','hide']) assert.ok(main.includes(`owner?.once('${event}', cancelCapture)`))
 })

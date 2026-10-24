@@ -140,6 +140,9 @@ const { getDictationAccount, openDictationCheckout } = createDictationAccountCli
 
 const viaAddon = (): boolean => ['ok', 'low', 'empty'].includes(addon.state) && !addon.disabled && addon.blocked !== 'disabled'
 
+const activationUsable = (): boolean => ['ok', 'low'].includes(addon.state) && (addon.balanceMicros ?? 0) > 0 && !addon.disabled && addon.blocked !== 'disabled'
+const sameAddonAuth = (a: AddonAuth | null, b: AddonAuth | null): boolean => a?.licence === b?.licence && a?.deviceId === b?.deviceId
+
 /**
  * Ask the server how the add-on stands (at most once a minute unless forced;
  * callers share one request in flight). A temporary failure (offline, server
@@ -151,29 +154,36 @@ function refreshAddon(force = false): Promise<void> {
   if (!force && Date.now() - addonCheckedAt < 60_000) return Promise.resolve()
   addonCheckedAt = Date.now()
   addonRefresh = (async () => {
-    const auth = addonAuth()
-    const next = await fetchAddonStatus(auth)
-    const temporary = next.state === 'error' && next.error !== 'devices'
-    if (addonRetry) clearTimeout(addonRetry)
-    addonRetry = temporary && auth ? setTimeout(() => void refreshAddon(true), 60_000) : null
-    if (temporary && viaAddon()) return
-    await settingsQueue(() => {
-      const before = JSON.stringify(addon)
-      const beforeState = addon.state
-      const wasUsable = viaAddon()
-      addon = next
-      if (autoEnable(wasUsable, viaAddon(), store.get('userOff'))) {
-        store.set('enabled', true)
-        void ensureMediaAccess('Dictation', ['microphone'])
-        retryExpansion()
-      }
-      if (JSON.stringify(addon) !== before) {
-        for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
-        if (beforeState !== addon.state || wasUsable !== viaAddon()) applyWatcher()
-        settingsChanged()
-        if (settings().enabled) getPill()
-      }
-    })
+    let stale = true
+    while (stale) {
+      stale = false
+      const auth = addonAuth()
+      const next = await fetchAddonStatus(auth)
+      if (!sameAddonAuth(auth, addonAuth())) { stale = true; continue }
+      const temporary = next.state === 'error' && next.error !== 'devices'
+      if (addonRetry) clearTimeout(addonRetry)
+      addonRetry = temporary && auth ? setTimeout(() => void refreshAddon(true), 60_000) : null
+      if (temporary && viaAddon()) return
+      await settingsQueue(() => {
+        if (!sameAddonAuth(auth, addonAuth())) { stale = true; return }
+        const before = JSON.stringify(addon)
+        const beforeState = addon.state
+        const wasUsable = activationUsable()
+        const wasViaAddon = viaAddon()
+        addon = next
+        if (autoEnable(wasUsable, activationUsable(), store.get('userOff'))) {
+          store.set('enabled', true)
+          void ensureMediaAccess('Dictation', ['microphone'])
+          retryExpansion()
+        }
+        if (JSON.stringify(addon) !== before) {
+          for (const window of BrowserWindow.getAllWindows()) window.webContents.send(IPC_SEND.DICTATION_ACCOUNT_CHANGED)
+          if (beforeState !== addon.state || wasViaAddon !== viaAddon() || wasUsable !== activationUsable()) applyWatcher()
+          settingsChanged()
+          if (settings().enabled) getPill()
+        }
+      })
+    }
   })().finally(() => {
     addonRefresh = null
   })
