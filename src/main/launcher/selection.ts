@@ -78,8 +78,9 @@ function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
  * in every other failure the clipboard is left alone, never replaced with
  * unmarked text.
  */
-export function pasteAndRestore(text: string, privacy?: { capture: (target: HistoryContext) => void }): Promise<boolean> {
+export function pasteAndRestore(text: string, privacy?: { capture: (target: HistoryContext) => void }, current = (): boolean => true): Promise<boolean> {
   return oneAtATime(async () => {
+    if (!current()) return false
     if (process.platform === 'darwin') {
       const r = await runMacHelper(privacy ? ['paste-text', 'dictation'] : ['paste-text'], 4000, text)
       if (r?.trusted === false) {

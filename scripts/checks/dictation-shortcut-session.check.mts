@@ -12,8 +12,9 @@ const code = (start: string, end: string) => transformSync(
 function boot(held = true) {
   let now = 1000
   const app = new Function('DictationGesture', 'held', 'Date', `
+    const clipTiming=()=>({attempts:[]}),logTiming=()=>{},voiceSnippets=()=>[],exactSnippet=()=>undefined,snippetSpans=()=>[],expandSnippets=(text,spans,ordinary)=>ordinary(text);
     const gesture = new DictationGesture(); if(held)gesture.feed('down', Date.now()-1000)
-    let uploadStarted=false; let sessionId=1,recording=held,busy=false,downAt=Date.now()-1000,releasedAt=0
+    let connectionWarmup='unknown'; let uploadStarted=false; let sessionId=1,recording=held,busy=false,downAt=Date.now()-1000,releasedAt=0
     let maxTimer=null,stopTimer=null,showTimer=null,audioReceived=false,context=Promise.resolve({})
     let model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0,kept=0,listener,escapeListener,resolveUpload,cap,phases=[]
     const PILL_ERROR_W=380,MIN_HOLD_MS=300,MAX_HOLD_MS=300000,RELEASE_PAD_MS=150,IPC_SEND={DICTATION_STOP:'stop'}

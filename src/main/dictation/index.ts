@@ -10,6 +10,10 @@
  */
 
 import { addWeekly, weeklyNow, type WeeklyStats } from '@shared/dictation-stats'
+import { clipTiming, logTiming, type ConnectionWarmup, type ClipTiming } from './timing'
+import { launcherStore } from '../launcher/store'
+import { fillPlaceholders } from '../launcher/snippet-text'
+import { voiceSnippets, exactSnippet, snippetSpans, expandSnippets } from './snippets'
 import { addHistory, mayKeepHistory, type HistoryEntry, type HistoryContext } from './history'
 import { DictationGesture } from './gesture'
 import { serial } from './serial'
@@ -19,7 +23,7 @@ import { normalizeHoldKey, holdKeyFromCode, type NativeHoldKey } from '@shared/d
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
-import { app, BrowserWindow, ipcMain, screen, systemPreferences } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
@@ -35,7 +39,7 @@ import { onRecordingEscape, setRecordingEscape, setMayRecord, onHoldKey, setHold
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
-import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, CLEANUP_MAX_BYTES, type DictationContext } from './smart'
+import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, localTidy, applyReplacements, CLEANUP_MODEL, CLEANUP_MAX_BYTES, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
 import { getActiveWindow, getProcessExeName } from '../native/active-window'
 import { allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
@@ -61,6 +65,7 @@ interface DictationData {
   holdKey: DictationHoldKey
   /** Light clean-up (fillers, punctuation, "no wait"); on by default since it passed the test set */
   tidy: boolean
+  voiceSnippets: boolean
   /** "My words": one per line; "X -> Y" lines are replacements */
   words: string
   /** Made up once; the add-on's server allows two computers per licence */
@@ -75,7 +80,7 @@ const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
   // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
-  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '', microphone: '', keepHistory: true, history: [] }
+  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, voiceSnippets: false, words: '', microphone: '', keepHistory: true, history: [] }
 })
 
 let historyRevision = 0
@@ -84,6 +89,7 @@ let quitting = false
 const gesture = new DictationGesture()
 let downAt = 0
 let releasedAt = 0
+let connectionWarmup: ConnectionWarmup = 'not-requested'
 let recording = false
 let maxTimer: ReturnType<typeof setTimeout> | null = null
 let hideTimer: ReturnType<typeof setTimeout> | null = null
@@ -104,7 +110,7 @@ let context: Promise<DictationContext> = Promise.resolve({})
 /** The last dictation as spoken and as typed, for "Paste last dictation as spoken" */
 let last: { raw: string; typed: string; at: number } | null = null
 /** A clip that couldn't be turned into text, kept so it can be tried again (S11) */
-interface Clip { buf: ArrayBuffer; mime: string; durationMs: number; ctx: DictationContext; at: number; owner?: string }
+interface Clip { buf: ArrayBuffer; mime: string; durationMs: number; ctx: DictationContext; at: number; owner?: string; releaseAt?: number; audioReadyAt?: number; warmup?: ConnectionWarmup }
 let keptClip: (Clip & { owner: string }) | null = null
 let keptTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -225,6 +231,7 @@ function settings(): DictationSettings {
     holdKey: normalizeHoldKey(store.get('holdKey'), process.platform) ?? holdKeyFromCode(isMac ? 63 : 163, process.platform)!,
     model,
     cleanup: store.get('tidy'),
+    voiceSnippets: store.get('voiceSnippets'),
     wordCount: parseMyWords(store.get('words')).hints.length,
     active: store.get('enabled') && key && isExpansionActive(),
     kept: getKeptDictation()?.seconds,
@@ -418,7 +425,11 @@ function onDown(): void {
   // PEAKFLOW_DICTATION_MIC_RAW=1 (testing): no echo cancelling, noise suppression or auto gain
   recordingStart.start({ at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1', sessionId, microphone: store.get('microphone') })
   // While they talk: open the connection to OpenAI and read where the text is going
-  warmConnection(key)
+  const generation = sessionId
+  connectionWarmup = key ? 'pending' : 'not-requested'
+  warmConnection(key, (ok) => {
+    if (generation === sessionId) connectionWarmup = ok ? 'complete' : 'failed'
+  })
   context = readContext()
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = setTimeout(() => { gesture.reset(); onUp() }, MAX_HOLD_MS)
@@ -436,6 +447,7 @@ function onUp(finishLocked = false): void {
   if (!recordingStart.isReady) return fail('no_speech')
   showPill()
   releasedAt = Date.now()
+  console.log('[DictationTiming]', JSON.stringify({ clipId: sessionId, platform: process.platform, stage: 'release' }))
   busy = true
   setMayRecord(false)
   state({ phase: 'transcribing' })
@@ -497,9 +509,14 @@ function cancel(): void {
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
   const generation = sessionId
+  const releaseAt = releasedAt
+  const audioReadyAt = Date.now()
+  const warmup = connectionWarmup
+  const durationMs = releasedAt - downAt + RELEASE_PAD_MS
+  console.log('[DictationTiming]', JSON.stringify({ clipId: generation, platform: process.platform, stage: 'audio-ready', releaseToAudioReadyMs: Math.max(0, audioReadyAt - releaseAt), bytes: buf.byteLength, durationMs }))
   const ctx = await context
   if (generation !== sessionId) return
-  await runClip({ buf, mime, durationMs: releasedAt - downAt + RELEASE_PAD_MS, ctx, at: Date.now() })
+  await runClip({ buf, mime, durationMs, ctx, at: Date.now(), releaseAt, audioReadyAt, warmup })
 }
 
 /** Speech to text, clean-up and typing for one clip (a new recording, or a kept one tried again). */
@@ -520,6 +537,7 @@ async function runClip(sent: Clip): Promise<void> {
 
 async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   const { buf, mime, durationMs, ctx } = clip
+  const timing = clipTiming(generation, clip.releaseAt ?? releasedAt, clip.audioReadyAt, durationMs, buf.byteLength, clip.warmup)
   const key = getCredential(CRED_TOOL, CRED_TYPE)
   const words = parseMyWords(store.get('words'))
   const prompt = transcriptionPrompt(words, ctx)
@@ -527,57 +545,78 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   const timeoutMs = transcribeTimeoutMs(durationMs)
   let auth = viaAddon() ? addonAuth() : null
   uploadStarted = true
+  let requestAt = Date.now()
   let r = auth
     ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) })
     : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
+  timing.attempts.push({ provider: auth ? 'add-on' : 'own-key', model: auth ? 'server-configured' : model, ms: Date.now() - requestAt, outcome: r.ok ? 'ok' : r.error ?? 'failed' })
   if (generation !== sessionId) return
   if (auth) void refreshAddon(true)
   // The add-on couldn't do it (switched off, used up, offline …) but they have their own key: don't lose what they said
   if (auth && !r.ok && r.error !== 'no_speech' && key) {
-    console.warn(`[Dictation] add-on: ${r.error}${r.detail ? ` (${r.detail})` : ''}; using your own key for this one`)
+    console.warn(`[Dictation] add-on: ${r.error}; using your own key for this one`)
     auth = null
+    requestAt = Date.now()
     r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
+    timing.attempts.push({ provider: 'own-key', model, ms: Date.now() - requestAt, outcome: r.ok ? 'ok' : r.error ?? 'failed' })
   }
   if (generation !== sessionId) return
   if (!auth && r.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
-    console.warn(`[Dictation] ${model} not available on this key (${r.detail}); using gpt-4o-mini-transcribe`)
+    console.warn(`[Dictation] ${model} not available on this key; using gpt-4o-mini-transcribe`)
     model = 'gpt-4o-mini-transcribe'
+    requestAt = Date.now()
     r = await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
+    timing.attempts.push({ provider: 'own-key', model, ms: Date.now() - requestAt, outcome: r.ok ? 'ok' : r.error ?? 'failed' })
   }
-  const sttMs = Date.now() - releasedAt
   if (generation !== sessionId) return
   if (!r.ok || !r.text) {
-    if (r.detail) console.warn(`[Dictation] ${r.error}: ${r.detail}`)
+    timing.tidy = 'transcription-failed'
+    logTiming(timing)
     // Keep the audio so nothing said is lost; it can be tried again for 30 minutes
     const kept = keepsClip(r.error)
     keepClip(kept ? clip : null)
     return fail(r.error ?? 'failed', kept)
   }
   if (keptClip) keepClip(null)
+  const snippets = voiceSnippets(store.get('voiceSnippets') ? launcherStore.snippets() : [])
+  const exact = exactSnippet(r.text, snippets)
+  const spoken = new Set(snippetSpans(r.text, snippets).map((s) => s.snippet.id))
   let text = r.text
   let tidyNote = 'off'
+  const tidyAt = Date.now()
   // With the add-on the clean-up goes through PeakFlow's server too (and is metered there)
   const tidyKey = auth ? 'add-on' : key
-  if (store.get('tidy') && tidyKey && !needsTidy(r.text, words)) tidyNote = 'not needed'
+  if (exact) tidyNote = 'exact snippet'
+  else if (store.get('tidy') && tidyKey && !needsTidy(r.text, words)) tidyNote = 'not needed'
   else if (store.get('tidy') && tidyKey) {
-    const c = await cleanUp(r.text, { key: tidyKey, words, ctx, ...(auth ? { fetchImpl: addonTidyFetch(auth), timeoutMs: 6000, skipOverBytes: CLEANUP_MAX_BYTES } : {}) })
-    text = c.text
-    tidyNote = c.cleaned ? `${c.ms} ms` : `kept as spoken: ${c.rejected}`
+    const local = localTidy(r.text, words)
+    if (local !== null) {
+      text = local
+      tidyNote = 'local-leading-filler'
+    } else {
+      const c = await cleanUp(r.text, { key: tidyKey, words, ctx, ...(auth ? { fetchImpl: addonTidyFetch(auth), timeoutMs: 6000, skipOverBytes: CLEANUP_MAX_BYTES } : {}) })
+      text = c.text
+      tidyNote = c.cleaned ? 'remote-accepted' : 'remote-kept-raw'
+      timing.tidyProvider = auth ? 'add-on' : 'own-key'
+      timing.tidyModel = auth ? 'server-configured' : CLEANUP_MODEL
+    }
   }
-  text = applyReplacements(text, words.replacements)
+  timing.tidy = tidyNote
+  timing.tidyMs = Date.now() - tidyAt
   if (generation !== sessionId) return
+  text = exact
+    ? fillPlaceholders(exact.text, () => clipboard.readText())
+    : expandSnippets(text, snippetSpans(text, snippets.filter((s) => spoken.has(s.id))),
+      (part) => applyReplacements(part, words.replacements), (body) => fillPlaceholders(body, () => clipboard.readText()))
   last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
   let target: HistoryContext = {}
-  const ok = await typeText(text, isMac && store.get('keepHistory') ? (actual) => { target = actual } : undefined)
+  const ok = await typeText(text, isMac && store.get('keepHistory') ? (actual) => { target = actual } : undefined, timing, () => generation === sessionId)
   if (generation !== sessionId) return
   if (ok) {
     try { rememberTyped(text, ctx, target, Math.max(0, durationMs - RELEASE_PAD_MS)) }
     catch { console.warn('[Dictation] could not save stats/history after typing') }
   }
-  console.log(
-    `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
-      `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
-  )
+  logTiming(timing)
   busy = false
   setMayRecord(settings().enabled)
   // Couldn't type it. The clipboard is left alone (#15: PeakFlow's own text never lands
@@ -608,9 +647,10 @@ export async function retryDictation(): Promise<boolean> {
   busy = true
   setMayRecord(false)
   releasedAt = Date.now()
+  sessionId++
   showPill()
   state({ phase: 'transcribing' })
-  await runClip(clip)
+  await runClip({ ...clip, releaseAt: releasedAt, audioReadyAt: undefined, warmup: 'not-requested' })
   return true
 }
 
@@ -625,12 +665,21 @@ export function pasteDictation(text: string): Promise<boolean> {
 }
 
 /** Paste into the app in front, then put the clipboard back as it was. */
-let pastedAt = 0
-
-async function typeText(text: string, capture?: (target: HistoryContext) => void): Promise<boolean> {
-  if (process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Dictation] pasting ${text.length} chars into ${(await readContext()).app ?? 'unknown app'}`)
-  pastedAt = Date.now()
-  return pasteAndRestore(text, capture ? { capture } : undefined)
+async function typeText(text: string, capture?: (target: HistoryContext) => void, timing?: ClipTiming, current = (): boolean => true): Promise<boolean> {
+  if (!current()) return false
+  if (timing) timing.pasteStartMs = Date.now() - timing.releaseAt
+  let ok = false
+  try {
+    ok = await pasteAndRestore(text, capture ? { capture } : undefined, current)
+    return ok
+  } catch {
+    return false
+  } finally {
+    if (timing) {
+      timing.pasteCompleteMs = Date.now() - timing.releaseAt
+      timing.pasteSuccess = ok
+    }
+  }
 }
 
 // ─── IPC and lifecycle ───────────────────────────────────────────────────────
@@ -808,6 +857,8 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     } else if (key === 'clearHistory' && value === true) {
       historyRevision++
       store.set('history', [])
+    } else if (key === 'voiceSnippets' && typeof value === 'boolean') {
+      store.set('voiceSnippets', value)
     } else if (key === 'cleanup' && typeof value === 'boolean') {
       store.set('tidy', value)
     }
@@ -911,7 +962,7 @@ export async function runDictationDevTest(): Promise<void> {
   const bad = await saveKey('sk-not-a-real-key-000000000000000000')
   console.log(`[DictationTest] wrong key → ${bad.ok ? 'accepted (WRONG)' : bad.error}`)
   const saved = await saveKey(process.env['OPENAI_API_KEY'] ?? '')
-  console.log(`[DictationTest] key saved: ${saved.ok ? 'yes' : saved.error}; settings ${JSON.stringify(saved.settings)}`)
+  console.log(`[DictationTest] key saved: ${saved.ok ? 'yes' : saved.error}`)
   const w = getPill()
   if (w.webContents.isLoading()) await new Promise<void>((r) => w.webContents.once('did-finish-load', () => r()))
   await sleep(800)
@@ -924,7 +975,7 @@ export async function runDictationDevTest(): Promise<void> {
   for (const m of ['gpt-transcribe', 'gpt-4o-mini-transcribe'] as const) {
     const t0 = Date.now()
     const r = await transcribe(audio, { key: getCredential(CRED_TOOL, CRED_TYPE), model: m, mime: 'audio/wav' })
-    console.log(`[DictationTest] ${m}: ${Date.now() - t0} ms → ${r.ok ? JSON.stringify(r.text) : r.error}`)
+    console.log(`[DictationTest] ${m}: ${Date.now() - t0} ms → ${r.ok ? 'ok' : r.error}`)
   }
   // The whole pipeline minus the paste: hints, streamed transcription, clean-up, replacements
   {
@@ -937,7 +988,7 @@ export async function runDictationDevTest(): Promise<void> {
       const c = needsTidy(r.text, words) ? await cleanUp(r.text, { key: getCredential(CRED_TOOL, CRED_TYPE) ?? '', words, ctx }) : null
       const typed = applyReplacements(c?.text ?? r.text, words.replacements)
       last = { raw: applyReplacements(r.text, words.replacements), typed, at: Date.now() }
-      console.log(`[DictationTest] pipeline: ${sttMs} ms speech-to-text, clean-up ${c ? `${c.ms} ms${c.rejected ? ` (kept raw: ${c.rejected})` : ''}` : 'not needed'} → ${JSON.stringify(typed)} (raw ${JSON.stringify(r.text)})`)
+      console.log(`[DictationTest] pipeline: ${sttMs} ms speech-to-text, clean-up ${c ? `${c.ms} ms${c.rejected ? ' (kept raw)' : ''}` : 'not needed'}`)
     }
   }
   state({ phase: 'error', message: ERROR_TEXT.no_speech })

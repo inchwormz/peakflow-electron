@@ -354,6 +354,11 @@ function Settings(): React.JSX.Element {
           sub="Takes out “um”, adds punctuation, and keeps only the fix when you say “no wait”. Never changes names, numbers or “not”."
           right={<Toggle label="Clean up as you go" checked={s.cleanup} onChange={(v) => void takeS(setting('cleanup', v))} />}
         />
+        <Row
+          label="Voice snippets"
+          sub="Say a snippet's keyword to insert its text."
+          right={<Toggle label="Voice snippets" checked={s.voiceSnippets} onChange={(v) => void takeS(setting('voiceSnippets', v))} />}
+        />
         <Row label="My words" sub="Names and terms to spell your way" value={s.wordCount ? String(s.wordCount) : undefined} go="dictation/words" />
         <Row label="OpenAI key" value={s.ownKey ? 'Saved' : 'Not added'} go="dictation/key" />
       </Grp>

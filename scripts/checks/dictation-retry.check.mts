@@ -46,7 +46,7 @@ test('wiring: failures keep the clip, every transcription call gets the scaled l
   const main = src('src/main/dictation/index.ts')
   assert.ok(main.includes('keepClip(kept ? clip : null)'))
   assert.ok(main.includes('if (keptClip) keepClip(null)'), 'a success clears it')
-  const calls = main.slice(main.indexOf('async function runClip'), main.indexOf('const sttMs'))
+  const calls = main.slice(main.indexOf('async function runClip'), main.indexOf('if (!r.ok || !r.text)'))
   assert.equal((calls.match(/await transcribe\(/g) ?? []).length, 3)
   assert.equal((calls.match(/stream: true, timeoutMs \}/g) ?? []).length, 3)
   assert.ok(calls.includes('timeoutMs: transcribeTimeoutMs(durationMs, 45_000)'))
@@ -102,6 +102,7 @@ test('stats or history write failure after paste never retains audio for retry',
   const code = transformSync(main.slice(main.indexOf('async function runClip('), main.indexOf('/** A kept clip')), { loader: 'ts' }).code
   for (const failedKey of ['weekly', 'history']) {
     const boot = new Function(`
+      const clipTiming=()=>({attempts:[]}),logTiming=()=>{},voiceSnippets=()=>[],exactSnippet=()=>undefined,snippetSpans=()=>[],expandSnippets=(text,spans,ordinary)=>ordinary(text);
       const isMac=true,setMayRecord=()=>{},settings=()=>({enabled:true})
       let sessionId=1,busy=true,releasedAt=0,model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0,kept=0
       const clipOwner=()=>'',ownerForSend=()=>'',transcribe=async()=>({ok:true,text:'hello'}),viaAddon=()=>false

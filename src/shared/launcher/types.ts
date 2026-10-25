@@ -171,6 +171,7 @@ export interface DictationSettings {
   model: 'gpt-transcribe' | 'gpt-4o-mini-transcribe'
   /** Light clean-up: fillers, punctuation and "no wait" corrections (small OpenAI model, same key) */
   cleanup: boolean
+  voiceSnippets: boolean
   /** How many words are on the person's "My words" list */
   wordCount: number
   /** The keyboard watcher is running with the permission it needs */

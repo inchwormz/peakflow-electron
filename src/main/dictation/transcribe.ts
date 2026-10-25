@@ -95,11 +95,12 @@ async function readStream(res: Response): Promise<string> {
  * Open the connection to OpenAI while the person is still talking, so the
  * upload on release skips the TLS handshake. A cheap authorised GET; errors ignored.
  */
-export function warmConnection(key: string | null): void {
+export function warmConnection(key: string | null, ready?: (ok: boolean) => void): void {
   if (!key) return
   void fetch(`${API}/models/gpt-transcribe`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(5000) })
     .then((r) => r.arrayBuffer())
-    .catch(() => {})
+    .then(() => ready?.(true))
+    .catch(() => ready?.(false))
 }
 
 /** One tiny call to check a key works (lists the transcription model). */
