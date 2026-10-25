@@ -733,10 +733,10 @@ private func sameCommandSelection(_ a: CommandSnapshot, _ b: CommandSnapshot) ->
     a.range.location == b.range.location && a.range.length == b.range.length && a.text == b.text
 }
 
-/// Validate the full snapshot, then re-read PID/focus/range without another text read before paste.
+/// Validate the full snapshot, then re-read focus/range and finish with the cheap frontmost-PID check right before paste.
 private func validateCommandSelection(focus: () throws -> Bool, range: () throws -> Bool,
                                       text: () throws -> Bool, frontmost: () throws -> Bool) -> Bool {
-    do { return try frontmost() && focus() && range() && text() && frontmost() && focus() && range() }
+    do { return try frontmost() && focus() && range() && text() && focus() && range() && frontmost() }
     catch { return false }
 }
 

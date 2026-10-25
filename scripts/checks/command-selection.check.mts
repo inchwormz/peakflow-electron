@@ -136,7 +136,19 @@ var reads: [String]=[]
 assert(validateCommandSelection(focus: { reads.append("focus"); return true },
     range: { reads.append("range"); return true }, text: { reads.append("text"); return true },
     frontmost: { reads.append("pid"); return true }))
-assert(reads == ["pid", "focus", "range", "text", "pid", "focus", "range"])
+assert(reads == ["pid", "focus", "range", "text", "focus", "range", "pid"])
+// An app switch during the final blocking focus/range reads is caught by the last PID check.
+for slowRead in ["focus", "range"] {
+    var pid=42, seen=0
+    let switched = validateCommandSelection(focus: {
+        if slowRead == "focus" { seen += 1; if seen == 2 { Thread.sleep(forTimeInterval: 0.02); pid=99 } }
+        return true
+    }, range: {
+        if slowRead == "range" { seen += 1; if seen == 2 { Thread.sleep(forTimeInterval: 0.02); pid=99 } }
+        return true
+    }, text: { true }, frontmost: { pid == 42 })
+    assert(!switched, "Must refuse an app switch during the final \\(slowRead) read")
+}
 enum AXFailure: Error { case timeout }
 for failed in 0..<7 {
     var checks=0
