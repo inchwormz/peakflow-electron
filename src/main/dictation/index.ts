@@ -873,6 +873,22 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   })
 }
 
+/** Real pill preview without START, microphone capture, transcription or paste. */
+export async function previewDictationPill(phase: 'listening' | 'locked' | 'transcribing' | 'cancelled' | 'error'): Promise<BrowserWindow> {
+  if (!is.dev || app.isPackaged) throw new Error('Pill previews are development only')
+  if (recording || busy) throw new Error('Cannot preview a pill during dictation')
+  const w = getPill()
+  if (w.webContents.isLoading()) await new Promise<void>((resolve) => w.webContents.once('did-finish-load', () => resolve()))
+  // Let the real component install its IPC listeners before sending the state.
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  await w.webContents.executeJavaScript('window.__pfLevel = 0.55')
+  showPill(phase === 'locked' || phase === 'error' ? PILL_ERROR_W : PILL_W)
+  state(phase === 'locked'
+    ? { phase: 'listening', message: `Tap ${holdKeyName(settings().holdKey, isMac)} to finish` }
+    : phase === 'error' ? { phase, message: ERROR_TEXT.no_speech } : { phase })
+  return w
+}
+
 /**
  * Development-only check of the real path minus the microphone and the paste:
  * saves the key through saveKey, shows the pill states (screenshots), and

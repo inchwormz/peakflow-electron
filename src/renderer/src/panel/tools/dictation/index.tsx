@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { historyTime } from '@shared/dictation-history-time'
 import { weeklyNow, minutesSaved } from '@shared/dictation-stats'
 import { microphoneOptions } from '@shared/dictation-microphone'
 import { createLatest } from '@shared/latest-only'
@@ -28,7 +29,7 @@ import {
 } from '@shared/dictation-view'
 import type { PanelToolModule } from '../../types'
 import { invoke, isMac, useInvoke, useIpcEvent, usePanelVisible } from '../../hooks'
-import { Banner, Btn, Gap, Grp, Note, Primary, Row, Seg, Toggle, Picker } from '../../kit'
+import { Banner, Btn, Gap, Grp, Note, Primary, Row, Seg, Toggle, Picker, LinkBtn } from '../../kit'
 import { useNav } from '../../nav'
 import { PermissionNotice, openPermission } from '../../permission'
 import { guideCopy } from '@shared/mac-permissions'
@@ -232,17 +233,43 @@ function Recent(): React.JSX.Element {
     <>
       {isMac() ? <Note>Recent</Note> : null}
       <Note>{weekly.words} words this week, about {minutesSaved(weekly)} minutes saved</Note>
-      {isMac() ? <Grp>
+      {isMac() ? <Grp style={{ marginTop: 4 }}>
         <Row label="Keep history" right={<Toggle label="Keep history" checked={s.keepHistory !== false} onChange={(v) => void takeS(setting('keepHistory', v))} />} />
         {(all ? history : history.slice(0, 5)).map((entry, i) => (
-          <Row key={`${entry.at}-${i}`} label={entry.text} sub={[new Date(entry.at).toLocaleString(), entry.app].filter(Boolean).join(' · ')}
-            right={<Btn sm onClick={() => void invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, entry.text).then(() => nav.toast('Copied')).catch(() => nav.toast('Could not copy'))}>Copy</Btn>} />
+          <HistoryRow key={`${entry.at}-${i}`} entry={entry} />
         ))}
-        {history.length > 5 ? <Row label={all ? 'Show less' : 'Show all'} onClick={() => setAll(!all)} /> : null}
-        {history.length ? <Row label="Clear history" right={<Btn sm onClick={() => void takeS(setting('clearHistory', true))}>Clear history</Btn>} /> : null}
+        {history.length ? <div className="r">
+          {history.length > 5 ? <LinkBtn onClick={() => setAll(!all)}>{all ? 'Show less' : 'Show all'}</LinkBtn> : null}
+          <LinkBtn style={{ marginLeft: 'auto' }} onClick={() => void takeS(setting('clearHistory', true)).catch(() => nav.toast('Could not clear history'))}>Clear</LinkBtn>
+        </div> : null}
       </Grp> : null}
     </>
   )
+}
+
+/** A native button keeps Enter and Space copying identical to a pointer click. */
+function HistoryRow({ entry }: { entry: { text: string; at: number; app?: string } }): React.JSX.Element {
+  const nav = useNav()
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false; clearTimeout(timer.current) }
+  }, [])
+  const copy = async (): Promise<void> => {
+    try {
+      await invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, entry.text)
+      if (!alive.current) return
+      clearTimeout(timer.current)
+      setCopied(true)
+      timer.current = setTimeout(() => setCopied(false), 1200)
+    } catch { if (alive.current) nav.toast('Could not copy') }
+  }
+  return <button type="button" className="r dictation-history-row" aria-label={`Copy: ${entry.text.trim().split(/\s+/).slice(0, 8).join(' ')}`} onClick={() => void copy()}>
+    <span className="l">{entry.text}<small aria-live="polite">{copied ? 'Copied' : [historyTime(entry.at), entry.app].filter(Boolean).join(' · ')}</small></span>
+    <span className="ri hk link" aria-hidden="true">Copy</span>
+  </button>
 }
 
 /** The balance and Add $5–$20 (or Get dictation), with the own key as the small second option. */

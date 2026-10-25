@@ -85,7 +85,7 @@ test('Windows paste does no history sampling; Mac still captures privacy under t
 test('Windows panel shows weekly stats while hiding all history controls', () => {
   const panel=readFileSync(new URL('../../src/renderer/src/panel/tools/dictation/index.tsx',import.meta.url),'utf8')
   assert.match(panel, /\{isMac\(\) \? <Note>Recent<\/Note> : null\}/)
-  const group=panel.slice(panel.indexOf('{isMac() ? <Grp>'),panel.indexOf('</Grp> : null}',panel.indexOf('{isMac() ? <Grp>')))
-  for(const label of ['Keep history','Show all','Clear history']) assert.ok(group.includes(label))
+  const group=panel.slice(panel.indexOf('{isMac() ? <Grp style={{ marginTop: 4 }}>'),panel.indexOf('</Grp> : null}',panel.indexOf('{isMac() ? <Grp style={{ marginTop: 4 }}>')))
+  for(const label of ['Keep history','Show all','>Clear</LinkBtn>']) assert.ok(group.includes(label))
   assert.match(panel,/words this week, about/)
 })

@@ -8,6 +8,7 @@
  *   { "eval": "window.peakflow.invoke('tool:install','focusdim')" }  run JS in the panel
  *   { "name": "10-mini", "mini": true, "card": false }   the Liquid Focus mini timer
  *   { "name": "20-alert", "alert": true }                ScreenSlap test alert
+ *   { "name": "pill-locked", "pill": "locked" }          listening | locked | transcribing | cancelled | error
  *   { "wait": 1500 }
  *   { "permission": { "accessibility": false } }        pretend a permission is off (true: on, null: real)
  * Each named step saves <name>.png (window contents) and <name>-screen.png
@@ -24,6 +25,7 @@ import { SystemWindowId } from '@shared/tool-ids'
 import { getPanel, showPanel, hidePanel } from './panel'
 import { createToolWindow, getToolWindow, closeToolWindow } from './windows'
 import { setDevPermission } from './services/permissions-darwin'
+import { previewDictationPill } from './dictation'
 import type { MacPermission } from '@shared/mac-permissions'
 
 interface Step {
@@ -32,6 +34,7 @@ interface Step {
   eval?: string
   /** JS run in the panel after navigating to `route`, before the capture (e.g. open the switcher) */
   then?: string
+  pill?: 'listening' | 'locked' | 'transcribing' | 'cancelled' | 'error'
   mini?: boolean
   card?: boolean
   alert?: boolean
@@ -65,7 +68,7 @@ async function capture(win: BrowserWindow, dir: string, name: string, margin: nu
 export async function runDevShots(): Promise<void> {
   const dir = process.env['PEAKFLOW_SHOTS_DIR']
   const planPath = process.env['PEAKFLOW_SHOTS_PLAN']
-  if (!is.dev || !dir || !planPath) return
+  if (!is.dev || app.isPackaged || !dir || !planPath) return
   mkdirSync(dir, { recursive: true })
   const plan = JSON.parse(readFileSync(planPath, 'utf8')) as Step[]
   // Copy every window's console warnings and errors into the main log
@@ -102,6 +105,23 @@ export async function runDevShots(): Promise<void> {
         }
         const p = getPanel()
         if (p && step.name) await capture(p, dir, step.name, step.margin ?? 40)
+      }
+      if (step.pill) {
+        if (!['listening', 'locked', 'transcribing', 'cancelled', 'error'].includes(step.pill)) throw new Error('Unknown pill state')
+        hidePanel()
+        closeToolWindow(SystemWindowId.LiquidFocusMini)
+        const win = await previewDictationPill(step.pill)
+        try {
+          // Animate fake speech levels through the existing dev-only waveform input.
+          for (const level of [0.2, 0.7, 0.4, 0.85, 0.3]) {
+            await win.webContents.executeJavaScript(`window.__pfLevel = ${level}`)
+            await sleep(90)
+          }
+          if (step.name) await capture(win, dir, step.name, step.margin ?? 40)
+        } finally {
+          await win.webContents.executeJavaScript('delete window.__pfLevel')
+          win.hide()
+        }
       }
       if (step.mini) {
         hidePanel()
