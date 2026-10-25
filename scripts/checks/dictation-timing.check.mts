@@ -18,7 +18,7 @@ function boot(opts: Record<string, any> = {}) {
   return new Function('deps', 'opts', `
     const {parseMyWords,transcriptionPrompt,needsTidy,localTidy,applyReplacements,CLEANUP_MODEL,CLEANUP_MAX_BYTES,
       voiceSnippets,exactSnippet,snippetSpans,expandSnippets,fillPlaceholders,clipTiming,addWeekly,addHistory,mayKeepHistory}=deps
-    let now=300,sessionId=7,uploadStarted=false,busy=true,releasedAt=100,model='gpt-transcribe',keptClip=null,last=null,historyRevision=0
+    let now=300,sessionId=7,uploadStarted=false,busy=true,releasedAt=100,model='gpt-transcribe',keptClip=null,last=opts.last??null,historyRevision=0
     const Date={now:()=>now},isMac=opts.mac!==false,CRED_TOOL='',CRED_TYPE='',RELEASE_PAD_MS=150,NOT_TYPED_MESSAGE='not typed'
     const data={words:'hello -> Hello\\nsecret -> CHANGED',voiceSnippets:true,tidy:true,keepHistory:true,history:[],...opts.data}
     const store={get:k=>data[k],set:(k,v)=>data[k]=v},settings=()=>({enabled:true}),settingsChanged=()=>{},setMayRecord=()=>{},state=()=>{},hidePill=()=>{}
@@ -105,6 +105,28 @@ test('failed and thrown pastes add neither history nor stats and are explicitly 
     assert.equal(app.data.weekly, undefined)
     assert.equal(app.logs[0].pasteSuccess, false)
     assert.equal(app.logs[0].pasteCompleteMs, 265)
+  }
+})
+
+test('Mac helper failure without text keeps the current spoken dictation for recovery without reading the clipboard', async () => {
+  const selection = readFileSync(new URL('../../src/main/launcher/selection.ts', import.meta.url), 'utf8')
+  const code = extract(selection, 'export function pasteAndRestore(', 'async function winSelection(').replace('export ', '')
+  for (const raw of ['SIG.', 'hello sig', 'ordinary dictation']) {
+    for (const last of [null, { raw: 'older', typed: 'older', at: 100 }]) {
+      let clipboardReads = 0
+      const paste = new Function('oneAtATime', 'process', 'runMacHelper', 'fillPlaceholders', 'clipboard', code + ';return pasteAndRestore')(
+        (fn: () => Promise<boolean>) => fn(), { platform: 'darwin' }, async () => ({ ok: false }), fillPlaceholders,
+        { readText: () => { clipboardReads++; return 'clipboard' } }
+      )
+      const app = boot({ raw, last, data: { tidy: false }, pasteImpl: paste })
+      await app.run()
+      assert.equal(app.last().raw, raw.replace('hello', 'Hello'))
+      assert.equal(app.last().typed, raw)
+      assert.equal(clipboardReads, 0)
+      assert.deepEqual(app.data.history, [])
+      assert.equal(app.data.weekly, undefined)
+      assert.equal(app.logs[0].pasteSuccess, false)
+    }
   }
 })
 

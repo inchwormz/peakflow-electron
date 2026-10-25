@@ -609,6 +609,8 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
     (part) => { parts.push({ text: applyReplacements(part, words.replacements) }); return '' },
     (body) => { parts.push({ text: body, snippet: true }); return '' })
   const raw = applyReplacements(r.text, words.replacements)
+  // Keep the spoken form if the paste fails before resolving snippet clipboard tokens.
+  last = { raw, typed: text, at: Date.now() }
   let target: HistoryContext = {}
   const ok = await typeText({ parts, resolved: (final) => {
     text = final
