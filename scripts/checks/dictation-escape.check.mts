@@ -19,7 +19,7 @@ test('cancel path invalidates audio, drops pending start, and never sends a clip
   assert.match(cancel, /send: false/)
   assert.match(cancel, /sessionId\+\+/)
   assert.match(cancel, /recordingStart.cancel\(\)/)
-  assert.match(s, /onRecordingEscape\(\(\) => \{/)
+  assert.match(s, /onRecordingEscape\(\(id\) => \{/)
   assert.match(s, /phase: 'cancelled', message: 'Cancelled'/)
 })
 
@@ -27,7 +27,7 @@ test('actual Windows hook Esc branch pairs interception and forwards every idle 
   const hook = readFileSync(new URL('../../src/main/launcher/expander.ts', import.meta.url), 'utf8')
   const start = hook.indexOf('            if (k.vkCode == 27)')
   const branch = hook.slice(start, hook.indexOf('            HashSet<uint> physical', start))
-    .replace(/\brecordingEscape\b/g, 'state.recordingEscape').replace(/\bescapeDown\b/g, 'state.escapeDown').replace(/new IntPtr\(1\)/g, '1')
+    .replace(/\brecordingEscape\b/g, 'state.recordingEscape').replace(/\bescapeDown\b/g, 'state.escapeDown').replace(/new IntPtr\(1\)/g, '1').replace(/EmitSession/g, 'Emit')
   const feed = new Function('state', 'k', 'isDown', 'isUp', 'Emit', branch + ';return 0')
   const state = { recordingEscape: false, escapeDown: false }
   const emitted: string[] = []
@@ -39,4 +39,24 @@ test('actual Windows hook Esc branch pairs interception and forwards every idle 
   assert.equal(state.recordingEscape, false)
   assert.equal(key(false), 1)
   assert.equal(key(true), 0)
+})
+
+test('queued hold-up then native recording-escape cancels the identified session', async () => {
+  const { transformSync } = await import('esbuild')
+  const source = readFileSync(new URL('../../src/main/launcher/expander.ts', import.meta.url), 'utf8')
+  const code = transformSync(source.slice(source.indexOf('function onLine('), source.indexOf('const WIN_HOOK')), { loader: 'ts' }).code
+  const events: number[] = []
+  const feed = new Function('escapeListener', `
+    const escapeSession={recording:true,feed:()=>({cancel:false})}, process={env:{}}, capturingHoldKey=false
+    const onKey=()=>{escapeSession.recording=false}, escapeWaiters=new Map()
+    ${code}; return onLine
+  `)((id: number) => events.push(id))
+  feed('{"e":"hold-up"}')
+  feed('{"e":"recording-escape","sessionId":17}')
+  assert.deepEqual(events, [17])
+  const main = readFileSync(new URL('../../src/main/dictation/index.ts', import.meta.url), 'utf8')
+  assert.match(main, /onRecordingEscape\(\(id\) => \{\s*if \(id !== sessionId \|\| \(!recording && !busy\)\) return/)
+  const audio = main.slice(main.indexOf('async function onAudio'), main.indexOf('/** Speech to text'))
+  assert.ok(audio.indexOf('await disarmRecordingEscape(generation)') < audio.indexOf('await runClip('))
+  assert.match(audio, /if \(generation !== sessionId\) return/)
 })

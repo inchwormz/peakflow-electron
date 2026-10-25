@@ -31,7 +31,7 @@ import { storeCredential, getCredential, deleteCredential } from '../security/cr
 import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { holdKeyName, missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
-import { onRecordingEscape, setRecordingEscape, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
+import { onRecordingEscape, setRecordingEscape, disarmRecordingEscape, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
@@ -397,8 +397,8 @@ function onDown(): void {
   if (recording || busy || !settings().enabled) return
   downAt = Date.now()
   recording = true
-  setRecordingEscape(true)
   sessionId++
+  setRecordingEscape(true, sessionId)
   audioReceived = false
   getPill()
   const key = getCredential(CRED_TOOL, CRED_TYPE)
@@ -454,20 +454,20 @@ async function readContext(): Promise<DictationContext> {
     const title = w?.title ?? ''
     // UI Automation exposes IsPassword for native and browser input fields.
     // Failure/timeout is unknown, so history fails closed. Never reads the field's value.
-    const secure = await new Promise<boolean | undefined>((resolve) => {
+    const focus = await new Promise<{ secure: boolean; id: string } | undefined>((resolve) => {
       execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        'Add-Type -AssemblyName UIAutomationClient; try { $e = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($null -eq $e) { exit 1 }; $p = $e.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty, $true); if ($p -isnot [bool]) { exit 1 }; @{ secure = $p; pid = $e.Current.ProcessId } | ConvertTo-Json -Compress } catch { exit 1 }'],
+        'Add-Type -AssemblyName UIAutomationClient; try { $e = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($null -eq $e) { exit 1 }; $p = $e.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty, $true); if ($p -isnot [bool]) { exit 1 }; $id = $e.GetRuntimeId(); if ($null -eq $id -or $id.Length -eq 0 -or !$e.Current.HasKeyboardFocus -or ![System.Windows.Automation.Automation]::Compare($e, [System.Windows.Automation.AutomationElement]::FocusedElement)) { exit 1 }; @{ secure = $p; pid = $e.Current.ProcessId; focusId = ($id -join ",") } | ConvertTo-Json -Compress } catch { exit 1 }'],
       { timeout: 800, windowsHide: true }, (err, out) => {
         if (err) return resolve(undefined)
         try {
-          const p = JSON.parse(out) as { secure?: unknown; pid?: unknown }
-          resolve(p.pid === w?.pid && typeof p.secure === 'boolean' ? p.secure : undefined)
+          const p = JSON.parse(out) as { secure?: unknown; pid?: unknown; focusId?: unknown }
+          resolve(p.pid === w?.pid && typeof p.secure === 'boolean' && typeof p.focusId === 'string' && p.focusId ? { secure: p.secure, id: p.focusId } : undefined)
         } catch { resolve(undefined) }
       })
     })
     const after = getActiveWindow()
     const sameWindow = !!w && !!after && w.pid === after.pid && w.hwnd === after.hwnd && w.title === after.title
-    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined, title, appId: w ? getProcessExeName(w.pid) ?? undefined : undefined, secure: sameWindow ? secure : undefined, historyRevision: revision }
+    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined, title, appId: w ? getProcessExeName(w.pid) ?? undefined : undefined, secure: sameWindow ? focus?.secure : undefined, focusId: sameWindow && focus ? JSON.stringify([w!.pid, w!.hwnd, title, focus.id]) : undefined, historyRevision: revision }
   } catch { return { historyRevision: revision } }
 }
 
@@ -505,6 +505,9 @@ function cancel(): void {
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
   const generation = sessionId
+  const disarmed = await disarmRecordingEscape(generation)
+  if (generation !== sessionId) return
+  if (!disarmed) return cancel()
   const ctx = await context
   if (generation !== sessionId) return
   await runClip({ buf, mime, durationMs: releasedAt - downAt + RELEASE_PAD_MS, ctx, at: Date.now() })
@@ -577,7 +580,10 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   let target: HistoryContext = {}
   const ok = await typeText(text, store.get('keepHistory') ? (actual) => { target = actual } : undefined)
   if (generation !== sessionId) return
-  if (ok) rememberTyped(text, ctx, target, Math.max(0, durationMs - RELEASE_PAD_MS))
+  if (ok) {
+    try { rememberTyped(text, ctx, target, Math.max(0, durationMs - RELEASE_PAD_MS)) }
+    catch { console.warn('[Dictation] could not save stats/history after typing') }
+  }
   console.log(
     `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
@@ -845,8 +851,8 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   const migrated = normalizeHoldKey(store.get('holdKey'), process.platform)
   if (migrated) store.set('holdKey', migrated)
   registerIpc(getLauncherContents)
-  onRecordingEscape(() => {
-    if (!recording) return
+  onRecordingEscape((id) => {
+    if (id !== sessionId || (!recording && !busy)) return
     gesture.reset()
     cancel()
     showPill()

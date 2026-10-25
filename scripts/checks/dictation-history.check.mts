@@ -61,10 +61,29 @@ test('Windows privacy is sampled inside serialized paste after clipboard setup',
   const pending = paste('example', { read: async () => destination, capture: (p: any) => { captured = p } })
   destination = { secure: true, app: '1Password' }; release()
   assert.equal(await pending, true)
-  assert.equal(captured.secure, true)
+  assert.notEqual(captured.secure, false)
   assert.equal(mayKeepHistory(true, captured), false)
   const swift = readFileSync(new URL('../../sidecar/darwin/PeakFlowHelper/Sources/Launcher.swift', import.meta.url), 'utf8')
   const body = swift.slice(swift.indexOf('func pasteTextRestoring'), swift.indexOf('/// Our own synthetic'))
   assert.ok(body.indexOf('guard let lock = lockPasteboard()') < body.indexOf('dictationContext(includeText: false)'))
   assert.ok(body.indexOf('dictationContext(includeText: false)') < body.indexOf('var result = sendPaste()'))
+})
+
+test('Windows history requires the same confirmed non-password element before and after paste', async () => {
+  const selection = readFileSync(new URL('../../src/main/launcher/selection.ts', import.meta.url), 'utf8')
+  const code = extract(selection, 'export function pasteAndRestore(', 'async function winSelection(').replace('export ', '')
+  const safe = { secure: false, focusId: '100:200:1,2', app: 'Mail' }
+  for (const after of [safe, { ...safe, secure: true }, { ...safe, focusId: '100:200:1,3' }, { ...safe, focusId: undefined }, {}]) {
+    let reads = 0, captured: any, typed = 0
+    const paste = new Function('process', 'oneAtATime', 'ownerHwnd', 'saveAndWriteOwnText', 'simulateCtrlV', 'sleep', 'restoreWinClipboard', code + ';return pasteAndRestore')(
+      { platform: 'win32' }, async (fn: () => unknown) => fn(), () => 0,
+      async () => ({ saved: {}, stamp: {} }), async () => { typed++; return true }, async () => {}, async () => true
+    )
+    assert.equal(await paste('secret', { read: async () => reads++ === 0 ? safe : after, capture: (p: any) => { captured = p } }), true)
+    assert.equal(typed, 1)
+    assert.equal(reads, 2)
+    assert.equal(mayKeepHistory(true, captured), after === safe)
+  }
+  assert.match(main, /GetRuntimeId/)
+  assert.match(main, /focusId:/)
 })

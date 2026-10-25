@@ -40,16 +40,28 @@ const doubleListeners = new Set<() => void>()
 const taps = new KeyTaps()
 
 const escapeSession = new EscapeSession()
-let escapeListener: (() => void) | null = null
-export function onRecordingEscape(fn: () => void): void { escapeListener = fn }
-export function setRecordingEscape(recording: boolean): void {
+let escapeId = 0
+const escapeWaiters = new Map<number, (ok: boolean) => void>()
+let escapeListener: ((id: number) => void) | null = null
+export function onRecordingEscape(fn: (id: number) => void): void { escapeListener = fn }
+export function setRecordingEscape(recording: boolean, id = escapeId): void {
+  escapeId = id
   escapeSession.recording = recording
   sendEscape()
 }
+/** Drain native interception events before allowing this session's audio to upload. */
+export function disarmRecordingEscape(id: number): Promise<boolean> {
+  if (!child?.stdin?.writable) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { escapeWaiters.delete(id); resolve(false) }, 1000)
+    escapeWaiters.set(id, (ok) => { clearTimeout(timer); escapeWaiters.delete(id); resolve(ok) })
+    setRecordingEscape(false, id)
+  })
+}
 function sendEscape(): void {
   if (!child?.stdin?.writable) return
-  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ recordingEscape: escapeSession.recording }) + '\n')
-  else child.stdin.write(`ESCAPE ${escapeSession.recording ? 1 : 0}\n`)
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ recordingEscape: escapeSession.recording, sessionId: escapeId }) + '\n')
+  else child.stdin.write(`ESCAPE ${escapeSession.recording ? 1 : 0} ${escapeId}\n`)
 }
 
 /** Record physical keys through the same native watcher, including fn and side-specific modifiers. */
@@ -162,7 +174,7 @@ async function expandOnWindows(keyword: string): Promise<void> {
 
 function onLine(line: string): void {
   try {
-    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number }
+    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number; sessionId?: number }
     if (ev.e === 'ready') {
       active = ev.trusted !== false
       if (!active) logUntrustedOnce()
@@ -176,9 +188,9 @@ function onLine(line: string): void {
       void expandOnWindows(ev.keyword)
     } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
     if (ev.e === 'recording-escape') {
-      if (escapeSession.feed(true).cancel) escapeListener?.()
-      escapeSession.feed(false)
+      if (Number.isInteger(ev.sessionId)) escapeListener?.(ev.sessionId!)
     }
+    if (ev.e === 'recording-disarmed' && Number.isInteger(ev.sessionId)) escapeWaiters.get(ev.sessionId!)?.(true)
     if (ev.e === 'hold-key-recorded' && capturingHoldKey && Number.isInteger(ev.code)) {
       capturingHoldKey = false
       recordedListeners.forEach((fn) => fn(ev.code!))
@@ -230,6 +242,7 @@ public static class PfKeyWatch {
   static volatile int holdVk = 0;
   static bool captureHoldKey = false;
   static volatile bool recordingEscape = false;
+  static int escapeId = 0;
   static bool escapeDown = false;
   static readonly object keyLock = new object();
   static NativeKeyState keyState = new NativeKeyState();
@@ -249,6 +262,8 @@ public static class PfKeyWatch {
   const int WM_SYSKEYUP = 0x0105;
 
   static void Emit(string e) { Console.Out.WriteLine("{\\"e\\":\\"" + e + "\\"}"); Console.Out.Flush(); }
+
+  static void EmitSession(string e) { Console.Out.WriteLine("{\\"e\\":\\"" + e + "\\",\\"sessionId\\":" + escapeId + "}"); Console.Out.Flush(); }
 
   static void Backspaces(int n) {
     INPUT[] inputs = new INPUT[n * 2];
@@ -276,7 +291,7 @@ public static class PfKeyWatch {
           lock (keyLock) {
             if (k.vkCode == 27) {
               if (isDown && (recordingEscape || escapeDown)) {
-                if (!escapeDown) { escapeDown = true; recordingEscape = false; Emit("recording-escape"); }
+                if (!escapeDown) { escapeDown = true; recordingEscape = false; EmitSession("recording-escape"); }
                 return new IntPtr(1);
               }
               if (isUp && escapeDown) { escapeDown = false; return new IntPtr(1); }
@@ -354,7 +369,13 @@ public static class PfKeyWatch {
             EmitEvents(keyState.Configure(holdVk, captureHoldKey, PhysicalKeys()));
           }
         } else if (line.StartsWith("ESCAPE ")) {
-          recordingEscape = line.Substring(7).Trim() == "1";
+          lock (keyLock) {
+            string[] parts = line.Substring(7).Trim().Split(' ');
+            if (parts.Length == 2 && int.TryParse(parts[1], out escapeId)) {
+              recordingEscape = parts[0] == "1";
+              if (!recordingEscape) EmitSession("recording-disarmed");
+            }
+          }
         } else if (line.StartsWith("CAPTURE ")) {
           lock (keyLock) {
             captureHoldKey = line.Substring(8).Trim() == "1";

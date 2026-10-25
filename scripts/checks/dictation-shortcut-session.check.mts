@@ -29,9 +29,9 @@ function boot(held = true) {
     ${code('function onDown()', '/** The front app')}
     ${code('function clearShowTimer()', 'async function onAudio(')}
     ${code('async function runClipSteps(', '/** A kept clip')}
-    ${code('  onRecordingEscape(() => {', '  applyWatcher()')}
+    ${code('  onRecordingEscape((id) => {', '  applyWatcher()')}
     return {
-      release:()=>listener('up'),event:e=>listener(e),escape:()=>escapeListener(),cap:()=>cap(),phases:()=>phases,cancel,
+      release:()=>listener('up'),event:e=>listener(e),escape:(id=sessionId)=>escapeListener(id),cap:()=>cap(),phases:()=>phases,cancel,
       run:()=>runClipSteps({buf:new ArrayBuffer(2000),mime:'audio/webm',durationMs:1000,ctx:{}},sessionId),
       complete:r=>resolveUpload(r),snapshot:()=>({typed,kept,busy,recording,sessionId})
     }
@@ -101,5 +101,17 @@ for (const locked of [false,true]) test(`real Esc listener discards ${locked?'ha
   assert.equal(app.phases().at(-1).message,'Cancelled')
   app.time(2000);app.event('down');app.time(2500);app.event('up')
   const session=app.snapshot().sessionId
-  app.escape();assert.equal(app.snapshot().sessionId,session);assert.equal(app.snapshot().busy,true)
+  app.escape(-1);assert.equal(app.snapshot().sessionId,session);assert.equal(app.snapshot().busy,true)
+})
+
+
+test('real Esc listener cancels queued native Esc after release, but ignores a stale session', () => {
+  const app=boot()
+  app.release()
+  app.escape(0)
+  assert.equal(app.snapshot().busy,true)
+  app.escape(1)
+  assert.equal(app.snapshot().busy,false)
+  assert.equal(app.snapshot().sessionId,2)
+  assert.equal(app.phases().at(-1).message,'Cancelled')
 })

@@ -48,6 +48,7 @@ export function parseMyWords(text: string): MyWords {
 }
 
 export interface DictationContext {
+  focusId?: string
   /** Local privacy metadata, never included in prompts. Unknown means do not save. */
   secure?: boolean
   appId?: string

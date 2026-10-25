@@ -1,6 +1,6 @@
 import { isExcludedApp } from '../security/excluded-apps'
 export interface HistoryEntry { text: string; at: number; app?: string }
-export interface HistoryContext { secure?: boolean; app?: string; appId?: string; title?: string }
+export interface HistoryContext { secure?: boolean; focusId?: string; app?: string; appId?: string; title?: string }
 
 export function mayKeepHistory(enabled: boolean, ctx: HistoryContext): boolean {
   return enabled && ctx.secure === false && !isExcludedApp([ctx.title, ctx.app].filter(Boolean).join(' '), ctx.appId)

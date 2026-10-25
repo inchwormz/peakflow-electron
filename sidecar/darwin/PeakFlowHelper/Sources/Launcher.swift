@@ -326,6 +326,7 @@ private var keywatchTap: CFMachPort?
 private var holdKeyCode: Int64 = -1
 private var captureHoldKey = false
 private var recordingEscape = false
+private var escapeSessionId = 0
 private var escapeDown = false
 private var nativeKeyState = NativeKeyState()
 private func physicalKeyDown(_ code: Int64) -> Bool {
@@ -436,7 +437,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     let isUp = type == .keyUp || (type == .flagsChanged && !modifierIsDown(code, event.flags))
     if code == 53 {
         if isDown && (recordingEscape || escapeDown) {
-            if !escapeDown { escapeDown = true; recordingEscape = false; emit(["e": "recording-escape"]) }
+            if !escapeDown { escapeDown = true; recordingEscape = false; emit(["e": "recording-escape", "sessionId": escapeSessionId]) }
             return nil
         }
         if isUp && escapeDown { escapeDown = false; return nil }
@@ -504,7 +505,12 @@ private func readSnippetUpdates() {
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
             if let recording = obj["recordingEscape"] as? Bool {
-                DispatchQueue.main.async { recordingEscape = recording }
+                let sessionId = (obj["sessionId"] as? NSNumber)?.intValue ?? 0
+                DispatchQueue.main.async {
+                    escapeSessionId = sessionId
+                    recordingEscape = recording
+                    if !recording { emit(["e": "recording-disarmed", "sessionId": sessionId]) }
+                }
             }
             if obj.keys.contains("hold") || obj.keys.contains("captureHoldKey") {
                 let key = obj["hold"] as? [String: Any]

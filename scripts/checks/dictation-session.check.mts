@@ -25,6 +25,7 @@ test('cancel while context is pending never dispatches stale clip', async()=>{
   const boot=new Function(`
     let sessionId=4,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
     let finish,runs=0
+    const disarmRecordingEscape=async()=>true
     const context=new Promise(r=>finish=r),RELEASE_PAD_MS=150,IPC_SEND={},setRecordingEscape=()=>{},recordingStart={cancel:()=>{}}
     const runClip=async()=>runs++
     const clearShowTimer=()=>{},sendPill=()=>{},state=()=>{},hidePill=()=>{}
@@ -57,4 +58,24 @@ test('a canceled upload completion cannot paste or change a newer recording',asy
   boot.cancel();boot.complete();await pending
   assert.equal(boot.typed(),0)
   assert.equal(boot.busy(),true,'old job never releases a newer job')
+})
+
+test('audio waits for native disarm; queued Esc cancels before upload and charge', async () => {
+  const js=code('function cancel()', '/** Speech to text, clean-up')
+  const boot=new Function(`
+    let sessionId=17,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
+    let acknowledge,runs=0
+    const drained=new Promise(r=>acknowledge=r),disarmRecordingEscape=()=>drained,context=Promise.resolve({})
+    const RELEASE_PAD_MS=150,IPC_SEND={},setRecordingEscape=()=>{},recordingStart={cancel:()=>{}}
+    const runClip=async()=>runs++,clearShowTimer=()=>{},sendPill=()=>{},state=()=>{},hidePill=()=>{}
+    ${js}
+    return {audio:()=>onAudio(new ArrayBuffer(2000),'audio/webm'),cancel,acknowledge:()=>acknowledge(true),runs:()=>runs}
+  `)()
+  const pending=boot.audio()
+  await tick()
+  assert.equal(boot.runs(),0,'upload must await native acknowledgement')
+  boot.cancel() // recording-escape for session 17, queued after hold-up
+  boot.acknowledge()
+  await pending
+  assert.equal(boot.runs(),0,'intercepted Esc never uploads the clip')
 })
