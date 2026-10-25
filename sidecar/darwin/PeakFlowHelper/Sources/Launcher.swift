@@ -733,10 +733,10 @@ private func sameCommandSelection(_ a: CommandSnapshot, _ b: CommandSnapshot) ->
     a.range.location == b.range.location && a.range.length == b.range.length && a.text == b.text
 }
 
-/// Read blocking AX state first; the frontmost PID must be checked after it answers.
+/// Validate the full snapshot, then re-read PID/focus/range without another text read before paste.
 private func validateCommandSelection(focus: () throws -> Bool, range: () throws -> Bool,
                                       text: () throws -> Bool, frontmost: () throws -> Bool) -> Bool {
-    do { return try focus() && range() && text() && frontmost() }
+    do { return try frontmost() && focus() && range() && text() && frontmost() && focus() && range() }
     catch { return false }
 }
 
@@ -829,6 +829,7 @@ func runCommandSelection() -> Never {
                                 writeOwnText(text)
                                 ours = pb.changeCount
                                 guard !physicalKeyDown(Int64(code)), commandSelectionUnchanged(snapshot, pasteboard: pb, changeCount: ours) else { return }
+                                // Global paste cannot close the sub-millisecond window between the last read and the synthetic keystroke.
                                 down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
                                 emit(["stage": "pasting"])
                                 ok = true

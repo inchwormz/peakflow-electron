@@ -25,7 +25,7 @@ test('native validation is inside clipboard lock and precedes one normal paste, 
   assert.match(worker,/!physicalKeyDown\(Int64\(code\)\)/)
   assert.match(worker,/gate.begin[\s\S]*writeOwnText\(text\)[\s\S]*commandSelectionUnchanged\(snapshot, pasteboard: pb, changeCount: ours\)[\s\S]*down.post/)
   const lastCheck=worker.indexOf('commandSelectionUnchanged(snapshot,')
-  assert.match(worker.slice(lastCheck,paste),/^commandSelectionUnchanged\(snapshot, pasteboard: pb, changeCount: ours\) else \{ return \}\s*$/)
+  assert.match(worker.slice(lastCheck,paste),/^commandSelectionUnchanged\(snapshot, pasteboard: pb, changeCount: ours\) else \{ return \}\s*\/\/ Global paste cannot close the sub-millisecond window between the last read and the synthetic keystroke\.\s*$/)
   assert.equal((worker.match(/down.post\(/g)??[]).length,1)
   assert.match(worker,/began && pb.changeCount == ours \{ restorePasteboard\(saved\) \}/)
   assert.doesNotMatch(worker,/sendPaste|postKey\(8|previousApp|\.activate|kAXValueAttribute|kAXSelectedTextRangeAttribute/)
@@ -106,8 +106,39 @@ func validate(_ change: String) -> Bool {
 }
 assert(validate("unchanged"))
 for change in ["app", "range", "text", "focus"] { assert(!validate(change)) }
+// AX range/text replies can describe the original element after focus or range moves.
+for change in ["same-app-field", "same-text-offset"] {
+    for blockingRead in ["range", "text"] {
+        var focused=1, location=10, reads: [String]=[]
+        let valid = validateCommandSelection(focus: {
+            reads.append("focus")
+            return focused == 1
+        }, range: {
+            reads.append("range")
+            let originalRange = location == 10
+            if blockingRead == "range" && reads.filter({ $0 == "range" }).count == 1 {
+                Thread.sleep(forTimeInterval: 0.01)
+                if change == "same-app-field" { focused=2 } else { location=20 }
+            }
+            return originalRange
+        }, text: {
+            reads.append("text")
+            Thread.sleep(forTimeInterval: 0.01)
+            if blockingRead == "text" {
+                if change == "same-app-field" { focused=2 } else { location=20 }
+            }
+            return true // Identical text, including at the new offset.
+        }, frontmost: { reads.append("pid"); return true })
+        assert(!valid, "Must refuse \\(change) during \\(blockingRead)")
+    }
+}
+var reads: [String]=[]
+assert(validateCommandSelection(focus: { reads.append("focus"); return true },
+    range: { reads.append("range"); return true }, text: { reads.append("text"); return true },
+    frontmost: { reads.append("pid"); return true }))
+assert(reads == ["pid", "focus", "range", "text", "pid", "focus", "range"])
 enum AXFailure: Error { case timeout }
-for failed in 0..<4 {
+for failed in 0..<7 {
     var checks=0
     let read: () throws -> Bool = {
         defer { checks += 1 }
