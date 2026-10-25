@@ -13,7 +13,7 @@
  * Routes: dictation, dictation/settings, dictation/key, dictation/words.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { historyTime } from '@shared/dictation-history-time'
 import { weeklyNow, minutesSaved } from '@shared/dictation-stats'
 import { microphoneOptions } from '@shared/dictation-microphone'
@@ -226,6 +226,11 @@ function Recent(): React.JSX.Element {
   const { s, takeS } = useDictation()
   const nav = useNav()
   const [all, setAll] = useState(false)
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
   if (!s) return <></>
   const history = s.history ?? []
   const weekly = weeklyNow(s.weekly)
@@ -236,7 +241,7 @@ function Recent(): React.JSX.Element {
       {isMac() ? <Grp style={{ marginTop: 4 }}>
         <Row label="Keep history" right={<Toggle label="Keep history" checked={s.keepHistory !== false} onChange={(v) => void takeS(setting('keepHistory', v))} />} />
         {(all ? history : history.slice(0, 5)).map((entry, i) => (
-          <HistoryRow key={`${entry.at}-${i}`} entry={entry} />
+          <HistoryRow key={`${entry.at}-${i}`} entry={entry} now={now} />
         ))}
         {history.length ? <div className="r">
           {history.length > 5 ? <LinkBtn onClick={() => setAll(!all)}>{all ? 'Show less' : 'Show all'}</LinkBtn> : null}
@@ -248,8 +253,9 @@ function Recent(): React.JSX.Element {
 }
 
 /** A native button keeps Enter and Space copying identical to a pointer click. */
-function HistoryRow({ entry }: { entry: { text: string; at: number; app?: string } }): React.JSX.Element {
+function HistoryRow({ entry, now }: { entry: { text: string; at: number; app?: string }; now: Date }): React.JSX.Element {
   const nav = useNav()
+  const metadataId = useId()
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const alive = useRef(true)
@@ -266,8 +272,8 @@ function HistoryRow({ entry }: { entry: { text: string; at: number; app?: string
       timer.current = setTimeout(() => setCopied(false), 1200)
     } catch { if (alive.current) nav.toast('Could not copy') }
   }
-  return <button type="button" className="r dictation-history-row" aria-label={`Copy: ${entry.text.trim().split(/\s+/).slice(0, 8).join(' ')}`} onClick={() => void copy()}>
-    <span className="l">{entry.text}<small aria-live="polite">{copied ? 'Copied' : [historyTime(entry.at), entry.app].filter(Boolean).join(' · ')}</small></span>
+  return <button type="button" className="r dictation-history-row" aria-label={'Copy: ' + entry.text} aria-describedby={metadataId} onClick={() => void copy()}>
+    <span className="l">{entry.text}<small id={metadataId} aria-live="polite">{copied ? 'Copied' : [historyTime(entry.at, now), entry.app].filter(Boolean).join(' · ')}</small></span>
     <span className="ri hk link" aria-hidden="true">Copy</span>
   </button>
 }
