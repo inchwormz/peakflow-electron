@@ -328,12 +328,38 @@ private var captureHoldKey = false
 private var recordingEscape = false
 private var escapeSessionId = 0
 private var escapeDown = false
+private var dictate = false
+private var escapeLocked = false
+private var escapePressAt: Double? = nil
+private var escapeTapUpAt = -Double.infinity
+private var escapeSecond = false
 private var nativeKeyState = NativeKeyState()
 private func physicalKeyDown(_ code: Int64) -> Bool {
     CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
 }
 private func emitHoldEvents(_ events: [String]) {
-    for event in events { emit(["e": "hold-" + event]) }
+    for event in events {
+        if dictate {
+            let now = ProcessInfo.processInfo.systemUptime * 1000
+            if event == "down" {
+                escapePressAt = now
+                escapeSecond = now - escapeTapUpAt <= 400
+                if !escapeLocked { escapeSessionId += 1; recordingEscape = true }
+            } else if event == "cancel" {
+                escapePressAt = nil; escapeTapUpAt = -Double.infinity
+                if !escapeLocked { recordingEscape = false }
+            } else if event == "up", let start = escapePressAt {
+                let tap = now - start < 300
+                escapePressAt = nil
+                if escapeLocked {
+                    if tap { escapeLocked = false; recordingEscape = false; escapeTapUpAt = -Double.infinity }
+                } else if tap && escapeSecond {
+                    escapeLocked = true; recordingEscape = true; escapeTapUpAt = -Double.infinity
+                } else { recordingEscape = false; escapeTapUpAt = tap ? now : -Double.infinity }
+            }
+        }
+        emit(["e": "hold-" + event, "sessionId": escapeSessionId])
+    }
 }
 // Device-specific flags distinguish each side even while the opposite side stays held.
 private let modifierBits: [Int64: UInt64] = [55: 0x8, 54: 0x10, 58: 0x20, 61: 0x40,
@@ -437,7 +463,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     let isUp = type == .keyUp || (type == .flagsChanged && !modifierIsDown(code, event.flags))
     if code == 53 {
         if isDown && (recordingEscape || escapeDown) {
-            if !escapeDown { escapeDown = true; recordingEscape = false; emit(["e": "recording-escape", "sessionId": escapeSessionId]) }
+            if !escapeDown { escapeDown = true; recordingEscape = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity; emit(["e": "recording-escape", "sessionId": escapeSessionId]) }
             return nil
         }
         if isUp && escapeDown { escapeDown = false; return nil }
@@ -504,21 +530,25 @@ private func readSnippetUpdates() {
             guard let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
-            if let recording = obj["recordingEscape"] as? Bool {
-                let sessionId = (obj["sessionId"] as? NSNumber)?.intValue ?? 0
+            if let id = (obj["disarmEscape"] as? NSNumber)?.intValue {
                 DispatchQueue.main.async {
-                    escapeSessionId = sessionId
-                    recordingEscape = recording
-                    if !recording { emit(["e": "recording-disarmed", "sessionId": sessionId]) }
+                    if id == escapeSessionId {
+                        recordingEscape = false; escapeLocked = false; escapePressAt = nil
+                    }
                 }
             }
             if obj.keys.contains("hold") || obj.keys.contains("captureHoldKey") {
                 let key = obj["hold"] as? [String: Any]
                 let code = (key?["code"] as? NSNumber)?.int64Value ?? -1
                 let capture = obj["captureHoldKey"] as? Bool
+                let enabled = obj["dictate"] as? Bool
                 DispatchQueue.main.async {
                     if obj.keys.contains("hold") {
                         holdKeyCode = (modifierBits[code] != nil || functionKeyCodes.contains(code)) ? code : -1
+                    }
+                    if let enabled = enabled, enabled != dictate {
+                        dictate = enabled
+                        recordingEscape = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity
                     }
                     if let capture = capture { captureHoldKey = capture }
                     let physical = Set((0..<256).map { Int64($0) }.filter { physicalKeyDown($0) })

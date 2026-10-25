@@ -98,12 +98,12 @@ export function pasteAndRestore(text: string, privacy?: { read: () => Promise<Hi
       if (!t) return false // couldn't save every format: leave the clipboard alone
       const before = privacy ? await privacy.read().catch(() => ({} as HistoryContext)) : undefined
       const ok = await simulateCtrlV()
-      await sleep(400) // give the app time to read the clipboard
       if (privacy) {
         const after = await privacy.read().catch(() => ({} as HistoryContext))
         const confirmed = before?.secure === false && after.secure === false && !!before.focusId && before.focusId === after.focusId
         privacy.capture({ ...after, secure: confirmed ? false : undefined })
       }
+      await sleep(400) // give the app time to read the clipboard; privacy was sampled next to Ctrl+V
       await restoreWinClipboard(hwnd, t.saved, t.stamp).catch(() => false)
       return ok
     }

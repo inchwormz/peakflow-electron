@@ -103,7 +103,41 @@ test('[K6] standalone Swift state machine executes the native sequences',()=>{
  const dir=mkdtempSync(join(tmpdir(),'peakflow-key-state-'))
  try{
  const source=read('sidecar/darwin/PeakFlowHelper/Sources/NativeKeyState.swift')
- writeFileSync(join(dir,'main.swift'),source+'\n'+read('scripts/checks/native-key-state.swift'))
+ const launcher=read('sidecar/darwin/PeakFlowHelper/Sources/Launcher.swift')
+ const escapeState=launcher.slice(launcher.indexOf('private var recordingEscape'),launcher.indexOf('private var nativeKeyState'))
+ const transitions=launcher.slice(launcher.indexOf('private func emitHoldEvents('),launcher.indexOf('// Device-specific flags'))
+   .replace('ProcessInfo.processInfo.systemUptime * 1000','testNow')
+ const start=launcher.indexOf('    if code == 53 {')
+ const escape=launcher.slice(start,launcher.indexOf('    let capsToggle',start)).replaceAll('return nil','return true')
+ const escapeChecks=`
+ var testNow: Double = 0
+ var escapeEvents: [[String: Any]] = []
+ func emit(_ obj: [String: Any]) { escapeEvents.append(obj) }
+ ${escapeState}
+ ${transitions}
+ func pressEscape(_ isDown: Bool) -> Bool {
+   let code = 53, isUp = !isDown
+   ${escape}
+   return false
+ }
+ dictate = true
+ emitHoldEvents(["down"]); assert(recordingEscape)
+ testNow = 500; emitHoldEvents(["up"]); assert(!recordingEscape)
+ assert(!pressEscape(true)); assert(!pressEscape(false))
+ testNow = 1000; emitHoldEvents(["down"])
+ assert(pressEscape(true)); assert(pressEscape(true)); assert(pressEscape(false))
+ assert(escapeEvents.filter { $0["e"] as? String == "recording-escape" }.count == 1)
+ emitHoldEvents(["up"])
+ testNow = 2000; emitHoldEvents(["down"])
+ testNow = 2050; emitHoldEvents(["up"])
+ testNow = 2200; emitHoldEvents(["down"])
+ testNow = 2250; emitHoldEvents(["up"]); assert(recordingEscape && escapeLocked)
+ testNow = 2400; emitHoldEvents(["down"])
+ testNow = 2450; emitHoldEvents(["up"]); assert(!recordingEscape && !escapeLocked)
+ assert(!pressEscape(true))
+ print("Swift local Esc hold/release/cancel/hands-free sequences passed")
+ `
+ writeFileSync(join(dir,'main.swift'),source+'\n'+read('scripts/checks/native-key-state.swift')+'\n'+escapeChecks)
  const r=spawnSync('swift',['-module-cache-path',join(dir,'cache'),join(dir,'main.swift')],{encoding:'utf8',env:{...process.env,CLANG_MODULE_CACHE_PATH:join(dir,'clang')}})
  assert.equal(r.status,0,r.stdout+r.stderr);console.log(r.stdout.trim())
  }finally{rmSync(dir,{recursive:true,force:true})}

@@ -31,7 +31,7 @@ import { storeCredential, getCredential, deleteCredential } from '../security/cr
 import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { holdKeyName, missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
-import { onRecordingEscape, setRecordingEscape, disarmRecordingEscape, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
+import { onRecordingEscape, setRecordingEscape, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
@@ -91,6 +91,7 @@ let showTimer: ReturnType<typeof setTimeout> | null = null
 let busy = false
 let sessionId = 0
 let audioReceived = false
+let uploadStarted = false
 let stopTimer: ReturnType<typeof setTimeout> | null = null
 const recordingStart = new RecordingStart<{ at: number; processing: boolean; sessionId: number; microphone: string }>((opts) => {
   state({ phase: 'listening', message: gesture.locked ? `Tap ${holdKeyName(settings().holdKey, isMac)} to finish` : undefined })
@@ -400,6 +401,7 @@ function onDown(): void {
   sessionId++
   setRecordingEscape(true, sessionId)
   audioReceived = false
+  uploadStarted = false
   getPill()
   const key = getCredential(CRED_TOOL, CRED_TYPE)
   // Request the microphone now and keep captured samples; the pill waits until this is
@@ -476,7 +478,7 @@ function rememberTyped(text: string, ctx: DictationContext, target: HistoryConte
   // Numeric totals survive history being off or cleared; no transcript is in these counts.
   store.set('weekly', addWeekly(store.get('weekly'), text, durationMs))
   settingsChanged()
-  if (ctx.historyRevision !== historyRevision || !mayKeepHistory(store.get('keepHistory'), ctx) || !mayKeepHistory(true, target)) return
+  if (ctx.historyRevision !== historyRevision || !mayKeepHistory(store.get('keepHistory'), ctx) || !mayKeepHistory(true, target, text)) return
   store.set('history', addHistory(store.get('history'), { text, at: Date.now(), app: target.app ?? ctx.app }))
   settingsChanged()
 }
@@ -505,9 +507,6 @@ function cancel(): void {
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
   const generation = sessionId
-  const disarmed = await disarmRecordingEscape(generation)
-  if (generation !== sessionId) return
-  if (!disarmed) return cancel()
   const ctx = await context
   if (generation !== sessionId) return
   await runClip({ buf, mime, durationMs: releasedAt - downAt + RELEASE_PAD_MS, ctx, at: Date.now() })
@@ -537,6 +536,7 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   // Long clips get longer to upload and come back (S11: a fixed 30 s lost long dictations on slow connections)
   const timeoutMs = transcribeTimeoutMs(durationMs)
   let auth = viaAddon() ? addonAuth() : null
+  uploadStarted = true
   let r = auth
     ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) })
     : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
@@ -852,7 +852,7 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   if (migrated) store.set('holdKey', migrated)
   registerIpc(getLauncherContents)
   onRecordingEscape((id) => {
-    if (id !== sessionId || (!recording && !busy)) return
+    if (id !== sessionId || (!recording && (!busy || uploadStarted))) return
     gesture.reset()
     cancel()
     showPill()

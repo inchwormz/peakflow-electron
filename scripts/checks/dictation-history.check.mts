@@ -87,3 +87,41 @@ test('Windows history requires the same confirmed non-password element before an
   assert.match(main, /GetRuntimeId/)
   assert.match(main, /focusId:/)
 })
+
+test('temporary password focus cannot retain secret-shaped text; sentences still count and persist', async () => {
+  const selection = readFileSync(new URL('../../src/main/launcher/selection.ts', import.meta.url), 'utf8')
+  const pasteCode = extract(selection, 'export function pasteAndRestore(', 'async function winSelection(').replace('export ', '')
+  const writer = new Function('addHistory', 'mayKeepHistory', `
+    const historyRevision=1,data={keepHistory:true,history:[],weekly:0}
+    const store={get:k=>data[k],set:(k,v)=>data[k]=v},settingsChanged=()=>{}
+    const addWeekly=(n)=>n+1
+    ${extract(main, 'function rememberTyped(', '/** Tap, or another key')}
+    return {data,write:rememberTyped}
+  `)(addHistory, mayKeepHistory)
+  const editor = { secure: false, focusId: 'editor', app: 'Editor', historyRevision: 1 }
+  for (const text of ['Password123!', 'ordinary words in a sentence']) {
+    let destination: any = editor, captured: any
+    const order: string[] = []
+    const paste = new Function('process', 'oneAtATime', 'ownerHwnd', 'saveAndWriteOwnText', 'simulateCtrlV', 'sleep', 'restoreWinClipboard', pasteCode + ';return pasteAndRestore')(
+      { platform: 'win32' }, async (fn: () => unknown) => fn(), () => 0,
+      async () => ({ saved: {}, stamp: {} }), async () => {
+        order.push('paste')
+        // Password gets the paste, then focus returns before either sampler can see it.
+        destination = { secure: true, focusId: 'password' }
+        destination = editor
+        return true
+      }, async () => { order.push('clipboard wait') }, async () => true
+    )
+    assert.equal(await paste(text, { read: async () => { order.push('sample'); return destination }, capture: (p: any) => { captured = p } }), true)
+    assert.deepEqual(order, ['sample', 'paste', 'sample', 'clipboard wait'])
+    writer.write(text, editor, captured, 1000)
+  }
+  assert.deepEqual(writer.data.history.map((entry: any) => entry.text), ['ordinary words in a sentence'])
+  assert.equal(writer.data.weekly, 2, 'stats count both pastes without retaining the secret')
+})
+
+test('secret shape requires eight characters, one token, and two character classes', () => {
+  const safe = { secure: false, app: 'Editor' }
+  for (const text of ['password1', 'Password', '1234567!', 'éÉéééééé', 'abcdefg!']) assert.equal(mayKeepHistory(true, safe, text), false, text)
+  for (const text of ['short1!', 'ordinary', '12345678', 'ordinary sentence', 'Hello world!']) assert.equal(mayKeepHistory(true, safe, text), true, text)
+})
