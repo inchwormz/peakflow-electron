@@ -36,6 +36,11 @@ export function percentOf(received: number, total: number): number | null {
   return Math.max(0, Math.min(100, Math.floor((received / total) * 100)))
 }
 
+/** The Mac's chip, including Intel builds running under Rosetta. */
+export function macDmgArch(arch: string, translated: boolean): 'arm64' | 'x64' {
+  return arch === 'arm64' || translated ? 'arm64' : 'x64'
+}
+
 /** What the panel's Updates page shows while a Mac update downloads. */
 export interface UpdateProgress {
   state: 'idle' | 'downloading' | 'downloaded' | 'error'

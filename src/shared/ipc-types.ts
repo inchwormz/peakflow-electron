@@ -9,6 +9,14 @@
 import type { ToolId } from './tool-ids'
 import { LAUNCHER_INVOKE, LAUNCHER_SEND } from './launcher/ipc'
 
+export interface AppInfo {
+  version: string
+  platform: string
+  arch: string
+  translated: boolean
+  isDev: boolean
+}
+
 // ─── Security / Licensing ────────────────────────────────────────────────────
 
 export interface AccessStatus {

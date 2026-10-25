@@ -6,7 +6,11 @@
 import assert from 'node:assert/strict'
 import { installTsHooks, srcUrl } from './fixtures/ts-hooks.mjs'
 installTsHooks()
-const { shouldOffer, isNewer, percentOf } = await import(srcUrl('src/shared/update-offer.ts'))
+const { shouldOffer, isNewer, percentOf, macDmgArch } = await import(srcUrl('src/shared/update-offer.ts'))
+
+assert.equal(macDmgArch('arm64', false), 'arm64', 'native Apple silicon gets the arm64 DMG')
+assert.equal(macDmgArch('x64', true), 'arm64', 'Rosetta gets the arm64 DMG')
+assert.equal(macDmgArch('x64', false), 'x64', 'Intel gets the x64 DMG')
 
 assert.equal(isNewer('2.1.1', '2.1.0'), true)
 assert.equal(isNewer('v2.1.0', '2.1.0'), false)

@@ -13,7 +13,7 @@
 import { useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import { EXTENSION_ENABLED } from '@shared/tool-ids'
-import type { AccessStatus, LicenseActivationResult } from '@shared/ipc-types'
+import type { AccessStatus, LicenseActivationResult, AppInfo } from '@shared/ipc-types'
 import type { LauncherSettings } from '@shared/launcher/types'
 import type { PanelToolId, RouteTable } from '../types'
 import { invoke, isMac, useInvoke, useIpcEvent, formatAccelerator, builtInKey, ALTGR_NOTE } from '../hooks'
@@ -37,13 +37,6 @@ const SHARE_LINKS: Array<[string, string]> = [
   ['Post on Reddit', 'https://reddit.com/submit?url=https%3A%2F%2Fgetpeakflow.pro&title=PeakFlow%20%E2%80%94%20Windows%20productivity%20suite%20with%20tools%20I%20haven%27t%20seen%20elsewhere']
 ]
 const SHARE_MAIL = 'mailto:contact@getpeakflow.pro?subject=PeakFlow%20Share%20%26%20Earn&body=Hi!%20I%20shared%20PeakFlow%20on%20%5Bplatform%5D.%20I%27d%20like%20%5Btool%20name%5D%20for%20free.%20Screenshot%20attached.'
-
-interface AppInfo {
-  version: string
-  platform: string
-  arch: string
-  isDev: boolean
-}
 
 function planText(a: AccessStatus | undefined): string {
   if (!a) return ''
@@ -416,7 +409,7 @@ function AfterUpdate(): React.JSX.Element | null {
 function Updates(): React.JSX.Element {
   const [info] = useInvoke<AppInfo>(IPC_INVOKE.APP_GET_INFO)
   const [checking, setChecking] = useState(false)
-  const arch = info?.arch === 'arm64' ? 'Apple silicon' : info?.arch === 'x64' ? 'Intel' : info?.arch
+  const arch = info?.translated ? 'Intel build on Apple silicon' : info?.arch === 'arm64' ? 'Apple silicon' : info?.arch === 'x64' ? 'Intel' : info?.arch
   return (
     <>
       <Hero icon="logo" title={info ? `PeakFlow ${info.version}` : 'PeakFlow'}>
