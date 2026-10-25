@@ -84,6 +84,7 @@ func runOneShot(_ command: String, _ arg: String?) -> String? {
 }
 
 let cliArgs = CommandLine.arguments
+if cliArgs.count > 1 && cliArgs[1] == "command-selection" { runCommandSelection() }
 // Launcher snippet expansion: long-running keyword watcher (Launcher.swift)
 if cliArgs.count > 1 && cliArgs[1] == "keywatch" { runKeyWatch() }
 if cliArgs.count > 1 {

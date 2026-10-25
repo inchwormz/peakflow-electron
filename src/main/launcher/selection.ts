@@ -8,6 +8,7 @@
  * paste, so the clipboard (password-manager markers, images) always comes back.
  */
 
+import { captureNativeCommandSelection, type CommandCapture, type CommandSelection } from '../native/command-selection'
 import { BrowserWindow, clipboard } from 'electron'
 import type { HistoryContext } from '../dictation/history'
 import type { SelectionResult } from '@shared/launcher/types'
@@ -174,4 +175,15 @@ export async function pasteText(text: string, hideBar: () => void): Promise<bool
   hideBar()
   await sleep(120)
   return pasteAndRestore(text)
+}
+
+/** Commands never enter the copy/refocus/manual-paste paths above. */
+export function captureCommandSelection(signal: AbortSignal): Promise<CommandCapture> {
+  return captureNativeCommandSelection(signal)
+}
+export function replaceCommandSelection(selection: CommandSelection, text: string, keyCode: number, current: () => boolean, onPaste: () => void): Promise<boolean> {
+  return oneAtATime(async () => {
+    if (process.platform !== 'darwin' || !current()) { selection.cancel(); return false }
+    return selection.replace(text, keyCode, onPaste, current)
+  })
 }

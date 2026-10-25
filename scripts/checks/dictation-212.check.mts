@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { normalizeHoldKey, holdKeyFromCode } from '../../src/shared/dictation-key.ts'
+import { normalizeCommandKey, normalizeHoldKey, holdKeyFromCode } from '../../src/shared/dictation-key.ts'
 import { autoEnable, toggleChoice } from '../../src/main/dictation/activation.ts'
 import { serial } from '../../src/main/dictation/serial.ts'
 const src = (p: string): string => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8')
@@ -90,8 +90,10 @@ test('real main IPC handler rejects typing keys and untrusted senders; UI toggle
   const code=transformSync(main.slice(main.indexOf('function registerIpc('),main.indexOf('export function initDictation')),{loader:'ts',format:'cjs'}).code
   const {IPC_INVOKE}=await import('../../src/shared/launcher/ipc.ts').then(m=>({IPC_INVOKE:m.LAUNCHER_INVOKE}))
   const {EventEmitter}=await import('node:events')
-  const boot=new Function('serial','toggleChoice','normalizeHoldKey','holdKeyFromCode','EventEmitter','IPC_INVOKE',`
-    const ui=new EventEmitter(), owner=new EventEmitter(), handlers={},data={enabled:true,userOff:false,holdKey:'fn'}
+  const boot=new Function('normalizeCommandKey','serial','toggleChoice','normalizeHoldKey','holdKeyFromCode','EventEmitter','IPC_INVOKE',`
+    let commandSession=null,cancellations=0;const cancelCommand=()=>{commandSession=null;cancellations++};
+    const ui=new EventEmitter(), owner=new EventEmitter(), handlers={},data={enabled:true,userOff:false,holdKey:'fn',commandMode:false,commandKey:null}
+    const globalShortcut={isRegistered:label=>label==='F14'}
     const BrowserWindow={fromWebContents:()=>owner}
     const gesture={reset:()=>{}};let historyRevision=0;let recorder=null,captureState=false
     const onHoldKeyRecorded=fn=>{recorder=fn;return()=>recorder=null}
@@ -102,8 +104,8 @@ test('real main IPC handler rejects typing keys and untrusted senders; UI toggle
     const ensureMediaAccess=()=>{},retryExpansion=()=>{},refreshAddon=()=>Promise.resolve()
     ${code}
     registerIpc(()=>ui)
-    return {data,handlers,ui,owner,record:code=>recorder?.(code),capturing:()=>captureState}
-  `)(serial,toggleChoice,normalizeHoldKey,holdKeyFromCode,EventEmitter,IPC_INVOKE)
+    return {data,handlers,ui,owner,command:()=>commandSession={},cancellations:()=>cancellations,record:code=>recorder?.(code),capturing:()=>captureState}
+  `)(normalizeCommandKey,serial,toggleChoice,normalizeHoldKey,holdKeyFromCode,EventEmitter,IPC_INVOKE)
   await boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:boot.ui},'enabled',false)
   assert.equal(boot.data.userOff,true);assert.equal(boot.data.enabled,false)
   await boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:boot.ui},'enabled',true)
@@ -123,6 +125,15 @@ test('real main IPC handler rejects typing keys and untrusted senders; UI toggle
   boot.data.history=[{text:'clear me',at:2}]
   await boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:boot.ui},'clearHistory',true)
   assert.deepEqual(boot.data.history,[])
+  const set=(key,value)=>boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:boot.ui},key,value)
+  await set('commandMode','yes');assert.equal(boot.data.commandMode,false)
+  await set('commandMode',true);assert.equal(boot.data.commandMode,true)
+  await set('commandKey',holdKeyFromCode(63,'darwin'));assert.equal(boot.data.commandKey,null,'dictation key rejected')
+  await set('commandKey',holdKeyFromCode(105,'darwin'));assert.equal(boot.data.commandKey.code,105)
+  await set('commandKey',holdKeyFromCode(107,'darwin'));assert.equal(boot.data.commandKey.code,105,'registered PeakFlow F14 binding rejected')
+  await set('holdKey',holdKeyFromCode(105,'darwin'));assert.equal(boot.data.holdKey,'fn','reverse conflict rejected')
+  boot.command();await set('commandMode',false);assert.equal(boot.cancellations(),1,'turning off cancels current command')
+  await set('commandKey',null);assert.equal(boot.data.commandKey,null)
   const capture=()=>boot.handlers[IPC_INVOKE.DICTATION_RECORD_KEY]({sender:boot.ui},true)
   const chosen=capture();assert.equal(boot.capturing(),true);boot.record(63)
   assert.equal((await chosen).label,'fn');assert.equal(boot.capturing(),false)

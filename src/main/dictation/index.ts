@@ -9,6 +9,8 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { rewriteCommand, COMMAND_MAX_MS } from './command'
+import type { CommandCapture } from '../native/command-selection'
 import { addWeekly, weeklyNow, type WeeklyStats } from '@shared/dictation-stats'
 import { clipTiming, logTiming, type ConnectionWarmup, type ClipTiming } from './timing'
 import { launcherStore } from '../launcher/store'
@@ -18,11 +20,11 @@ import { DictationGesture } from './gesture'
 import { serial } from './serial'
 import { RecordingStart } from './recording-start'
 import { autoEnable, toggleChoice } from './activation'
-import { normalizeHoldKey, holdKeyFromCode, type NativeHoldKey } from '@shared/dictation-key'
+import { normalizeCommandKey, normalizeHoldKey, holdKeyFromCode, type NativeHoldKey } from '@shared/dictation-key'
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
-import { app, BrowserWindow, ipcMain, screen, systemPreferences } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, systemPreferences } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
@@ -30,12 +32,12 @@ import { is } from '@electron-toolkit/utils'
 import { SystemWindowId, DICTATION_PAGE } from '@shared/tool-ids'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationHoldKey, DictationSettings, DictationState } from '@shared/launcher/types'
-import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
+import { onCredentialsChanged, storeCredential, getCredential, deleteCredential } from '../security/credentials'
 import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { holdKeyName, missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
-import { onRecordingEscape, setRecordingEscape, setMayRecord, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
-import { pasteAndRestore, type PasteContent } from '../launcher/selection'
+import { onCommandKey, setCommandKey, acceptCommandKey, endCommandKey, onRecordingEscape, setRecordingEscape, setMayRecord, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
+import { captureCommandSelection, replaceCommandSelection, pasteAndRestore, type PasteContent } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, localTidy, applyReplacements, CLEANUP_MODEL, CLEANUP_MAX_BYTES, type DictationContext } from './smart'
@@ -64,6 +66,8 @@ interface DictationData {
   holdKey: DictationHoldKey
   /** Light clean-up (fillers, punctuation, "no wait"); on by default since it passed the test set */
   tidy: boolean
+  commandMode: boolean
+  commandKey: NativeHoldKey | null
   voiceSnippets: boolean
   /** "My words": one per line; "X -> Y" lines are replacements */
   words: string
@@ -79,9 +83,21 @@ const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
   // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
-  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, voiceSnippets: false, words: '', microphone: '', keepHistory: true, history: [] }
+  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, commandMode: false, commandKey: null, voiceSnippets: false, words: '', microphone: '', keepHistory: true, history: [] }
 })
 
+interface CommandSession {
+  readonly id: number
+  readonly key: NativeHoldKey
+  readonly abort: AbortController
+  readonly owner: string
+  readonly capture: Promise<CommandCapture>
+  released: boolean
+  ready: boolean
+  pasting: boolean
+}
+let commandSession: CommandSession | null = null
+let stopCredentialWatch: (() => void) | undefined
 let historyRevision = 0
 let pill: BrowserWindow | null = null
 let quitting = false
@@ -230,6 +246,8 @@ function settings(): DictationSettings {
     holdKey: normalizeHoldKey(store.get('holdKey'), process.platform) ?? holdKeyFromCode(isMac ? 63 : 163, process.platform)!,
     model,
     cleanup: store.get('tidy'),
+    commandMode: isMac && store.get('commandMode'),
+    commandKey: normalizeCommandKey(store.get('commandKey'), store.get('holdKey'), process.platform),
     voiceSnippets: store.get('voiceSnippets'),
     wordCount: parseMyWords(store.get('words')).hints.length,
     active: store.get('enabled') && key && isExpansionActive(),
@@ -277,6 +295,7 @@ function applyWatcher(): void {
   if (!s.enabled && recording) { gesture.reset(); cancel() }
   setMayRecord(s.enabled && !busy)
   setHoldKey(s.holdKey as NativeHoldKey, s.enabled)
+  if (isMac) setCommandKey(s.enabled && s.commandMode ? s.commandKey ?? null : null)
 }
 
 // ─── the pill ────────────────────────────────────────────────────────────────
@@ -365,6 +384,7 @@ function hidePill(afterMs = 0): void {
 }
 
 function state(s: DictationState): void {
+  if (isMac && commandSession && s.phase === 'listening') s = { ...s, message: 'Command' }
   sendPill(IPC_SEND.DICTATION_STATE, s)
 }
 
@@ -384,6 +404,7 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
 }
 
 function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
+  if (isMac && commandSession) return commandFailure(ERROR_TEXT[code], uploadStarted)
   gesture.reset()
   recordingStart.cancel()
   if (maxTimer) clearTimeout(maxTimer)
@@ -402,6 +423,140 @@ function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
 }
 
 // ─── hold → record → let go → type ───────────────────────────────────────────
+
+/** A command owns its source, payer, key and cancellation for the whole operation. */
+function commandDown(): void {
+  const s = settings()
+  const key = s.commandKey
+  if (!isMac || !s.enabled || !s.commandMode || !key || recording || busy) { endCommandKey(); return }
+  downAt = Date.now()
+  sessionId++
+  audioReceived = false
+  uploadStarted = false
+  const abort = new AbortController()
+  const capture = captureCommandSelection(abort.signal)
+  const command: CommandSession = { id: sessionId, key, abort, capture, owner: clipOwner(), released: false, ready: false, pasting: false }
+  commandSession = command
+  acceptCommandKey()
+  recording = true
+  getPill()
+  showTimer = setTimeout(() => { showTimer = null; if (commandSession === command) showPill() }, MIN_HOLD_MS)
+  state({ phase: 'checking-selection', message: 'Checking selection…' })
+  void capture.then((r) => {
+    if (commandSession !== command) return
+    if (!r.ok) {
+      clearShowTimer()
+      showTimer = setTimeout(() => { showTimer = null; if (commandSession === command) commandFailure(r.error) }, Math.max(0, MIN_HOLD_MS - (Date.now() - downAt)))
+      return
+    }
+    if (command.released) return
+    command.ready = true
+    state({ phase: 'listening', message: 'Command' })
+    recordingStart.start({ at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1', sessionId, microphone: store.get('microphone') })
+  })
+  maxTimer = setTimeout(() => {
+    if (commandSession === command && !command.released) commandFailure('Command reached 30 seconds')
+  }, COMMAND_MAX_MS)
+}
+
+function commandUp(): void {
+  const command = commandSession
+  if (!command || command.released || !recording) return
+  command.released = true
+  clearShowTimer()
+  if (maxTimer) clearTimeout(maxTimer)
+  maxTimer = null
+  if (Date.now() - downAt < MIN_HOLD_MS) { cancel(); return }
+  if (!command.ready) return commandFailure('Selection check not ready')
+  if (!recordingStart.isReady) return commandFailure('Didn’t hear anything')
+  recording = false
+  busy = true
+  setMayRecord(false)
+  releasedAt = Date.now()
+  showPill()
+  state({ phase: 'transcribing', message: 'Transcribing…' })
+  stopTimer = setTimeout(() => {
+    stopTimer = null
+    if (commandSession === command) sendPill(IPC_SEND.DICTATION_STOP, { send: true, sessionId: command.id })
+  }, Math.max(0, Math.min(RELEASE_PAD_MS, COMMAND_MAX_MS - (releasedAt - downAt))))
+}
+
+function cancelCommand(): void {
+  if (!commandSession || commandSession.pasting) return
+  const charged = uploadStarted
+  cancel()
+  showPill(charged ? PILL_ERROR_W : PILL_W)
+  state({ phase: 'cancelled', message: charged ? 'Cancelled. Usage may be charged.' : 'Cancelled' })
+  hidePill(charged ? 3000 : 700)
+}
+
+function commandFailure(reason: string, charged = false): void {
+  if (!commandSession) return
+  if (commandSession.pasting) {
+    // Paste cannot be undone by cancellation. A lost helper reply is an uncertain outcome.
+    commandSession = null
+    endCommandKey()
+    busy = false
+    setMayRecord(settings().enabled)
+    showPill(520)
+    state({ phase: 'error', message: 'Couldn’t confirm replacement. Check your text. Usage may be charged.' })
+    hidePill(4500)
+    return
+  }
+  cancel()
+  showPill(520)
+  state({ phase: 'error', message: `${reason}. Text unchanged.${charged ? ' Usage may be charged.' : ''}` })
+  hidePill(4500)
+}
+
+async function runCommandAudio(buf: ArrayBuffer, mime: string, command: CommandSession): Promise<void> {
+  const current = (): boolean => commandSession === command && command.id === sessionId && !command.abort.signal.aborted
+  let auth: AddonAuth | null = null
+  try {
+    const captured = await command.capture
+    if (!current()) return
+    if (!captured.ok) return commandFailure(captured.error)
+    const durationMs = Math.min(COMMAND_MAX_MS, releasedAt - downAt + RELEASE_PAD_MS)
+    if (clipOwner() !== command.owner) return commandFailure('Account changed')
+    const key = getCredential(CRED_TOOL, CRED_TYPE)
+    auth = viaAddon() ? addonAuth() : null
+    const signal = command.abort.signal
+    uploadStarted = true
+    const opts = { mime, durationMs, signal, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) }
+    let result = auth ? await transcribeViaAddon(new Uint8Array(buf), auth, opts)
+      : await transcribe(new Uint8Array(buf), { ...opts, key, model, stream: true })
+    if (!current()) return
+    // Reuse only the existing explicit model-unavailable fallback; never retry an ambiguous failure.
+    if (!auth && result.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
+      if (clipOwner() !== command.owner) return commandFailure('Account changed', true)
+      result = await transcribe(new Uint8Array(buf), { ...opts, key, model: 'gpt-4o-mini-transcribe', stream: true })
+    }
+    if (!current()) return
+    if (!result.ok || !result.text) return commandFailure(ERROR_TEXT[result.error ?? 'failed'], true)
+    if (clipOwner() !== command.owner || (auth && !sameAddonAuth(auth, addonAuth()))) return commandFailure('Account changed', true)
+    state({ phase: 'rewriting', message: 'Rewriting…' })
+    const rewritten = await rewriteCommand(result.text, captured.selection.text, {
+      key: auth ? 'add-on' : key ?? '', signal, ...(auth ? { addon: true, fetchImpl: addonTidyFetch(auth) } : {})
+    })
+    if (!current()) return
+    if (!rewritten.ok) return commandFailure(rewritten.error === 'limits' ? 'Instruction too long' : 'Couldn’t rewrite text', true)
+    if (clipOwner() !== command.owner) return commandFailure('Account changed', true)
+    state({ phase: 'replacing', message: 'Replacing…' })
+    const ok = await replaceCommandSelection(captured.selection, rewritten.text, command.key.code, () => current() && clipOwner() === command.owner, () => { command.pasting = true })
+    if (!current()) return
+    if (!ok) return commandFailure('Selection changed or paste unavailable', true)
+    commandSession = null
+    endCommandKey()
+    busy = false
+    setMayRecord(settings().enabled)
+    state({ phase: 'done' })
+    hidePill(500)
+  } catch {
+    if (current()) commandFailure('Command failed', uploadStarted)
+  } finally {
+    if (auth) void refreshAddon(true)
+  }
+}
 
 function onDown(): void {
   if (recording || busy || !settings().enabled) return
@@ -435,6 +590,7 @@ function onDown(): void {
 }
 
 function onUp(finishLocked = false): void {
+  if (isMac && commandSession) return commandUp()
   if (!recording) return
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = null
@@ -490,6 +646,12 @@ function clearShowTimer(): void {
 }
 
 function cancel(): void {
+  if (isMac && commandSession?.pasting) return
+  if (isMac && commandSession) {
+    commandSession.abort.abort()
+    commandSession = null
+    endCommandKey()
+  }
   recordingStart.cancel()
   if (stopTimer) clearTimeout(stopTimer)
   stopTimer = null
@@ -507,6 +669,7 @@ function cancel(): void {
 }
 
 async function onAudio(buf: ArrayBuffer, mime: string): Promise<void> {
+  if (isMac && commandSession) return runCommandAudio(buf, mime, commandSession)
   const generation = sessionId
   const releaseAt = releasedAt
   const audioReadyAt = Date.now()
@@ -842,7 +1005,13 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
   })
   serialised(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
     if (!fromUi(e)) return null
-    if (key === 'enabled' && typeof value === 'boolean') {
+    if (isMac && commandSession) cancelCommand()
+    if (key === 'commandMode' && isMac && typeof value === 'boolean') {
+      store.set('commandMode', value)
+    } else if (key === 'commandKey' && isMac) {
+      const chosen = normalizeCommandKey(value, store.get('holdKey'), process.platform)
+      if (value === null || (chosen && (chosen.kind !== 'key' || !globalShortcut.isRegistered(chosen.label)))) store.set('commandKey', chosen)
+    } else if (key === 'enabled' && typeof value === 'boolean') {
       const choice = toggleChoice(value)
       store.set('enabled', choice.enabled)
       store.set('userOff', choice.userOff)
@@ -852,7 +1021,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
       }
     } else if (key === 'holdKey') {
       const chosen = normalizeHoldKey(value, process.platform)
-      if (chosen) store.set('holdKey', chosen)
+      if (chosen && (!isMac || chosen.code !== settings().commandKey?.code)) store.set('holdKey', chosen)
     } else if (key === 'microphone' && typeof value === 'string' && value.length <= 512) {
       store.set('microphone', value)
     } else if (key === 'keepHistory' && typeof value === 'boolean') {
@@ -877,6 +1046,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
   serialised(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
     if (!fromUi(e)) return null
     if (typeof text !== 'string') return settings()
+    if (isMac && commandSession) cancelCommand()
     store.set('words', text.slice(0, 20_000))
     settingsChanged()
     return settings()
@@ -898,7 +1068,16 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   if (!app.isPackaged && process.env['PEAKFLOW_DICTATION_KEPT_DEMO'] === '1') keepClip({ buf: new ArrayBuffer(10), mime: 'audio/webm', durationMs: 12_000, ctx: {}, at: Date.now() })
   const migrated = normalizeHoldKey(store.get('holdKey'), process.platform)
   if (migrated) store.set('holdKey', migrated)
+  if (isMac) stopCredentialWatch = onCredentialsChanged(() => { if (commandSession && clipOwner() !== commandSession.owner) cancelCommand() })
   registerIpc(getLauncherContents)
+  onCommandKey((event, nativeId) => {
+    if (event === 'down') {
+      if (!recording && !busy && !commandSession) commandDown()
+      else if (!commandSession) endCommandKey()
+    } else if (event === 'up' && commandSession) commandUp()
+    else if (event === 'cancel' && commandSession) cancelCommand()
+    void nativeId // Native watcher filters session identities before delivery.
+  })
   onRecordingEscape((id) => {
     if (id !== sessionId || (!recording && (!busy || uploadStarted))) return
     gesture.reset()
@@ -1036,6 +1215,7 @@ async function recordPillFrames(dir: string): Promise<void> {
 }
 
 export function destroyDictation(): void {
+  stopCredentialWatch?.()
   quitting = true
   gesture.reset()
   cancel()

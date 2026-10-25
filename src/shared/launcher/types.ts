@@ -171,6 +171,8 @@ export interface DictationSettings {
   model: 'gpt-transcribe' | 'gpt-4o-mini-transcribe'
   /** Light clean-up: fillers, punctuation and "no wait" corrections (small OpenAI model, same key) */
   cleanup: boolean
+  commandMode: boolean
+  commandKey: import('../dictation-key').NativeHoldKey | null
   voiceSnippets: boolean
   /** How many words are on the person's "My words" list */
   wordCount: number
@@ -191,6 +193,6 @@ export interface DictationSettings {
 }
 
 export interface DictationState {
-  phase: 'cancelled' | 'listening' | 'transcribing' | 'done' | 'error' | 'idle'
+  phase: 'checking-selection' | 'rewriting' | 'replacing' | 'cancelled' | 'listening' | 'transcribing' | 'done' | 'error' | 'idle'
   message?: string
 }

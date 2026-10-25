@@ -24,7 +24,7 @@ const API = 'https://api.openai.com/v1'
 
 export async function transcribe(
   audio: Uint8Array,
-  opts: { key: string | null; model?: DictationModel; mime?: string; language?: string; prompt?: string; timeoutMs?: number; stream?: boolean }
+  opts: { key: string | null; model?: DictationModel; mime?: string; language?: string; prompt?: string; timeoutMs?: number; stream?: boolean; signal?: AbortSignal }
 ): Promise<TranscribeResult> {
   if (!opts.key) return { ok: false, error: 'no_key' }
   if (audio.byteLength < 1000) return { ok: false, error: 'no_speech' }
@@ -44,7 +44,7 @@ export async function transcribe(
       method: 'POST',
       headers: { Authorization: `Bearer ${opts.key}` },
       body: form,
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000)
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? 30_000)]) : AbortSignal.timeout(opts.timeoutMs ?? 30_000)
     })
   } catch (err) {
     return { ok: false, error: 'network', detail: (err as Error).name }

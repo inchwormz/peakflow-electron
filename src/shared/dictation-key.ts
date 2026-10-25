@@ -38,3 +38,10 @@ export const HOLD_KEY_COPY = {
   // copy: That key types text. Pick a modifier like Right ⌥, or a function key like F13. (Windows: Right Ctrl)
   rejection: (mac: boolean): string => `That key types text. Pick a modifier like ${mac ? 'Right ⌥' : 'Right Ctrl'}, or a function key like F13.`
 }
+
+/** Command v1 is Mac only and cannot share the ordinary dictation key. */
+export function normalizeCommandKey(value: unknown, dictation: unknown, platform: string): NativeHoldKey | null {
+  if (platform !== 'darwin') return null
+  const key = normalizeHoldKey(value, platform)
+  return key && key.code !== normalizeHoldKey(dictation, platform)?.code ? key : null
+}
