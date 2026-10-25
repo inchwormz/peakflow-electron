@@ -9,6 +9,7 @@
  */
 
 import { BrowserWindow, clipboard } from 'electron'
+import type { HistoryContext } from '../dictation/history'
 import type { SelectionResult } from '@shared/launcher/types'
 import { runMacHelper } from '../native/mac-helper'
 import { simulateCtrlV } from '../native/keyboard'
@@ -77,13 +78,17 @@ function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
  * in every other failure the clipboard is left alone, never replaced with
  * unmarked text.
  */
-export function pasteAndRestore(text: string): Promise<boolean> {
+export function pasteAndRestore(text: string, privacy?: { read: () => Promise<HistoryContext>; capture: (target: HistoryContext) => void }): Promise<boolean> {
   return oneAtATime(async () => {
     if (process.platform === 'darwin') {
-      const r = await runMacHelper(['paste-text'], 4000, text)
+      const r = await runMacHelper(privacy ? ['paste-text', 'dictation'] : ['paste-text'], 4000, text)
       if (r?.trusted === false) {
         notifyAccessibilityNeeded('paste')
         return false
+      }
+      if (privacy) {
+        const p = r?.dictationPrivacy as Record<string, unknown> | undefined
+        privacy.capture({ app: typeof p?.app === 'string' ? p.app : undefined, appId: typeof p?.bundleId === 'string' ? p.bundleId : undefined, title: typeof p?.title === 'string' ? p.title : undefined, secure: typeof p?.secure === 'boolean' ? p.secure : undefined })
       }
       return r?.ok === true
     }
@@ -91,6 +96,7 @@ export function pasteAndRestore(text: string): Promise<boolean> {
       const hwnd = ownerHwnd()
       const t = await saveAndWriteOwnText(hwnd, text).catch(() => null)
       if (!t) return false // couldn't save every format: leave the clipboard alone
+      if (privacy) privacy.capture(await privacy.read())
       const ok = await simulateCtrlV()
       await sleep(400) // give the app time to read the clipboard
       await restoreWinClipboard(hwnd, t.saved, t.stamp).catch(() => false)

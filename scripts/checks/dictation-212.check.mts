@@ -93,7 +93,7 @@ test('real main IPC handler rejects typing keys and untrusted senders; UI toggle
   const boot=new Function('serial','toggleChoice','normalizeHoldKey','holdKeyFromCode','EventEmitter','IPC_INVOKE',`
     const ui=new EventEmitter(), owner=new EventEmitter(), handlers={},data={enabled:true,userOff:false,holdKey:'fn'}
     const BrowserWindow={fromWebContents:()=>owner}
-    let recorder=null,captureState=false
+    const gesture={reset:()=>{}};let historyRevision=0;let recorder=null,captureState=false
     const onHoldKeyRecorded=fn=>{recorder=fn;return()=>recorder=null}
     const setHoldKeyCapture=v=>captureState=v,cancel=()=>{}
     const store={get:k=>data[k],set:(k,v)=>data[k]=v},settingsQueue=serial()
@@ -113,6 +113,16 @@ test('real main IPC handler rejects typing keys and untrusted senders; UI toggle
   assert.equal(boot.data.holdKey,'fn')
   await boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:{}},'enabled',false)
   assert.equal(boot.data.enabled,true)
+  for (const channel of [IPC_INVOKE.DICTATION_SETTINGS, IPC_INVOKE.DICTATION_SET, IPC_INVOKE.DICTATION_SET_WORDS, IPC_INVOKE.DICTATION_REMOVE_KEY]) {
+    assert.equal(await boot.handlers[channel]({sender:{}}, 'enabled', true), null, 'no private settings for an untrusted sender')
+  }
+  assert.deepEqual(await boot.handlers[IPC_INVOKE.DICTATION_SAVE_KEY]({sender:{}}, 'invalid'), {ok:false,error:'failed'})
+  boot.data.history=[{text:'private text',at:1}]
+  await boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:boot.ui},'keepHistory',false)
+  assert.equal(boot.data.keepHistory,false); assert.deepEqual(boot.data.history,[])
+  boot.data.history=[{text:'clear me',at:2}]
+  await boot.handlers[IPC_INVOKE.DICTATION_SET]({sender:boot.ui},'clearHistory',true)
+  assert.deepEqual(boot.data.history,[])
   const capture=()=>boot.handlers[IPC_INVOKE.DICTATION_RECORD_KEY]({sender:boot.ui},true)
   const chosen=capture();assert.equal(boot.capturing(),true);boot.record(63)
   assert.equal((await chosen).label,'fn');assert.equal(boot.capturing(),false)

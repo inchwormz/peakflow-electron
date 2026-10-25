@@ -20,6 +20,7 @@ import type { LauncherSnippet } from '@shared/launcher/types'
 import { getMacHelperPath } from '../native/mac-helper'
 import { pasteAndRestore } from './selection'
 import { checkAccessibility } from '../services/permissions-darwin'
+import { EscapeSession } from '../dictation/escape-session'
 import { KeyTaps } from './key-taps'
 import { windowsKeyStateSource } from './windows-key-state'
 import type { NativeHoldKey } from '@shared/dictation-key'
@@ -37,6 +38,19 @@ let dictating = false
 let holdListener: ((e: 'down' | 'up' | 'cancel') => void) | null = null
 const doubleListeners = new Set<() => void>()
 const taps = new KeyTaps()
+
+const escapeSession = new EscapeSession()
+let escapeListener: (() => void) | null = null
+export function onRecordingEscape(fn: () => void): void { escapeListener = fn }
+export function setRecordingEscape(recording: boolean): void {
+  escapeSession.recording = recording
+  sendEscape()
+}
+function sendEscape(): void {
+  if (!child?.stdin?.writable) return
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ recordingEscape: escapeSession.recording }) + '\n')
+  else child.stdin.write(`ESCAPE ${escapeSession.recording ? 1 : 0}\n`)
+}
 
 /** Record physical keys through the same native watcher, including fn and side-specific modifiers. */
 export function onHoldKeyRecorded(fn: (code: number) => void): () => void {
@@ -107,6 +121,8 @@ function sendHold(): void {
 }
 
 function onKey(e: 'down' | 'up' | 'cancel'): void {
+  // Dictation owns double taps while enabled; SnapGrid keeps them while it is off.
+  if (dictating) { holdListener?.(e); return }
   for (const a of taps.feed(e, Date.now())) {
     if (a === 'double') doubleListeners.forEach((fn) => fn())
     else if (dictating) holdListener?.(a)
@@ -154,10 +170,15 @@ function onLine(line: string): void {
         respawnDelayMs = RESPAWN_MIN_MS // working again: the next kill-and-restart backs off from the minimum
         sendSnippets()
         sendHold()
+        sendEscape()
       }
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
     } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
+    if (ev.e === 'recording-escape') {
+      if (escapeSession.feed(true).cancel) escapeListener?.()
+      escapeSession.feed(false)
+    }
     if (ev.e === 'hold-key-recorded' && capturingHoldKey && Number.isInteger(ev.code)) {
       capturingHoldKey = false
       recordedListeners.forEach((fn) => fn(ev.code!))
@@ -208,6 +229,8 @@ public static class PfKeyWatch {
   static volatile string[] keywords = new string[0];
   static volatile int holdVk = 0;
   static bool captureHoldKey = false;
+  static volatile bool recordingEscape = false;
+  static bool escapeDown = false;
   static readonly object keyLock = new object();
   static NativeKeyState keyState = new NativeKeyState();
   static HashSet<uint> PhysicalKeys() {
@@ -251,6 +274,13 @@ public static class PfKeyWatch {
         bool isUp = (int)wParam == WM_KEYUP || (int)wParam == WM_SYSKEYUP;
         if ((k.flags & LLKHF_INJECTED) == 0) {
           lock (keyLock) {
+            if (k.vkCode == 27) {
+              if (isDown && (recordingEscape || escapeDown)) {
+                if (!escapeDown) { escapeDown = true; recordingEscape = false; Emit("recording-escape"); }
+                return new IntPtr(1);
+              }
+              if (isUp && escapeDown) { escapeDown = false; return new IntPtr(1); }
+            }
             HashSet<uint> physical = PhysicalKeys();
             bool otherModifier = false;
             foreach (uint other in physical) {
@@ -323,6 +353,8 @@ public static class PfKeyWatch {
             holdVk = IsAllowedHold(vk) ? vk : 0;
             EmitEvents(keyState.Configure(holdVk, captureHoldKey, PhysicalKeys()));
           }
+        } else if (line.StartsWith("ESCAPE ")) {
+          recordingEscape = line.Substring(7).Trim() == "1";
         } else if (line.StartsWith("CAPTURE ")) {
           lock (keyLock) {
             captureHoldKey = line.Substring(8).Trim() == "1";
