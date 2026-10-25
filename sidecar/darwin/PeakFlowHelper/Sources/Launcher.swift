@@ -733,10 +733,12 @@ private func sameCommandSelection(_ a: CommandSnapshot, _ b: CommandSnapshot) ->
     a.range.location == b.range.location && a.range.length == b.range.length && a.text == b.text
 }
 
-/// Validate the full snapshot, then re-read focus/range and finish with the cheap frontmost-PID check right before paste.
+/// Validate the full snapshot, then re-read range, then focus, then the frontmost PID right before paste.
+/// Residual: focus can still move during the final focus read itself (one AX round trip, capped at 0.25 s);
+/// a global Cmd+V cannot close that window.
 private func validateCommandSelection(focus: () throws -> Bool, range: () throws -> Bool,
                                       text: () throws -> Bool, frontmost: () throws -> Bool) -> Bool {
-    do { return try frontmost() && focus() && range() && text() && focus() && range() && frontmost() }
+    do { return try frontmost() && focus() && range() && text() && range() && focus() && frontmost() }
     catch { return false }
 }
 
