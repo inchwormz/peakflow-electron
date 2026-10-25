@@ -109,6 +109,10 @@ test('[K6] standalone Swift state machine executes the native sequences',()=>{
    .replace('ProcessInfo.processInfo.systemUptime * 1000','testNow')
  const start=launcher.indexOf('    if code == 53 {')
  const escape=launcher.slice(start,launcher.indexOf('    let capsToggle',start)).replaceAll('return nil','return true')
+ const armStart=launcher.indexOf('                    if id == escapeSessionId && mayRecord')
+ const arm=launcher.slice(armStart,launcher.indexOf('\n                }',armStart))
+ const availableStart=launcher.indexOf('                    if !allowed {')
+ const available=launcher.slice(availableStart,launcher.indexOf('\n                }',availableStart))
  const escapeChecks=`
  var testNow: Double = 0
  var escapeEvents: [[String: Any]] = []
@@ -120,17 +124,36 @@ test('[K6] standalone Swift state machine executes the native sequences',()=>{
    ${escape}
    return false
  }
+ func arm(_ id: Int? = nil) {
+   let id = id ?? escapeSessionId
+   ${arm}
+ }
+ func available(_ allowed: Bool) {
+   mayRecord = allowed
+   ${available}
+ }
  dictate = true
- emitHoldEvents(["down"]); assert(recordingEscape)
+ emitHoldEvents(["down", "up", "down", "up"]); arm(); assert(!recordingEscape)
+ assert(!pressEscape(true)); assert(!pressEscape(false))
+ available(true)
+ emitHoldEvents(["down"]); assert(!recordingEscape)
+ assert(!pressEscape(true)); assert(!pressEscape(false))
+ available(false); arm(); assert(!recordingEscape)
+ emitHoldEvents(["up"]); available(true); arm(); assert(!recordingEscape)
+ emitHoldEvents(["down"]); arm(0); assert(!recordingEscape)
+ arm(); assert(recordingEscape)
+ available(false); assert(!pressEscape(true)); assert(!pressEscape(false))
+ emitHoldEvents(["up"]); available(true)
+ emitHoldEvents(["down"]); assert(!recordingEscape); arm(); assert(recordingEscape)
  testNow = 500; emitHoldEvents(["up"]); assert(!recordingEscape)
  assert(!pressEscape(true)); assert(!pressEscape(false))
- testNow = 1000; emitHoldEvents(["down"])
+ testNow = 1000; emitHoldEvents(["down"]); arm()
  assert(pressEscape(true)); assert(pressEscape(true)); assert(pressEscape(false))
  assert(escapeEvents.filter { $0["e"] as? String == "recording-escape" }.count == 1)
  emitHoldEvents(["up"])
- testNow = 2000; emitHoldEvents(["down"])
+ testNow = 2000; emitHoldEvents(["down"]); arm()
  testNow = 2050; emitHoldEvents(["up"])
- testNow = 2200; emitHoldEvents(["down"])
+ testNow = 2200; emitHoldEvents(["down"]); arm()
  testNow = 2250; emitHoldEvents(["up"]); assert(recordingEscape && escapeLocked)
  testNow = 2400; emitHoldEvents(["down"])
  testNow = 2450; emitHoldEvents(["up"]); assert(!recordingEscape && !escapeLocked)

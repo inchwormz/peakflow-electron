@@ -16,7 +16,7 @@ test('actual Windows hook Esc branch pairs interception and forwards every idle 
   const hook = readFileSync(new URL('../../src/main/launcher/expander.ts', import.meta.url), 'utf8')
   const start = hook.indexOf('            if (k.vkCode == 27)')
   const branch = hook.slice(start, hook.indexOf('            HashSet<uint> physical', start))
-    .replace(/\brecordingEscape\b/g, 'state.recordingEscape').replace(/\bescapeDown\b/g, 'state.escapeDown').replace(/new IntPtr\(1\)/g, '1').replace(/EmitSession/g, 'Emit').replace(/escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;/g, '')
+    .replace(/\brecordingEscape\b/g, 'state.recordingEscape').replace(/\bescapeDown\b/g, 'state.escapeDown').replace(/new IntPtr\(1\)/g, '1').replace(/EmitSession/g, 'Emit').replace(/escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;/g, '')
   const feed = new Function('state', 'k', 'isDown', 'isUp', 'Emit', branch + ';return 0')
   const state = { recordingEscape: false, escapeDown: false }
   const emitted: string[] = []
@@ -58,18 +58,27 @@ function nativeHook() {
     .replace('bool tap =', 'const tap =')
   const start = source.indexOf('            if (k.vkCode == 27)')
   const esc = source.slice(start, source.indexOf('            HashSet<uint> physical', start)).replaceAll('new IntPtr(1)', '1')
+  const armStart=source.indexOf('if (int.TryParse(line.Substring(4)')
+  const arm=source.slice(armStart,source.indexOf('\n          }',armStart)).replace('int.TryParse(line.Substring(4).Trim(), out id) && ', '')
+  const availableStart=source.indexOf('            if (!mayRecord)')
+  const available=source.slice(availableStart,source.indexOf('\n          }',availableStart))
   return new Function('clock', `
-    let dictate=true,recordingEscape=false,escapeLocked=false,escapePressAt=-1,escapeTapUpAt=-1000,escapeSecond=false,escapeId=0,escapeDown=false
+    let mayRecord=false,escapeAccepted=false,dictate=true,recordingEscape=false,escapeLocked=false,escapePressAt=-1,escapeTapUpAt=-1000,escapeSecond=false,escapeId=0,escapeDown=false
     const emitted=[],EmitSession=e=>emitted.push({e,id:escapeId})
     ${events}
+    function arm(id=escapeId) { ${arm} }
+    function available(value) { mayRecord=value; ${available} }
     function escape(isDown) { const k={vkCode:27},isUp=!isDown; ${esc}; return 0 }
-    return {key:e=>EmitEvents([e]),escape,emitted,armed:()=>recordingEscape,time:n=>clock.now=n}
+    return {key:e=>EmitEvents([e]),arm,available,escape,emitted,armed:()=>recordingEscape,time:n=>clock.now=n}
   `)(clock)
 }
 
-test('watcher arms on down and disarms on hold-up before any Electron round trip', () => {
+test('watcher arms only after acceptance and disarms on hold-up before any Electron round trip', () => {
   const hook = nativeHook()
+  hook.available(true)
   hook.key('down')
+  assert.equal(hook.armed(), false, 'passes Esc until Electron accepts')
+  hook.arm()
   assert.equal(hook.armed(), true)
   hook.time(500); hook.key('up')
   assert.equal(hook.armed(), false)
@@ -80,7 +89,8 @@ test('watcher arms on down and disarms on hold-up before any Electron round trip
 
 test('watcher Esc while held reports the native session once and consumes its release', () => {
   const hook = nativeHook()
-  hook.key('down')
+  hook.available(true)
+  hook.key('down'); hook.arm()
   assert.equal(hook.escape(true), 1)
   assert.equal(hook.escape(true), 1)
   hook.key('up')
@@ -91,10 +101,11 @@ test('watcher Esc while held reports the native session once and consumes its re
 
 test('watcher double tap stays armed hands-free; finishing tap disarms locally', () => {
   const hook = nativeHook()
-  hook.key('down'); hook.key('up')
-  hook.key('down'); hook.key('up')
+  hook.available(true)
+  hook.key('down'); hook.arm(); hook.key('up')
+  hook.key('down'); hook.arm(); hook.key('up')
   assert.equal(hook.armed(), true)
-  hook.key('down'); hook.key('up')
+  hook.key('down'); hook.arm(); hook.key('up')
   assert.equal(hook.armed(), false)
   assert.equal(hook.escape(true), 0)
 })
@@ -116,4 +127,56 @@ test('safety disarm never waits on absent, crashed or unresponsive watcher', asy
     assert.equal(disarm(false),undefined)
     assert.equal(writes.length,watcher==='absent'?0:1)
   }
+})
+
+test('busy and default-off presses never arm Esc; stale on, late arm and availability races fail safe', () => {
+  const hook=nativeHook()
+  for(const event of ['down','up','down','up']) hook.key(event)
+  hook.arm()
+  assert.equal(hook.armed(),false)
+  assert.equal(hook.escape(true),0)
+  assert.equal(hook.escape(false),0)
+  hook.available(true)
+  hook.key('down') // stale availability: Electron rejects, so no ARM
+  assert.equal(hook.escape(true),0)
+  hook.available(false); hook.arm()
+  assert.equal(hook.armed(),false)
+  hook.key('up'); hook.available(true); hook.arm()
+  assert.equal(hook.armed(),false,'late confirmation after release is ignored')
+  hook.key('down'); hook.arm(0)
+  assert.equal(hook.armed(),false,'old confirmation cannot arm a later press')
+  hook.arm(); assert.equal(hook.armed(),true)
+  hook.available(false)
+  assert.equal(hook.escape(true),0)
+})
+
+test('Electron rejects busy and disabled presses without arming or advancing its gesture', async () => {
+  const {transformSync}=await import('esbuild')
+  const source=readFileSync(new URL('../../src/main/dictation/index.ts',import.meta.url),'utf8')
+  const start=source.indexOf('  onHoldKey((e) => {')
+  const callback=transformSync(source.slice(start,source.indexOf('  applyWatcher()',start)),{loader:'ts'}).code
+  for(const busy of [false,true]) for(const enabled of [false,true]) {
+    const calls:string[]=[]
+    const feed=new Function('busy','enabled','calls',`
+      let handler,recording=false
+      const settings=()=>({enabled}),onHoldKey=fn=>handler=fn
+      const gesture={locked:false,reset:()=>calls.push('reset'),feed:()=>{calls.push('feed');return 'start'}}
+      const onDown=()=>calls.push('arm')
+      ${callback};return handler
+    `)(busy,enabled,calls)
+    feed('down');feed('up')
+    if(busy || !enabled) assert.deepEqual(calls,['reset','reset'])
+    else assert.ok(calls.includes('arm'))
+  }
+})
+
+test('availability updates cover every busy change and watcher enabled configuration', () => {
+  const source=readFileSync(new URL('../../src/main/dictation/index.ts',import.meta.url),'utf8')
+  assert.match(source,/setMayRecord\(s.enabled && !busy\)/)
+  for(const match of source.matchAll(/(?<!let )busy = (true|false)\n([^\n]+)/g)) {
+    assert.ok(match[2].includes(match[1]==='true'?'setMayRecord(false)':'setMayRecord(settings().enabled)'),match[0])
+  }
+  const watcher=readFileSync(new URL('../../src/main/launcher/expander.ts',import.meta.url),'utf8')
+  assert.match(watcher,/let mayRecord = false/)
+  assert.match(watcher,/function sendHold\(\)[\s\S]*?sendMayRecord\(\)/)
 })

@@ -39,13 +39,36 @@ const doubleListeners = new Set<() => void>()
 const taps = new KeyTaps()
 
 // Bind a watcher-owned recording identity to Electron's audio identity. Arming is
-// entirely local to the native key event; Electron only sends best-effort disarms.
+// local to an eligible key event, then confirmed by Electron after accepting audio.
+let mayRecord = false
 let nativeEscapeId = 0
 let escapeBinding: { native: number; audio: number } | null = null
 let escapeListener: ((id: number) => void) | null = null
 export function onRecordingEscape(fn: (id: number) => void): void { escapeListener = fn }
+/** Availability defaults off, and is replayed when a watcher starts. */
+export function setMayRecord(value: boolean): void {
+  mayRecord = value
+  sendMayRecord()
+}
+function sendMayRecord(): void {
+  if (!child?.stdin?.writable) return
+  try {
+    if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ mayRecord }) + '\n')
+    else child.stdin.write(`MAY-RECORD ${mayRecord ? 1 : 0}\n`)
+  } catch { /* A missing watcher must never block audio. */ }
+}
 export function setRecordingEscape(recording: boolean, id = escapeBinding?.audio): void {
-  if (recording) { escapeBinding = { native: nativeEscapeId, audio: id! }; return }
+  if (recording) {
+    escapeBinding = { native: nativeEscapeId, audio: id! }
+    // Never swallow Esc for a speculative press: stale availability or a delayed
+    // confirmation can only let Esc pass through, never cancel an unrelated app.
+    if (!child?.stdin?.writable) return
+    try {
+      if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ armEscape: nativeEscapeId }) + '\n')
+      else child.stdin.write(`ARM ${nativeEscapeId}\n`)
+    } catch { /* Best effort; no acknowledgement wait. */ }
+    return
+  }
   if (escapeBinding) disarmEscape(escapeBinding.native)
 }
 function disarmEscape(id: number): void {
@@ -117,6 +140,7 @@ function refreshWanted(): void {
 function sendHold(): void {
   if (!child?.stdin?.writable) return
   const key = watchedKey()
+  sendMayRecord()
   if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, captureHoldKey: capturingHoldKey, dictate: dictating }) + '\n')
   else {
     child.stdin.write(`DICTATE ${dictating ? 1 : 0}\n`)
@@ -237,6 +261,7 @@ public static class PfKeyWatch {
   static volatile int holdVk = 0;
   static bool captureHoldKey = false;
   static volatile bool recordingEscape = false;
+  static bool mayRecord = false, escapeAccepted = false;
   static int escapeId = 0;
   static bool escapeDown = false;
   static bool dictate = false, escapeLocked = false;
@@ -258,10 +283,10 @@ public static class PfKeyWatch {
     foreach (string e in events) {
       if (dictate) {
         long now = escapeClock.ElapsedMilliseconds;
-        if (e == "down") {
+        if (e == "down" && mayRecord) {
           escapePressAt = now;
           escapeSecond = now - escapeTapUpAt <= 400;
-          if (!escapeLocked) { escapeId++; recordingEscape = true; }
+          if (!escapeLocked) { escapeId++; escapeAccepted = false; recordingEscape = false; }
         } else if (e == "cancel") {
           escapePressAt = -1; escapeTapUpAt = -1000;
           if (!escapeLocked) recordingEscape = false;
@@ -270,7 +295,7 @@ public static class PfKeyWatch {
           escapePressAt = -1;
           if (escapeLocked) {
             if (tap) { escapeLocked = false; recordingEscape = false; escapeTapUpAt = -1000; }
-          } else if (tap && escapeSecond) {
+          } else if (tap && escapeSecond && escapeAccepted) {
             escapeLocked = true; recordingEscape = true; escapeTapUpAt = -1000;
           } else { recordingEscape = false; escapeTapUpAt = tap ? now : -1000; }
         }
@@ -313,7 +338,7 @@ public static class PfKeyWatch {
           lock (keyLock) {
             if (k.vkCode == 27) {
               if (isDown && (recordingEscape || escapeDown)) {
-                if (!escapeDown) { escapeDown = true; recordingEscape = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000; EmitSession("recording-escape"); }
+                if (!escapeDown) { escapeDown = true; recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000; EmitSession("recording-escape"); }
                 return new IntPtr(1);
               }
               if (isUp && escapeDown) { escapeDown = false; return new IntPtr(1); }
@@ -395,14 +420,28 @@ public static class PfKeyWatch {
             bool enabled = line.Substring(8).Trim() == "1";
             if (dictate != enabled) {
               dictate = enabled;
-              recordingEscape = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;
+              recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;
+            }
+          }
+        } else if (line.StartsWith("MAY-RECORD ")) {
+          lock (keyLock) {
+            mayRecord = line.Substring(11).Trim() == "1";
+            if (!mayRecord) {
+              recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;
+            }
+          }
+        } else if (line.StartsWith("ARM ")) {
+          lock (keyLock) {
+            int id;
+            if (int.TryParse(line.Substring(4).Trim(), out id) && id == escapeId && mayRecord && dictate && (escapePressAt >= 0 || escapeLocked)) {
+              escapeAccepted = true; recordingEscape = true;
             }
           }
         } else if (line.StartsWith("DISARM ")) {
           lock (keyLock) {
             int id;
             if (int.TryParse(line.Substring(7).Trim(), out id) && id == escapeId) {
-              recordingEscape = false; escapeLocked = false; escapePressAt = -1;
+              recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1;
             }
           }
         } else if (line.StartsWith("CAPTURE ")) {

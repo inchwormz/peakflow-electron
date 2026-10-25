@@ -230,9 +230,9 @@ function Recent(): React.JSX.Element {
   const weekly = weeklyNow(s.weekly)
   return (
     <>
-      <Note>Recent</Note>
+      {isMac() ? <Note>Recent</Note> : null}
       <Note>{weekly.words} words this week, about {minutesSaved(weekly)} minutes saved</Note>
-      <Grp>
+      {isMac() ? <Grp>
         <Row label="Keep history" right={<Toggle label="Keep history" checked={s.keepHistory !== false} onChange={(v) => void takeS(setting('keepHistory', v))} />} />
         {(all ? history : history.slice(0, 5)).map((entry, i) => (
           <Row key={`${entry.at}-${i}`} label={entry.text} sub={[new Date(entry.at).toLocaleString(), entry.app].filter(Boolean).join(' · ')}
@@ -240,7 +240,7 @@ function Recent(): React.JSX.Element {
         ))}
         {history.length > 5 ? <Row label={all ? 'Show less' : 'Show all'} onClick={() => setAll(!all)} /> : null}
         {history.length ? <Row label="Clear history" right={<Btn sm onClick={() => void takeS(setting('clearHistory', true))}>Clear history</Btn>} /> : null}
-      </Grp>
+      </Grp> : null}
     </>
   )
 }

@@ -78,7 +78,7 @@ function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
  * in every other failure the clipboard is left alone, never replaced with
  * unmarked text.
  */
-export function pasteAndRestore(text: string, privacy?: { read: () => Promise<HistoryContext>; capture: (target: HistoryContext) => void }): Promise<boolean> {
+export function pasteAndRestore(text: string, privacy?: { capture: (target: HistoryContext) => void }): Promise<boolean> {
   return oneAtATime(async () => {
     if (process.platform === 'darwin') {
       const r = await runMacHelper(privacy ? ['paste-text', 'dictation'] : ['paste-text'], 4000, text)
@@ -96,14 +96,8 @@ export function pasteAndRestore(text: string, privacy?: { read: () => Promise<Hi
       const hwnd = ownerHwnd()
       const t = await saveAndWriteOwnText(hwnd, text).catch(() => null)
       if (!t) return false // couldn't save every format: leave the clipboard alone
-      const before = privacy ? await privacy.read().catch(() => ({} as HistoryContext)) : undefined
       const ok = await simulateCtrlV()
-      if (privacy) {
-        const after = await privacy.read().catch(() => ({} as HistoryContext))
-        const confirmed = before?.secure === false && after.secure === false && !!before.focusId && before.focusId === after.focusId
-        privacy.capture({ ...after, secure: confirmed ? false : undefined })
-      }
-      await sleep(400) // give the app time to read the clipboard; privacy was sampled next to Ctrl+V
+      await sleep(400) // give the app time to read the clipboard
       await restoreWinClipboard(hwnd, t.saved, t.stamp).catch(() => false)
       return ok
     }

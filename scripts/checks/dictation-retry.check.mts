@@ -102,6 +102,7 @@ test('stats or history write failure after paste never retains audio for retry',
   const code = transformSync(main.slice(main.indexOf('async function runClip('), main.indexOf('/** A kept clip')), { loader: 'ts' }).code
   for (const failedKey of ['weekly', 'history']) {
     const boot = new Function(`
+      const isMac=true,setMayRecord=()=>{},settings=()=>({enabled:true})
       let sessionId=1,busy=true,releasedAt=0,model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0,kept=0
       const clipOwner=()=>'',ownerForSend=()=>'',transcribe=async()=>({ok:true,text:'hello'}),viaAddon=()=>false
       const getCredential=()=>null,CRED_TOOL='',CRED_TYPE='',RELEASE_PAD_MS=150

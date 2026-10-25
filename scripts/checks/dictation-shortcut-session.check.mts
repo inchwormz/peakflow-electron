@@ -17,7 +17,7 @@ function boot(held = true) {
     let maxTimer=null,stopTimer=null,showTimer=null,audioReceived=false,context=Promise.resolve({})
     let model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0,kept=0,listener,escapeListener,resolveUpload,cap,phases=[]
     const PILL_ERROR_W=380,MIN_HOLD_MS=300,MAX_HOLD_MS=300000,RELEASE_PAD_MS=150,IPC_SEND={DICTATION_STOP:'stop'}
-    const setRecordingEscape=()=>{};const recordingStart={isReady:true,cancel:()=>{},start:()=>{}},settings=()=>({enabled:true,holdKey:'fn'})
+    const setMayRecord=()=>{},setRecordingEscape=()=>{};const recordingStart={isReady:true,cancel:()=>{},start:()=>{}},settings=()=>({enabled:true,holdKey:'fn'})
     const getPill=()=>{},showPill=()=>{},hidePill=()=>{},state=s=>phases.push(s),sendPill=()=>{},warmConnection=()=>{}
     const setTimeout=(fn,ms)=>{if(ms===MAX_HOLD_MS)cap=fn;return null},clearTimeout=()=>{},onHoldKey=fn=>listener=fn,onRecordingEscape=fn=>escapeListener=fn
     const isMac=true,holdKeyName=()=> 'fn'

@@ -31,7 +31,7 @@ import { storeCredential, getCredential, deleteCredential } from '../security/cr
 import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { holdKeyName, missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
-import { onRecordingEscape, setRecordingEscape, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
+import { onRecordingEscape, setRecordingEscape, setMayRecord, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
@@ -229,8 +229,8 @@ function settings(): DictationSettings {
     active: store.get('enabled') && key && isExpansionActive(),
     kept: getKeptDictation()?.seconds,
     microphone: store.get('microphone'),
-    keepHistory: store.get('keepHistory'),
-    history: store.get('keepHistory') ? store.get('history') : [],
+    keepHistory: isMac && store.get('keepHistory'),
+    history: isMac && store.get('keepHistory') ? store.get('history') : [],
     weekly: weeklyNow(store.get('weekly'))
   }
 }
@@ -269,6 +269,7 @@ async function settingsWithHint(): Promise<DictationSettings> {
 function applyWatcher(): void {
   const s = settings()
   if (!s.enabled && recording) { gesture.reset(); cancel() }
+  setMayRecord(s.enabled && !busy)
   setHoldKey(s.holdKey as NativeHoldKey, s.enabled)
 }
 
@@ -318,6 +319,7 @@ function getPill(): BrowserWindow {
     const active = recording || busy
     cancel()
     busy = false
+    setMayRecord(settings().enabled)
     w.destroy()
     if (active) fail('failed')
   })
@@ -386,6 +388,7 @@ function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
   recording = false
   setRecordingEscape(false)
   busy = false
+  setMayRecord(settings().enabled)
   const tryAgain = kept && sayTryAgain(code)
   showPill(PILL_ERROR_W)
   state({ phase: 'error', message: tryAgain ? `${ERROR_TEXT[code]}. Try again in PeakFlow › Dictation` : ERROR_TEXT[code] })
@@ -434,6 +437,7 @@ function onUp(finishLocked = false): void {
   showPill()
   releasedAt = Date.now()
   busy = true
+  setMayRecord(false)
   state({ phase: 'transcribing' })
   stopTimer = setTimeout(() => {
     stopTimer = null
@@ -454,22 +458,7 @@ async function readContext(): Promise<DictationContext> {
   try {
     const w = getActiveWindow()
     const title = w?.title ?? ''
-    // UI Automation exposes IsPassword for native and browser input fields.
-    // Failure/timeout is unknown, so history fails closed. Never reads the field's value.
-    const focus = await new Promise<{ secure: boolean; id: string } | undefined>((resolve) => {
-      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        'Add-Type -AssemblyName UIAutomationClient; try { $e = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($null -eq $e) { exit 1 }; $p = $e.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty, $true); if ($p -isnot [bool]) { exit 1 }; $id = $e.GetRuntimeId(); if ($null -eq $id -or $id.Length -eq 0 -or !$e.Current.HasKeyboardFocus -or ![System.Windows.Automation.Automation]::Compare($e, [System.Windows.Automation.AutomationElement]::FocusedElement)) { exit 1 }; @{ secure = $p; pid = $e.Current.ProcessId; focusId = ($id -join ",") } | ConvertTo-Json -Compress } catch { exit 1 }'],
-      { timeout: 800, windowsHide: true }, (err, out) => {
-        if (err) return resolve(undefined)
-        try {
-          const p = JSON.parse(out) as { secure?: unknown; pid?: unknown; focusId?: unknown }
-          resolve(p.pid === w?.pid && typeof p.secure === 'boolean' && typeof p.focusId === 'string' && p.focusId ? { secure: p.secure, id: p.focusId } : undefined)
-        } catch { resolve(undefined) }
-      })
-    })
-    const after = getActiveWindow()
-    const sameWindow = !!w && !!after && w.pid === after.pid && w.hwnd === after.hwnd && w.title === after.title
-    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined, title, appId: w ? getProcessExeName(w.pid) ?? undefined : undefined, secure: sameWindow ? focus?.secure : undefined, focusId: sameWindow && focus ? JSON.stringify([w!.pid, w!.hwnd, title, focus.id]) : undefined, historyRevision: revision }
+    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined, title, appId: w ? getProcessExeName(w.pid) ?? undefined : undefined, historyRevision: revision }
   } catch { return { historyRevision: revision } }
 }
 
@@ -478,7 +467,7 @@ function rememberTyped(text: string, ctx: DictationContext, target: HistoryConte
   // Numeric totals survive history being off or cleared; no transcript is in these counts.
   store.set('weekly', addWeekly(store.get('weekly'), text, durationMs))
   settingsChanged()
-  if (ctx.historyRevision !== historyRevision || !mayKeepHistory(store.get('keepHistory'), ctx) || !mayKeepHistory(true, target, text)) return
+  if (!isMac || ctx.historyRevision !== historyRevision || !mayKeepHistory(store.get('keepHistory'), ctx) || !mayKeepHistory(true, target)) return
   store.set('history', addHistory(store.get('history'), { text, at: Date.now(), app: target.app ?? ctx.app }))
   settingsChanged()
 }
@@ -501,6 +490,7 @@ function cancel(): void {
   sendPill(IPC_SEND.DICTATION_STOP, { send: false, sessionId })
   sessionId++ // Invalidate async work from the canceled hold, including a crashed renderer.
   busy = false
+  setMayRecord(settings().enabled)
   state({ phase: 'idle' })
   hidePill()
 }
@@ -578,7 +568,7 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   if (generation !== sessionId) return
   last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
   let target: HistoryContext = {}
-  const ok = await typeText(text, store.get('keepHistory') ? (actual) => { target = actual } : undefined)
+  const ok = await typeText(text, isMac && store.get('keepHistory') ? (actual) => { target = actual } : undefined)
   if (generation !== sessionId) return
   if (ok) {
     try { rememberTyped(text, ctx, target, Math.max(0, durationMs - RELEASE_PAD_MS)) }
@@ -589,6 +579,7 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
   )
   busy = false
+  setMayRecord(settings().enabled)
   // Couldn't type it. The clipboard is left alone (#15: PeakFlow's own text never lands
   // in QuickBoard history), so point at the launcher command that has the words
   state({ phase: ok ? 'done' : 'error', message: ok ? undefined : NOT_TYPED_MESSAGE })
@@ -615,6 +606,7 @@ export async function retryDictation(): Promise<boolean> {
   const clip = getKeptDictation() ? keptClip : null
   if (!clip || recording || busy) return false
   busy = true
+  setMayRecord(false)
   releasedAt = Date.now()
   showPill()
   state({ phase: 'transcribing' })
@@ -638,7 +630,7 @@ let pastedAt = 0
 async function typeText(text: string, capture?: (target: HistoryContext) => void): Promise<boolean> {
   if (process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Dictation] pasting ${text.length} chars into ${(await readContext()).app ?? 'unknown app'}`)
   pastedAt = Date.now()
-  return pasteAndRestore(text, capture ? { read: readContext, capture } : undefined)
+  return pasteAndRestore(text, capture ? { capture } : undefined)
 }
 
 // ─── IPC and lifecycle ───────────────────────────────────────────────────────
