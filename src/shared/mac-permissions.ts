@@ -3,10 +3,13 @@
  * main process (dialogs, the update dialog) and every screen that shows a
  * permission row: SnapGrid, FocusDim, the launcher's snippets and dictation.
  *
- * An unsigned PeakFlow update has a new code signature, so macOS stops
- * trusting it while System Settings still shows PeakFlow switched on.
- * Switching it on again does nothing; removing PeakFlow and adding it back does.
- * The cure is a Developer ID signature; until then this text says what works.
+ * An update that changes the code signature makes macOS stop trusting PeakFlow
+ * while System Settings still shows it switched on. That happens to ad-hoc builds
+ * (every build), and to the first update after switching to the stable certificate.
+ * Builds signed with the stable "PeakFlow Code Signing" certificate keep the grant
+ * across later updates. Switching it on again does nothing; removing PeakFlow and
+ * adding it back does. Developer ID is the real cure (notarized, no re-add); until
+ * then this text says what works.
  */
 
 import { ART_LABELS_EN, type ArtLabels } from './permission-art'

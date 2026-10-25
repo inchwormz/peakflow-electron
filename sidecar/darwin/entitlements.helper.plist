@@ -2,9 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Entitlements for the PeakFlowHelper Swift binary (Contents/Resources/peakflow-helper).
-  Intentionally empty: it runs under the hardened runtime but needs no JIT,
-  unsigned executable memory or device access. Accessibility and screen
-  access are TCC permissions, not entitlements. Applied by scripts/mac-sign.js.
+  Intentionally empty: it needs no JIT, unsigned executable memory or device
+  access. Accessibility and screen access are TCC permissions, not entitlements.
+  Applied by scripts/mac-sign.js. Only the Developer ID path signs the helper with
+  the hardened runtime. The self-signed and ad-hoc paths sign it WITHOUT the runtime
+  flag (like the 2.1.1 build), so this empty plist is embedded there with no runtime effect.
 -->
 <plist version="1.0">
 <dict>
