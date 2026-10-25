@@ -342,7 +342,7 @@ private func physicalKeyDown(_ code: Int64) -> Bool {
 private func emitHoldEvents(_ events: [String]) {
     for event in events {
         if dictate {
-            let now = ProcessInfo.processInfo.systemUptime * 1000
+            let now = Foundation.ProcessInfo.processInfo.systemUptime * 1000
             if event == "down" && mayRecord {
                 escapePressAt = now
                 escapeSecond = now - escapeTapUpAt <= 400
