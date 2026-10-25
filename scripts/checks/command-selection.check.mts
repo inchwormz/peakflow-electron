@@ -23,9 +23,11 @@ test('native validation is inside clipboard lock and precedes one normal paste, 
   assert.ok(worker.indexOf('gate.waitForApproval()',lock)<validate)
   assert.match(worker,/sameCommandSelection\(snapshot, current\)/)
   assert.match(worker,/!physicalKeyDown\(Int64\(code\)\)/)
-  assert.match(worker,/gate.begin[\s\S]*writeOwnText\(text\)[\s\S]*down.post/)
+  assert.match(worker,/gate.begin[\s\S]*writeOwnText\(text\)[\s\S]*commandSelectionUnchanged\(snapshot, pasteboard: pb, changeCount: ours\)[\s\S]*down.post/)
+  const lastCheck=worker.indexOf('commandSelectionUnchanged(snapshot,')
+  assert.match(worker.slice(lastCheck,paste),/^commandSelectionUnchanged\(snapshot, pasteboard: pb, changeCount: ours\) else \{ return \}\s*$/)
   assert.equal((worker.match(/down.post\(/g)??[]).length,1)
-  assert.match(worker,/pb.changeCount == ours \{ restorePasteboard\(saved\) \}/)
+  assert.match(worker,/began && pb.changeCount == ours \{ restorePasteboard\(saved\) \}/)
   assert.doesNotMatch(worker,/sendPaste|postKey\(8|previousApp|\.activate|kAXValueAttribute|kAXSelectedTextRangeAttribute/)
   const equality=swift.slice(swift.indexOf('private func sameCommandSelection'),swift.indexOf('private final class CommandPasteGate'))
   for(const field of ['a.pid == b.pid','CFEqual(a.window, b.window)','CFEqual(a.element, b.element)','a.range.location == b.range.location','a.range.length == b.range.length','a.text == b.text'])assert.ok(equality.includes(field),field)
@@ -85,9 +87,35 @@ test('actual Swift paste gate arbitrates cancellation and the native paste bound
   const {spawnSync}=await import('node:child_process')
   const {tmpdir}=await import('node:os')
   const {join}=await import('node:path')
+  const validation=swift.slice(swift.indexOf('private func validateCommandSelection'),swift.indexOf('private func commandSelectionUnchanged'))
   const gate=swift.slice(swift.indexOf('private final class CommandPasteGate'),swift.indexOf('/// Dedicated stdin protocol'))
   const code=`import Foundation
 ${gate}
+${validation}
+// The delayed focus/window AX replies let a person switch apps or move the range.
+func validate(_ change: String) -> Bool {
+    var pid=42, location=10, text="Original", focused=true
+    return validateCommandSelection(focus: {
+        Thread.sleep(forTimeInterval: 0.01)
+        if change == "app" { pid=99 }
+        if change == "range" { location=20 }
+        if change == "text" { text="Changed" }
+        if change == "focus" { focused=false }
+        return focused
+    }, range: { location == 10 }, text: { text == "Original" }, frontmost: { pid == 42 })
+}
+assert(validate("unchanged"))
+for change in ["app", "range", "text", "focus"] { assert(!validate(change)) }
+enum AXFailure: Error { case timeout }
+for failed in 0..<4 {
+    var checks=0
+    let read: () throws -> Bool = {
+        defer { checks += 1 }
+        if checks == failed { throw AXFailure.timeout }
+        return true
+    }
+    assert(!validateCommandSelection(focus: read, range: read, text: read, frontmost: read))
+}
 var writes=0
 private let cancelled=CommandPasteGate()
 cancelled.cancel()
@@ -104,7 +132,7 @@ assert(pasted.waitForApproval())
 assert(pasted.begin { writes += 1 })
 pasted.cancel()
 assert(writes==1)
-print("Swift native cancellation/approval/paste-boundary gate passed")
+print("Swift delayed AX selection validation and cancellation/approval/paste-boundary gate passed")
 `
   const dir=mkdtempSync(join(tmpdir(),'peakflow-command-gate-'))
   try{

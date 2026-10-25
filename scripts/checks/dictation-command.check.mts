@@ -86,3 +86,43 @@ test('add-on owns both stages, refreshes on failure, and never falls back to a s
   assert.equal(h.snapshot().refreshes,1);assert.equal(h.snapshot().busy,false)
   assert.equal(h.requests.filter(r=>r.stage==='rewrite').length,1)
 })
+
+// Run the real transcription parser against complete and truncated local responses.
+const sttModule = {exports:{} as any}
+const sttBundle = buildSync({entryPoints:[new URL('../../src/main/dictation/transcribe.ts',import.meta.url).pathname],bundle:true,platform:'node',format:'cjs',write:false}).outputFiles[0].text
+let sttResponse: () => Response
+new Function('module','exports','fetch',sttBundle)(sttModule,sttModule.exports,async()=>sttResponse())
+const stt = (opts: object) => sttModule.exports.transcribe(new Uint8Array(2000),{key:'test',...opts})
+const delta = 'data: {"type":"transcript.text.delta","delta":"Shorten"}\n\n'
+for (const ending of ['', 'data: [DONE]\n\n', 'data: {"type":"transcript.text.done"}\n\n']) {
+  test(`command refuses incomplete stream, ordinary dictation retains partial text (${ending.trim()})`,async()=>{
+    sttResponse=()=>new Response(delta+ending)
+    const h=commandHarness();h.start();h.capture();await tick();await h.advance(400);h.up();const audio=h.audio();await tick()
+    const opts=h.requests.at(-1).opts
+    assert.equal(opts.requireComplete,true)
+    const result=await stt(opts);assert.equal(result.ok,false)
+    h.stt(result);await audio
+    assert.deepEqual(h.requests.map(r=>r.stage),['capture','stt'])
+    assert.match(h.phases.at(-1).message,/Text unchanged/)
+    assert.deepEqual(await stt({stream:true}),{ok:true,text:'Shorten'})
+  })
+}
+test('command accepts a done event and only full non-streaming JSON responses',async()=>{
+  sttResponse=()=>new Response(delta+'data: {"type":"transcript.text.done","text":"Shorten it"}\n\n')
+  assert.deepEqual(await stt({stream:true,requireComplete:true}),{ok:true,text:'Shorten it'})
+  sttResponse=()=>new Response('{"text":"Shorten it"}')
+  assert.deepEqual(await stt({requireComplete:true}),{ok:true,text:'Shorten it'})
+  for(const body of ['{"text":"Shorten', '{}', 'data: {"type":"transcript.text.delta","delta":"Shorten"}']) {
+    sttResponse=()=>new Response(body)
+    assert.equal((await stt({requireComplete:true})).ok,false)
+  }
+})
+test('model-unavailable fallback also requires a completed command transcript',async()=>{
+  const h=commandHarness();h.start();h.capture();await tick();await h.advance(400);h.up();const audio=h.audio();await tick()
+  h.stt({ok:false,error:'model_unavailable'});await tick()
+  const opts=h.requests.at(-1).opts
+  assert.equal(opts.model,'gpt-4o-mini-transcribe');assert.equal(opts.requireComplete,true)
+  sttResponse=()=>new Response(delta)
+  h.stt(await stt(opts));await audio
+  assert.equal(h.requests.some(r=>r.stage==='rewrite'||r.stage==='paste'),false)
+})

@@ -24,7 +24,7 @@ const API = 'https://api.openai.com/v1'
 
 export async function transcribe(
   audio: Uint8Array,
-  opts: { key: string | null; model?: DictationModel; mime?: string; language?: string; prompt?: string; timeoutMs?: number; stream?: boolean; signal?: AbortSignal }
+  opts: { key: string | null; model?: DictationModel; mime?: string; language?: string; prompt?: string; timeoutMs?: number; stream?: boolean; requireComplete?: boolean; signal?: AbortSignal }
 ): Promise<TranscribeResult> {
   if (!opts.key) return { ok: false, error: 'no_key' }
   if (audio.byteLength < 1000) return { ok: false, error: 'no_speech' }
@@ -56,13 +56,14 @@ export async function transcribe(
     const unavailable = res.status === 404 || (res.status === 400 && /model/i.test(body))
     return { ok: false, error: unavailable ? 'model_unavailable' : 'failed', detail: `HTTP ${res.status} ${body.slice(0, 200)}` }
   }
-  const text = opts.stream ? await readStream(res) : (((await res.json().catch(() => ({}))) as { text?: string }).text ?? '').trim()
+  const text = opts.stream ? await readStream(res, opts.requireComplete) : (((await res.json().catch(() => ({}))) as { text?: string }).text ?? '').trim()
+  if (text === null) return { ok: false, error: 'failed', detail: 'Incomplete transcription' }
   return text ? { ok: true, text } : { ok: false, error: 'no_speech' }
 }
 
 /** Server-sent events: transcript.text.delta … transcript.text.done {text}. */
-async function readStream(res: Response): Promise<string> {
-  if (!res.body) return ''
+async function readStream(res: Response, requireComplete = false): Promise<string | null> {
+  if (!res.body) return requireComplete ? null : ''
   const reader = res.body.getReader()
   const dec = new TextDecoder()
   let buf = ''
@@ -83,12 +84,12 @@ async function readStream(res: Response): Promise<string> {
         if (ev.type === 'transcript.text.delta' && ev.delta) soFar += ev.delta
         else if (ev.type === 'transcript.text.done') {
           void reader.cancel().catch(() => {})
-          return (ev.text ?? soFar).trim()
+          return requireComplete && typeof ev.text !== 'string' ? null : (ev.text ?? soFar).trim()
         }
       } catch { /* partial event */ }
     }
   }
-  return soFar.trim()
+  return requireComplete ? null : soFar.trim()
 }
 
 /**

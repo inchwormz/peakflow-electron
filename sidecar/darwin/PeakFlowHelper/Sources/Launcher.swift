@@ -733,6 +733,34 @@ private func sameCommandSelection(_ a: CommandSnapshot, _ b: CommandSnapshot) ->
     a.range.location == b.range.location && a.range.length == b.range.length && a.text == b.text
 }
 
+/// Read blocking AX state first; the frontmost PID must be checked after it answers.
+private func validateCommandSelection(focus: () throws -> Bool, range: () throws -> Bool,
+                                      text: () throws -> Bool, frontmost: () throws -> Bool) -> Bool {
+    do { return try focus() && range() && text() && frontmost() }
+    catch { return false }
+}
+
+private func commandSelectionUnchanged(_ snapshot: CommandSnapshot, pasteboard: NSPasteboard, changeCount: Int) -> Bool {
+    let ax = AXUIElementCreateApplication(snapshot.pid)
+    guard AXUIElementSetMessagingTimeout(ax, 0.25) == .success,
+          AXUIElementSetMessagingTimeout(snapshot.element, 0.25) == .success else { return false }
+    return validateCommandSelection(focus: {
+        guard let focused = commandAttribute(ax, kAXFocusedUIElementAttribute),
+              let window = commandAttribute(ax, kAXFocusedWindowAttribute) else { return false }
+        return CFEqual(focused, snapshot.element) && CFEqual(window, snapshot.window)
+    }, range: {
+        guard let value = commandAttribute(snapshot.element, kAXSelectedTextRangeAttribute),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return false }
+        var range = CFRange(location: 0, length: 0)
+        return AXValueGetValue(value as! AXValue, .cfRange, &range) &&
+            range.location == snapshot.range.location && range.length == snapshot.range.length
+    }, text: {
+        (commandAttribute(snapshot.element, kAXSelectedTextAttribute) as? String) == snapshot.text
+    }, frontmost: {
+        pasteboard.changeCount == changeCount && NSWorkspace.shared.frontmostApplication?.processIdentifier == snapshot.pid
+    })
+}
+
 /// Cancellation and the start of paste share one mutex. Once paste starts, always restore.
 private final class CommandPasteGate {
     private let mutex = NSLock()
@@ -797,16 +825,16 @@ func runCommandSelection() -> Never {
                             down.setIntegerValueField(.eventSourceUserData, value: syntheticTag)
                             up.setIntegerValueField(.eventSourceUserData, value: syntheticTag)
                             var ours = before
-                            ok = gate.begin {
-                                emit(["stage": "pasting"])
+                            let began = gate.begin {
                                 writeOwnText(text)
                                 ours = pb.changeCount
+                                guard !physicalKeyDown(Int64(code)), commandSelectionUnchanged(snapshot, pasteboard: pb, changeCount: ours) else { return }
                                 down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+                                emit(["stage": "pasting"])
+                                ok = true
                             }
-                            if ok {
-                                usleep(400_000)
-                                if pb.changeCount == ours { restorePasteboard(saved) }
-                            }
+                            if ok { usleep(400_000) }
+                            if began && pb.changeCount == ours { restorePasteboard(saved) }
                         }
                     }
                 }

@@ -524,12 +524,12 @@ async function runCommandAudio(buf: ArrayBuffer, mime: string, command: CommandS
     uploadStarted = true
     const opts = { mime, durationMs, signal, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) }
     let result = auth ? await transcribeViaAddon(new Uint8Array(buf), auth, opts)
-      : await transcribe(new Uint8Array(buf), { ...opts, key, model, stream: true })
+      : await transcribe(new Uint8Array(buf), { ...opts, key, model, stream: true, requireComplete: true })
     if (!current()) return
     // Reuse only the existing explicit model-unavailable fallback; never retry an ambiguous failure.
     if (!auth && result.error === 'model_unavailable' && model !== 'gpt-4o-mini-transcribe') {
       if (clipOwner() !== command.owner) return commandFailure('Account changed', true)
-      result = await transcribe(new Uint8Array(buf), { ...opts, key, model: 'gpt-4o-mini-transcribe', stream: true })
+      result = await transcribe(new Uint8Array(buf), { ...opts, key, model: 'gpt-4o-mini-transcribe', stream: true, requireComplete: true })
     }
     if (!current()) return
     if (!result.ok || !result.text) return commandFailure(ERROR_TEXT[result.error ?? 'failed'], true)
