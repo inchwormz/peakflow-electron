@@ -29,6 +29,7 @@ if (process.platform === 'darwin' && existsSync(app)) {
   const kind = readMacSignature(app)
   console.log(`${app}: ${kind}`)
   assert.notEqual(kind, 'developer-id', 'local builds are not Developer ID signed')
-  assert.ok(kind === 'adhoc' || kind === 'unsigned', `expected adhoc/unsigned, got ${kind}`)
+  // Release builds are self-signed with "PeakFlow Code Signing", which reads as 'other'.
+  assert.ok(kind === 'adhoc' || kind === 'unsigned' || kind === 'other', `expected adhoc/unsigned/self-signed, got ${kind}`)
 }
 console.log('mac-signature check: OK')

@@ -106,7 +106,7 @@ test('[K6] standalone Swift state machine executes the native sequences',()=>{
  const launcher=read('sidecar/darwin/PeakFlowHelper/Sources/Launcher.swift')
  const escapeState=launcher.slice(launcher.indexOf('private var recordingEscape'),launcher.indexOf('private var nativeKeyState'))
  const transitions=launcher.slice(launcher.indexOf('private func emitHoldEvents('),launcher.indexOf('// Device-specific flags'))
-   .replace('ProcessInfo.processInfo.systemUptime * 1000','testNow')
+   .replace('Foundation.ProcessInfo.processInfo.systemUptime * 1000','testNow')
  const start=launcher.indexOf('    if code == 53 {')
  const escape=launcher.slice(start,launcher.indexOf('    let capsToggle',start)).replaceAll('return nil','return true')
  const armStart=launcher.indexOf('                    if id == escapeSessionId && mayRecord')
