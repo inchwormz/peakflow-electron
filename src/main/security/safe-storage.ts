@@ -18,7 +18,7 @@ import { withWatchdogPaused } from '../services/watchdog'
  */
 export function isAvailable(): boolean {
   try {
-    return withWatchdogPaused(() => safeStorage.isEncryptionAvailable())
+    return withWatchdogPaused(() => safeStorage.isEncryptionAvailable(), { unbounded: true })
   } catch {
     console.warn('[PeakFlow:SafeStorage] Failed to check availability')
     return false
@@ -35,7 +35,7 @@ export function encryptString(data: string): string | null {
       console.warn('[PeakFlow:SafeStorage] Encryption not available')
       return null
     }
-    const encrypted = withWatchdogPaused(() => safeStorage.encryptString(data))
+    const encrypted = withWatchdogPaused(() => safeStorage.encryptString(data), { unbounded: true })
     return encrypted.toString('base64')
   } catch (error) {
     console.warn('[PeakFlow:SafeStorage] encryptString failed:', error)
@@ -54,7 +54,7 @@ export function decryptString(encrypted: string): string | null {
       return null
     }
     const buffer = Buffer.from(encrypted, 'base64')
-    return withWatchdogPaused(() => safeStorage.decryptString(buffer))
+    return withWatchdogPaused(() => safeStorage.decryptString(buffer), { unbounded: true })
   } catch (error) {
     console.warn('[PeakFlow:SafeStorage] decryptString failed:', error)
     return null
