@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { openMicrophone } from '../../src/shared/dictation-microphone.ts'
 
 const messages: any[] = []
 let Processor: any
@@ -31,7 +32,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 const boot = (moduleReady: Promise<void> = Promise.resolve(), failure?: 'constructor' | 'start') => {
   const listeners = new Map<string, (raw?: unknown) => void>()
   const calls: unknown[][] = []
-  const opens: Array<{ resolve: (stream: any) => void; reject: (error: unknown) => void }> = []
+  const opens: Array<{ constraints: any; resolve: (stream: any) => void; reject: (error: unknown) => void }> = []
   const tracks: Array<{ stopped: boolean; stop: () => void }> = []
   const recorders: any[] = []
   const worklets: any[] = []
@@ -61,9 +62,10 @@ const boot = (moduleReady: Promise<void> = Promise.resolve(), failure?: 'constru
     disconnect() {}
   }
   const ipc = Object.fromEntries(['DICTATION_READY', 'DICTATION_MIC_ERROR', 'DICTATION_AUDIO', 'DICTATION_START', 'DICTATION_STOP', 'DICTATION_STATE'].map((name) => [name, name]))
-  const cleanup = new Function('document', 'navigator', 'AudioContext', 'MediaRecorder', 'AudioWorkletNode', 'captureWorkletUrl', 'invoke', 'IPC_INVOKE', 'IPC_SEND', 'window', 'rec', 'ctxRef', 'startId', 'phase', 'phaseAt', 'setSt', js)(
+  const cleanup = new Function('openMicrophone', 'document', 'navigator', 'AudioContext', 'MediaRecorder', 'AudioWorkletNode', 'captureWorkletUrl', 'invoke', 'IPC_INVOKE', 'IPC_SEND', 'window', 'rec', 'ctxRef', 'startId', 'phase', 'phaseAt', 'setSt', js)(
+    openMicrophone,
     { documentElement: { style: {} }, body: { style: {} } },
-    { mediaDevices: { enumerateDevices: async () => [], getUserMedia: () => new Promise((resolve, reject) => opens.push({ resolve, reject })) } },
+    { mediaDevices: { enumerateDevices: async () => [], getUserMedia: (constraints: any) => new Promise((resolve, reject) => opens.push({ constraints, resolve, reject })) } },
     Context, Recorder, Worklet, 'processor-url', async (...args: unknown[]) => calls.push(args), ipc, ipc,
     { peakflow: { on: (event: string, callback: (raw: unknown) => void) => { listeners.set(event, callback); return () => listeners.delete(event) } } },
     { current: null }, { current: null }, { current: 0 }, { current: 'idle' }, { current: 0 }, () => {}
@@ -172,3 +174,17 @@ for (const failure of ['constructor', 'start'] as const) {
   assert.equal(track.stopped, true)
 }
 console.log('dictation-capture: recorder failures close microphone and stale STOP cannot cancel newer sessions')
+
+{
+  const r = boot()
+  r.listeners.get('DICTATION_START')!({ sessionId: 8, microphone: 'missing-usb' })
+  assert.equal(r.opens[0].constraints.audio.deviceId.exact, 'missing-usb')
+  r.opens[0].reject({name:'NotFoundError'})
+  await tick()
+  assert.equal(r.opens.length,2)
+  assert.equal(r.opens[1].constraints.audio.deviceId,undefined)
+  const track=r.resolveOpen(1);await tick()
+  assert.equal(r.recorders[0].state,'recording')
+  r.cleanup();assert.equal(track.stopped,true)
+}
+console.log('dictation-capture: selected microphone and missing-device fallback use actual pill path')

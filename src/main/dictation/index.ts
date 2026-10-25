@@ -9,6 +9,9 @@
  * the paste lands in the app the person is typing in.
  */
 
+import { addWeekly, weeklyNow, type WeeklyStats } from '@shared/dictation-stats'
+import { addHistory, mayKeepHistory, type HistoryEntry, type HistoryContext } from './history'
+import { DictationGesture } from './gesture'
 import { serial } from './serial'
 import { RecordingStart } from './recording-start'
 import { autoEnable, toggleChoice } from './activation'
@@ -27,14 +30,14 @@ import type { DictationHoldKey, DictationSettings, DictationState } from '@share
 import { storeCredential, getCredential, deleteCredential } from '../security/credentials'
 import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } from '../services/permissions-darwin'
 import { getPanel, hidePanel, showPanel } from '../panel'
-import { missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
-import { onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
+import { holdKeyName, missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
+import { onRecordingEscape, setRecordingEscape, setMayRecord, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
 import { pasteAndRestore } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, applyReplacements, CLEANUP_MAX_BYTES, type DictationContext } from './smart'
 import { runMacHelper } from '../native/mac-helper'
-import { getActiveWindow } from '../native/active-window'
+import { getActiveWindow, getProcessExeName } from '../native/active-window'
 import { allowServerOverride, fetchAddonStatus, transcribeViaAddon, addonTidyFetch, type AddonAuth, type AddonStatus } from './addon'
 
 const isMac = process.platform === 'darwin'
@@ -62,17 +65,23 @@ interface DictationData {
   words: string
   /** Made up once; the add-on's server allows two computers per licence */
   deviceId?: string
+  microphone: string
+  keepHistory: boolean
+  history: HistoryEntry[]
+  weekly?: WeeklyStats
 }
 
 const store = new Store<DictationData>({
   name: 'config-dictation',
   clearInvalidConfig: true,
   // fn on Mac (John, 22 Oct: "take over the function key"); settings warn when another app or macOS also uses it
-  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '' }
+  defaults: { enabled: false, userOff: false, holdKey: isMac ? 'fn' : 'rctrl', tidy: true, words: '', microphone: '', keepHistory: true, history: [] }
 })
 
+let historyRevision = 0
 let pill: BrowserWindow | null = null
 let quitting = false
+const gesture = new DictationGesture()
 let downAt = 0
 let releasedAt = 0
 let recording = false
@@ -82,9 +91,10 @@ let showTimer: ReturnType<typeof setTimeout> | null = null
 let busy = false
 let sessionId = 0
 let audioReceived = false
+let uploadStarted = false
 let stopTimer: ReturnType<typeof setTimeout> | null = null
-const recordingStart = new RecordingStart<{ at: number; processing: boolean; sessionId: number }>((opts) => {
-  state({ phase: 'listening' })
+const recordingStart = new RecordingStart<{ at: number; processing: boolean; sessionId: number; microphone: string }>((opts) => {
+  state({ phase: 'listening', message: gesture.locked ? `Tap ${holdKeyName(settings().holdKey, isMac)} to finish` : undefined })
   sendPill(IPC_SEND.DICTATION_START, opts)
 })
 /** gpt-transcribe unless this key turned out not to have it (remembered until restart) */
@@ -217,7 +227,11 @@ function settings(): DictationSettings {
     cleanup: store.get('tidy'),
     wordCount: parseMyWords(store.get('words')).hints.length,
     active: store.get('enabled') && key && isExpansionActive(),
-    kept: getKeptDictation()?.seconds
+    kept: getKeptDictation()?.seconds,
+    microphone: store.get('microphone'),
+    keepHistory: isMac && store.get('keepHistory'),
+    history: isMac && store.get('keepHistory') ? store.get('history') : [],
+    weekly: weeklyNow(store.get('weekly'))
   }
 }
 
@@ -254,6 +268,8 @@ async function settingsWithHint(): Promise<DictationSettings> {
 /** Holding the key dictates only while dictation is on (the key is still watched for SnapGrid's double tap). */
 function applyWatcher(): void {
   const s = settings()
+  if (!s.enabled && recording) { gesture.reset(); cancel() }
+  setMayRecord(s.enabled && !busy)
   setHoldKey(s.holdKey as NativeHoldKey, s.enabled)
 }
 
@@ -303,6 +319,7 @@ function getPill(): BrowserWindow {
     const active = recording || busy
     cancel()
     busy = false
+    setMayRecord(settings().enabled)
     w.destroy()
     if (active) fail('failed')
   })
@@ -361,6 +378,7 @@ const ERROR_TEXT: Record<TranscribeError | 'mic_denied' | 'mic_none', string> = 
 }
 
 function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
+  gesture.reset()
   recordingStart.cancel()
   if (maxTimer) clearTimeout(maxTimer)
   if (stopTimer) clearTimeout(stopTimer)
@@ -368,7 +386,9 @@ function fail(code: keyof typeof ERROR_TEXT, kept = false): void {
   sendPill(IPC_SEND.DICTATION_STOP, { send: false, sessionId })
   clearShowTimer()
   recording = false
+  setRecordingEscape(false)
   busy = false
+  setMayRecord(settings().enabled)
   const tryAgain = kept && sayTryAgain(code)
   showPill(PILL_ERROR_W)
   state({ phase: 'error', message: tryAgain ? `${ERROR_TEXT[code]}. Try again in PeakFlow › Dictation` : ERROR_TEXT[code] })
@@ -382,7 +402,9 @@ function onDown(): void {
   downAt = Date.now()
   recording = true
   sessionId++
+  setRecordingEscape(true, sessionId)
   audioReceived = false
+  uploadStarted = false
   getPill()
   const key = getCredential(CRED_TOOL, CRED_TYPE)
   // Request the microphone now and keep captured samples; the pill waits until this is
@@ -394,26 +416,28 @@ function onDown(): void {
   }, MIN_HOLD_MS)
   state({ phase: 'listening' })
   // PEAKFLOW_DICTATION_MIC_RAW=1 (testing): no echo cancelling, noise suppression or auto gain
-  recordingStart.start({ at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1', sessionId })
+  recordingStart.start({ at: downAt, processing: process.env['PEAKFLOW_DICTATION_MIC_RAW'] !== '1', sessionId, microphone: store.get('microphone') })
   // While they talk: open the connection to OpenAI and read where the text is going
   warmConnection(key)
   context = readContext()
   if (maxTimer) clearTimeout(maxTimer)
-  maxTimer = setTimeout(() => onUp(), MAX_HOLD_MS)
+  maxTimer = setTimeout(() => { gesture.reset(); onUp() }, MAX_HOLD_MS)
 }
 
-function onUp(): void {
+function onUp(finishLocked = false): void {
   if (!recording) return
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = null
   recording = false
+  setRecordingEscape(false)
   clearShowTimer()
-  if (Date.now() - downAt < MIN_HOLD_MS) return cancel()
+  if (!finishLocked && Date.now() - downAt < MIN_HOLD_MS) return cancel()
   // Never open a mic after release if the renderer was still loading.
   if (!recordingStart.isReady) return fail('no_speech')
   showPill()
   releasedAt = Date.now()
   busy = true
+  setMayRecord(false)
   state({ phase: 'transcribing' })
   stopTimer = setTimeout(() => {
     stopTimer = null
@@ -423,19 +447,29 @@ function onUp(): void {
 
 /** The front app and up to 500 characters each side of the cursor (never password fields). */
 async function readContext(): Promise<DictationContext> {
+  const revision = historyRevision
   if (isMac) {
     const r = await runMacHelper(['context'], 800)
-    if (!r || r.secure === true) return { app: typeof r?.app === 'string' ? r.app : undefined }
     const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
-    return { app: str(r.app), before: str(r.before), after: str(r.after) }
+    const metadata = { app: str(r?.app), appId: str(r?.bundleId), title: str(r?.title), secure: typeof r?.secure === 'boolean' ? r.secure : undefined, historyRevision: revision }
+    if (!r || r.secure === true) return metadata
+    return { ...metadata, before: str(r.before), after: str(r.after) }
   }
   try {
-    // Windows: the window title's last part is usually the app ("Report - Word")
-    const title = getActiveWindow()?.title ?? ''
-    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined }
-  } catch {
-    return {}
-  }
+    const w = getActiveWindow()
+    const title = w?.title ?? ''
+    return { app: title.split(' - ').pop()?.trim().slice(0, 60) || undefined, title, appId: w ? getProcessExeName(w.pid) ?? undefined : undefined, historyRevision: revision }
+  } catch { return { historyRevision: revision } }
+}
+
+/** Save only successful typing when both the source and destination allow it. */
+function rememberTyped(text: string, ctx: DictationContext, target: HistoryContext, durationMs: number): void {
+  // Numeric totals survive history being off or cleared; no transcript is in these counts.
+  store.set('weekly', addWeekly(store.get('weekly'), text, durationMs))
+  settingsChanged()
+  if (!isMac || ctx.historyRevision !== historyRevision || !mayKeepHistory(store.get('keepHistory'), ctx) || !mayKeepHistory(true, target)) return
+  store.set('history', addHistory(store.get('history'), { text, at: Date.now(), app: target.app ?? ctx.app }))
+  settingsChanged()
 }
 
 /** Tap, or another key pressed with the hold key (a shortcut, not dictation). */
@@ -452,9 +486,11 @@ function cancel(): void {
   if (maxTimer) clearTimeout(maxTimer)
   maxTimer = null
   recording = false
+  setRecordingEscape(false)
   sendPill(IPC_SEND.DICTATION_STOP, { send: false, sessionId })
   sessionId++ // Invalidate async work from the canceled hold, including a crashed renderer.
   busy = false
+  setMayRecord(settings().enabled)
   state({ phase: 'idle' })
   hidePill()
 }
@@ -490,6 +526,7 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   // Long clips get longer to upload and come back (S11: a fixed 30 s lost long dictations on slow connections)
   const timeoutMs = transcribeTimeoutMs(durationMs)
   let auth = viaAddon() ? addonAuth() : null
+  uploadStarted = true
   let r = auth
     ? await transcribeViaAddon(new Uint8Array(buf), auth, { mime, prompt, durationMs, timeoutMs: transcribeTimeoutMs(durationMs, 45_000) })
     : await transcribe(new Uint8Array(buf), { key, model, mime, prompt, stream: true, timeoutMs })
@@ -530,13 +567,19 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   text = applyReplacements(text, words.replacements)
   if (generation !== sessionId) return
   last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
-  const ok = await typeText(text)
+  let target: HistoryContext = {}
+  const ok = await typeText(text, isMac && store.get('keepHistory') ? (actual) => { target = actual } : undefined)
   if (generation !== sessionId) return
+  if (ok) {
+    try { rememberTyped(text, ctx, target, Math.max(0, durationMs - RELEASE_PAD_MS)) }
+    catch { console.warn('[Dictation] could not save stats/history after typing') }
+  }
   console.log(
     `[Dictation] let go → typed in ${pastedAt - releasedAt} ms (speech-to-text ${sttMs} ms incl. ${RELEASE_PAD_MS} ms pad, tidy ${tidyNote}, ` +
       `${(buf.byteLength / 1024).toFixed(0)} KB, ${ctx.app ?? 'unknown app'}${ctx.before ? `, ${ctx.before.length} chars context` : ''})`
   )
   busy = false
+  setMayRecord(settings().enabled)
   // Couldn't type it. The clipboard is left alone (#15: PeakFlow's own text never lands
   // in QuickBoard history), so point at the launcher command that has the words
   state({ phase: ok ? 'done' : 'error', message: ok ? undefined : NOT_TYPED_MESSAGE })
@@ -563,6 +606,7 @@ export async function retryDictation(): Promise<boolean> {
   const clip = getKeptDictation() ? keptClip : null
   if (!clip || recording || busy) return false
   busy = true
+  setMayRecord(false)
   releasedAt = Date.now()
   showPill()
   state({ phase: 'transcribing' })
@@ -583,10 +627,10 @@ export function pasteDictation(text: string): Promise<boolean> {
 /** Paste into the app in front, then put the clipboard back as it was. */
 let pastedAt = 0
 
-async function typeText(text: string): Promise<boolean> {
+async function typeText(text: string, capture?: (target: HistoryContext) => void): Promise<boolean> {
   if (process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Dictation] pasting ${text.length} chars into ${(await readContext()).app ?? 'unknown app'}`)
   pastedAt = Date.now()
-  return pasteAndRestore(text)
+  return pasteAndRestore(text, capture ? { capture } : undefined)
 }
 
 // ─── IPC and lifecycle ───────────────────────────────────────────────────────
@@ -693,6 +737,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
       owner?.once('hide', cancelCapture)
       sender.once('destroyed', cancelCapture)
       sender.once('render-process-gone', cancelCapture)
+      gesture.reset()
       cancel()
       retryExpansion()
       setHoldKeyCapture(true)
@@ -731,7 +776,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     return account
   })
   h(IPC_INVOKE.DICTATION_CHECKOUT, (e, amount: unknown) => fromUi(e) ? openDictationCheckout(amount) : false)
-  serialised(IPC_INVOKE.DICTATION_SETTINGS, () => settingsWithHint())
+  serialised(IPC_INVOKE.DICTATION_SETTINGS, (e) => fromUi(e) ? settingsWithHint() : null)
   h(IPC_INVOKE.DICTATION_PERMISSIONS, () => permissions())
   h(IPC_INVOKE.DICTATION_ALLOW, (e) => (fromUi(e) ? allowNext() : permissions()))
   // "Try again" on the Dictation page: give the app underneath the keyboard back, then type into it
@@ -742,7 +787,7 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     return retryDictation()
   })
   serialised(IPC_INVOKE.DICTATION_SET, (e, key: unknown, value: unknown) => {
-    if (!fromUi(e)) return settings()
+    if (!fromUi(e)) return null
     if (key === 'enabled' && typeof value === 'boolean') {
       const choice = toggleChoice(value)
       store.set('enabled', choice.enabled)
@@ -754,6 +799,15 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     } else if (key === 'holdKey') {
       const chosen = normalizeHoldKey(value, process.platform)
       if (chosen) store.set('holdKey', chosen)
+    } else if (key === 'microphone' && typeof value === 'string' && value.length <= 512) {
+      store.set('microphone', value)
+    } else if (key === 'keepHistory' && typeof value === 'boolean') {
+      historyRevision++
+      store.set('keepHistory', value)
+      if (!value) store.set('history', [])
+    } else if (key === 'clearHistory' && value === true) {
+      historyRevision++
+      store.set('history', [])
     } else if (key === 'cleanup' && typeof value === 'boolean') {
       store.set('tidy', value)
     }
@@ -762,16 +816,17 @@ function registerIpc(getLauncherContents: () => Electron.WebContents | undefined
     settingsChanged()
     return settingsWithHint()
   })
-  serialised(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromUi(e) ? saveKey(key) : { ok: false, error: 'failed', settings: settings() }))
+  serialised(IPC_INVOKE.DICTATION_SAVE_KEY, (e, key: unknown) => (fromUi(e) ? saveKey(key) : { ok: false, error: 'failed' }))
   h(IPC_INVOKE.DICTATION_WORDS, (e) => (fromUi(e) ? store.get('words') : ''))
   serialised(IPC_INVOKE.DICTATION_SET_WORDS, (e, text: unknown) => {
-    if (!fromUi(e) || typeof text !== 'string') return settings()
+    if (!fromUi(e)) return null
+    if (typeof text !== 'string') return settings()
     store.set('words', text.slice(0, 20_000))
     settingsChanged()
     return settings()
   })
   serialised(IPC_INVOKE.DICTATION_REMOVE_KEY, (e) => {
-    if (!fromUi(e)) return settings()
+    if (!fromUi(e)) return null
     deleteCredential(CRED_TOOL, CRED_TYPE)
     // With the add-on, dictation carries on without their own key
     if (!viaAddon()) store.set('enabled', false)
@@ -788,11 +843,26 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   const migrated = normalizeHoldKey(store.get('holdKey'), process.platform)
   if (migrated) store.set('holdKey', migrated)
   registerIpc(getLauncherContents)
+  onRecordingEscape((id) => {
+    if (id !== sessionId || (!recording && (!busy || uploadStarted))) return
+    gesture.reset()
+    cancel()
+    showPill()
+    state({ phase: 'cancelled', message: 'Cancelled' })
+    hidePill(700)
+  })
   onHoldKey((e) => {
-    if (e === 'down') onDown()
-    else if (e === 'up') onUp()
-    // A press ignored while busy owns no recording and must not cancel the pending clip.
-    else if (recording) cancel()
+    if (busy || !settings().enabled) { gesture.reset(); return }
+    const wasLocked = gesture.locked
+    const action = gesture.feed(e, Date.now())
+    if (action === 'start') onDown()
+    else if (action === 'stop') onUp(wasLocked)
+    else if (action === 'drop' && recording) cancel()
+    else if (action === 'lock' && recording) {
+      clearShowTimer()
+      showPill(PILL_ERROR_W)
+      state({ phase: 'listening', message: `Tap ${holdKeyName(settings().holdKey, isMac)} to finish` })
+    }
   })
   applyWatcher()
   // Load the pill early when dictation is on, so the first hold records straight away
@@ -801,6 +871,22 @@ export function initDictation(getLauncherContents: () => Electron.WebContents | 
   void refreshAddon(true).then(() => {
     if (settings().enabled) getPill()
   })
+}
+
+/** Real pill preview without START, microphone capture, transcription or paste. */
+export async function previewDictationPill(phase: 'listening' | 'locked' | 'transcribing' | 'cancelled' | 'error'): Promise<BrowserWindow> {
+  if (!is.dev || app.isPackaged) throw new Error('Pill previews are development only')
+  if (recording || busy) throw new Error('Cannot preview a pill during dictation')
+  const w = getPill()
+  if (w.webContents.isLoading()) await new Promise<void>((resolve) => w.webContents.once('did-finish-load', () => resolve()))
+  // Let the real component install its IPC listeners before sending the state.
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  await w.webContents.executeJavaScript('window.__pfLevel = 0.55')
+  showPill(phase === 'locked' || phase === 'error' ? PILL_ERROR_W : PILL_W)
+  state(phase === 'locked'
+    ? { phase: 'listening', message: `Tap ${holdKeyName(settings().holdKey, isMac)} to finish` }
+    : phase === 'error' ? { phase, message: ERROR_TEXT.no_speech } : { phase })
+  return w
 }
 
 /**
@@ -895,6 +981,7 @@ async function recordPillFrames(dir: string): Promise<void> {
 
 export function destroyDictation(): void {
   quitting = true
+  gesture.reset()
   cancel()
   if (maxTimer) clearTimeout(maxTimer)
   if (pill && !pill.isDestroyed()) pill.destroy()

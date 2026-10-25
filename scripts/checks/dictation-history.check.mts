@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { buildSync } from 'esbuild'
+const mod = { exports: {} as any }
+new Function('module', 'exports', buildSync({ entryPoints: ['src/main/dictation/history.ts'], bundle: true, platform: 'node', format: 'cjs', write: false }).outputFiles[0].text)(mod, mod.exports)
+const { addHistory, mayKeepHistory } = mod.exports
+
+test('history keeps only newest 25 typed texts, without audio or context', () => {
+  let list: ReturnType<typeof addHistory> = []
+  for (let i = 0; i < 30; i++) list = addHistory(list, { text: `text ${i}`, at: i, app: 'Mail', buf: 'audio' } as any)
+  assert.equal(list.length, 25); assert.equal(list[0].text, 'text 29'); assert.equal(list[24].text, 'text 5')
+  assert.deepEqual(Object.keys(list[0]).sort(), ['app', 'at', 'text'])
+})
+test('off, password fields, unknown security and privacy apps skip history', () => {
+  const safe = { secure: false, app: 'Mail', appId: 'com.apple.mail', title: 'Hello' }
+  assert.equal(mayKeepHistory(true, safe), true)
+  assert.equal(mayKeepHistory(false, safe), false)
+  assert.equal(mayKeepHistory(true, { ...safe, secure: true }), false)
+  assert.equal(mayKeepHistory(true, { app: 'Mail' }), false)
+  for (const ctx of [{ ...safe, appId: 'com.1password.1password' }, { ...safe, title: 'ANZ Internet Banking - Chrome' }]) assert.equal(mayKeepHistory(true, ctx), false)
+})
+
+const { readFileSync } = await import('node:fs')
+const { transformSync } = await import('esbuild')
+const main = readFileSync(new URL('../../src/main/dictation/index.ts', import.meta.url), 'utf8')
+const extract = (source: string, start: string, end: string) => transformSync(source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start))), { loader: 'ts' }).code
+
+test('actual history writer honors off, clear generation, private paste target; stats remain independent', () => {
+  const run = new Function('addHistory', 'mayKeepHistory', `
+    const isMac=true
+    let historyRevision=1, changes=0
+    const data={keepHistory:true,history:[],weekly:undefined}
+    const store={get:k=>data[k],set:(k,v)=>data[k]=v},settingsChanged=()=>changes++
+    const addWeekly=(s,text,ms)=>({words:(s?.words??0)+text.split(' ').length,spokenSeconds:ms/1000})
+    ${extract(main, 'function rememberTyped(', '/** Tap, or another key')}
+    return {data,write:rememberTyped,clear:()=>{historyRevision++;data.history=[]}}
+  `)(addHistory, mayKeepHistory)
+  const safe = { secure: false, app: 'Mail', historyRevision: 1 }
+  run.write('hello there', safe, safe, 1000)
+  assert.equal(run.data.history.length, 1)
+  run.write('private target', safe, { secure: true }, 1000)
+  assert.equal(run.data.history.length, 1)
+  run.clear(); run.write('old pending', safe, safe, 1000)
+  assert.equal(run.data.history.length, 0, 'clear cannot be undone by pending clip')
+  run.data.keepHistory = false
+  run.write('off now', { ...safe, historyRevision: 2 }, safe, 1000)
+  assert.equal(run.data.history.length, 0)
+  assert.equal(run.data.weekly.words, 8, 'counts work with history off, without text retention')
+})
+
+test('Windows never retains any field or text shape; weekly stats still count', () => {
+  const run = new Function('addHistory', 'mayKeepHistory', `
+    const isMac=false,historyRevision=1,data={keepHistory:true,history:[],weekly:0}
+    const store={get:k=>data[k],set:(k,v)=>data[k]=v},settingsChanged=()=>{}
+    const addWeekly=n=>n+1
+    ${extract(main, 'function rememberTyped(', '/** Tap, or another key')}
+    return {data,write:rememberTyped}
+  `)(addHistory, mayKeepHistory)
+  for (const secure of [false,true,undefined]) {
+    for (const text of ['12345678','password','a long secret passphrase','Password123!','ordinary sentence']) {
+      const ctx={secure,app:'Editor',historyRevision:1}
+      run.write(text,ctx,ctx,1000)
+      assert.equal(run.data.history.length,0)
+    }
+  }
+  assert.equal(run.data.weekly,15)
+  assert.doesNotMatch(main,/UIAutomationClient|GetRuntimeId|focusId/)
+})
+
+test('Windows paste does no history sampling; Mac still captures privacy under the pasteboard lock', async () => {
+  const selection = readFileSync(new URL('../../src/main/launcher/selection.ts', import.meta.url), 'utf8')
+  const code = extract(selection, 'export function pasteAndRestore(', 'async function winSelection(').replace('export ', '')
+  let pasted=0
+  const paste = new Function('process','oneAtATime','ownerHwnd','saveAndWriteOwnText','simulateCtrlV','sleep','restoreWinClipboard',code+';return pasteAndRestore')(
+    {platform:'win32'},async fn=>fn(),()=>0,async()=>({saved:{},stamp:{}}),async()=>{pasted++;return true},async()=>{},async()=>true
+  )
+  assert.equal(await paste('password',{read:()=>{throw Error('must not sample')},capture:()=>{throw Error('must not capture')}}),true)
+  assert.equal(pasted,1)
+  const swift = readFileSync(new URL('../../sidecar/darwin/PeakFlowHelper/Sources/Launcher.swift', import.meta.url), 'utf8')
+  const body=swift.slice(swift.indexOf('func pasteTextRestoring'),swift.indexOf('/// Our own synthetic'))
+  assert.ok(body.indexOf('guard let lock = lockPasteboard()') < body.indexOf('dictationContext(includeText: false)'))
+  assert.ok(body.indexOf('dictationContext(includeText: false)') < body.indexOf('var result = sendPaste()'))
+})
+
+test('Windows panel shows weekly stats while hiding all history controls', () => {
+  const panel=readFileSync(new URL('../../src/renderer/src/panel/tools/dictation/index.tsx',import.meta.url),'utf8')
+  assert.match(panel, /\{isMac\(\) \? <Note>Recent<\/Note> : null\}/)
+  const group=panel.slice(panel.indexOf('{isMac() ? <Grp style={{ marginTop: 4 }}>'),panel.indexOf('</Grp> : null}',panel.indexOf('{isMac() ? <Grp style={{ marginTop: 4 }}>')))
+  for(const label of ['Keep history','Show all','>Clear</LinkBtn>']) assert.ok(group.includes(label))
+  assert.match(panel,/words this week, about/)
+})

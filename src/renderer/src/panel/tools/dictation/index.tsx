@@ -13,7 +13,10 @@
  * Routes: dictation, dictation/settings, dictation/key, dictation/words.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { historyTime } from '@shared/dictation-history-time'
+import { weeklyNow, minutesSaved } from '@shared/dictation-stats'
+import { microphoneOptions } from '@shared/dictation-microphone'
 import { createLatest } from '@shared/latest-only'
 import { HOLD_KEY_COPY, type NativeHoldKey } from '@shared/dictation-key'
 import { watchAccount } from './refresh'
@@ -26,7 +29,7 @@ import {
 } from '@shared/dictation-view'
 import type { PanelToolModule } from '../../types'
 import { invoke, isMac, useInvoke, useIpcEvent, usePanelVisible } from '../../hooks'
-import { Banner, Btn, Gap, Grp, Note, Primary, Row, Seg, Toggle } from '../../kit'
+import { Banner, Btn, Gap, Grp, Note, Primary, Row, Seg, Toggle, Picker, LinkBtn } from '../../kit'
 import { useNav } from '../../nav'
 import { PermissionNotice, openPermission } from '../../permission'
 import { guideCopy } from '@shared/mac-permissions'
@@ -144,7 +147,7 @@ function Main(): React.JSX.Element {
             <br />
             {PERMISSION_WHY.microphone} macOS asks once.
           </Banner>
-          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => invoke<DictationPermissions>(IPC_INVOKE.DICTATION_ALLOW).then(setPerms).catch(() => {})}>
+          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => void invoke<DictationPermissions>(IPC_INVOKE.DICTATION_ALLOW).then(setPerms).catch(() => {})}>
             Allow
           </Btn>
         </>
@@ -175,7 +178,7 @@ function Main(): React.JSX.Element {
             <br />
             {s.kept} {s.kept === 1 ? 'second' : 'seconds'} of talking is saved. Try again types it into the app you were using.
           </Banner>
-          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => invoke<boolean>(IPC_INVOKE.DICTATION_RETRY).catch(() => {})}>
+          <Btn block style={{ marginTop: 12, marginBottom: 14 }} onClick={() => void invoke<boolean>(IPC_INVOKE.DICTATION_RETRY).catch(() => {})}>
             Try again
           </Btn>
         </>
@@ -194,13 +197,85 @@ function Main(): React.JSX.Element {
           right={capturing ? <Btn sm onClick={() => void invoke(IPC_INVOKE.DICTATION_RECORD_KEY, false)}>{HOLD_KEY_COPY.cancel}</Btn> : <Btn sm onClick={() => void changeKey()}>{HOLD_KEY_COPY.change}</Btn>}
         />
       </Grp>
+      <Grp style={{ marginTop: 10 }}><Microphone value={s.microphone ?? ''} onChange={(v) => void takeS(setting('microphone', v))} /></Grp>
       {keyError ? <Note style={{ marginTop: 8 }}>{keyError}</Note> : null}
       {s.enabled && s.hint ? <Note style={{ marginTop: 8 }}>{s.hint}</Note> : null}
 
       <Gap h={14} />
       <Paying view={pay} ownKey={!!s.ownKey} checkoutOpened={checkoutOpened} />
+      <Gap h={14} />
+      <Recent />
     </>
   )
+}
+
+function Microphone({ value, onChange }: { value: string; onChange: (v: string) => void }): React.JSX.Element {
+  const [options, setOptions] = useState<Array<[string, string]>>([['', 'System default']])
+  useEffect(() => {
+    let alive = true
+    const refresh = (): void => { void navigator.mediaDevices.enumerateDevices().then((devices) => { if (alive) setOptions(microphoneOptions(devices)) }).catch(() => {}) }
+    refresh()
+    navigator.mediaDevices.addEventListener('devicechange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => { alive = false; navigator.mediaDevices.removeEventListener('devicechange', refresh); window.removeEventListener('focus', refresh) }
+  }, [])
+  return <Row label="Microphone" right={<Picker label="Microphone" value={options.some(([id]) => id === value) ? value : ''} options={options} onChange={onChange} />} />
+}
+
+function Recent(): React.JSX.Element {
+  const { s, takeS } = useDictation()
+  const nav = useNav()
+  const [all, setAll] = useState(false)
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  if (!s) return <></>
+  const history = s.history ?? []
+  const weekly = weeklyNow(s.weekly)
+  return (
+    <>
+      {isMac() ? <Note>Recent</Note> : null}
+      <Note>{weekly.words} words this week, about {minutesSaved(weekly)} minutes saved</Note>
+      {isMac() ? <Grp style={{ marginTop: 4 }}>
+        <Row label="Keep history" right={<Toggle label="Keep history" checked={s.keepHistory !== false} onChange={(v) => void takeS(setting('keepHistory', v))} />} />
+        {(all ? history : history.slice(0, 5)).map((entry, i) => (
+          <HistoryRow key={`${entry.at}-${i}`} entry={entry} now={now} />
+        ))}
+        {history.length ? <div className="r">
+          {history.length > 5 ? <LinkBtn onClick={() => setAll(!all)}>{all ? 'Show less' : 'Show all'}</LinkBtn> : null}
+          <LinkBtn style={{ marginLeft: 'auto' }} onClick={() => void takeS(setting('clearHistory', true)).catch(() => nav.toast('Could not clear history'))}>Clear</LinkBtn>
+        </div> : null}
+      </Grp> : null}
+    </>
+  )
+}
+
+/** A native button keeps Enter and Space copying identical to a pointer click. */
+function HistoryRow({ entry, now }: { entry: { text: string; at: number; app?: string }; now: Date }): React.JSX.Element {
+  const nav = useNav()
+  const metadataId = useId()
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false; clearTimeout(timer.current) }
+  }, [])
+  const copy = async (): Promise<void> => {
+    try {
+      await invoke(IPC_INVOKE.CLIPBOARD_WRITE_TEXT, entry.text)
+      if (!alive.current) return
+      clearTimeout(timer.current)
+      setCopied(true)
+      timer.current = setTimeout(() => setCopied(false), 1200)
+    } catch { if (alive.current) nav.toast('Could not copy') }
+  }
+  return <button type="button" className="r dictation-history-row" aria-label={'Copy: ' + entry.text} aria-describedby={metadataId} onClick={() => void copy()}>
+    <span className="l">{entry.text}<small id={metadataId} aria-live="polite">{copied ? 'Copied' : [historyTime(entry.at, now), entry.app].filter(Boolean).join(' · ')}</small></span>
+    <span className="ri hk link" aria-hidden="true">Copy</span>
+  </button>
 }
 
 /** The balance and Add $5–$20 (or Get dictation), with the own key as the small second option. */
@@ -321,7 +396,7 @@ function OwnKey(): React.JSX.Element {
           <Row
             label="OpenAI key"
             sub="Saved encrypted on this computer"
-            right={<Btn sm onClick={() => takeS(invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY)).then(() => { nav.toast('Key removed') }).catch(() => {})}>Remove</Btn>}
+            right={<Btn sm onClick={() => void takeS(invoke<DictationSettings>(IPC_INVOKE.DICTATION_REMOVE_KEY)).then(() => { nav.toast('Key removed') }).catch(() => {})}>Remove</Btn>}
           />
         </Grp>
         <Note style={{ marginTop: 10 }}>If you also have a balance, dictation uses the balance first. Your key takes over when the balance can’t be used.</Note>

@@ -144,7 +144,7 @@ private func unlockPasteboard(_ fd: Int32?) {
 /// and images included. If someone copies something in the meantime, that
 /// copy is kept. Without Accessibility nothing is pasted and the text stays
 /// on the pasteboard so the person can paste it by hand.
-func pasteTextRestoring() -> String {
+func pasteTextRestoring(dictation: Bool = false) -> String {
     let input = FileHandle.standardInput.readDataToEndOfFile()
     guard let text = String(data: input, encoding: .utf8), !text.isEmpty else {
         return jsonLine(["ok": false, "trusted": true, "error": "no text"])
@@ -156,7 +156,11 @@ func pasteTextRestoring() -> String {
     guard let saved = savePasteboard() else { return jsonLine(["ok": false, "trusted": true, "error": "unreadable"]) }
     writeOwnText(text)
     let ours = pb.changeCount
+    // Dictation privacy is sampled after the clipboard lock, at the actual paste destination.
+    let privacy = dictation ? dictationContext(includeText: false) : nil
     var result = sendPaste()
+    if let privacy = privacy, let data = privacy.data(using: .utf8),
+       let parsed = try? JSONSerialization.jsonObject(with: data) { result["dictationPrivacy"] = parsed }
     guard result["ok"] as? Bool == true else { return jsonLine(result) }
     usleep(400_000) // give the app time to read the pasteboard
     let restored = pb.changeCount == ours
@@ -226,12 +230,19 @@ func selectedText(axOnly: Bool = false) -> String {
 
 // MARK: - dictation context
 
-func dictationContext(limit: Int = 500) -> String {
+func dictationContext(limit: Int = 500, includeText: Bool = true) -> String {
     guard AXIsProcessTrusted() else { return jsonLine(["trusted": false]) }
     guard let app = NSWorkspace.shared.frontmostApplication else { return jsonLine(["trusted": true]) }
     var out: [String: Any] = ["app": app.localizedName ?? "", "bundleId": app.bundleIdentifier ?? "", "trusted": true]
     let axApp = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(axApp, 0.25) // a slow app must not hold up dictation
+    var window: CFTypeRef?
+    if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &window) == .success,
+       let window = window, CFGetTypeID(window) == AXUIElementGetTypeID() {
+        var title: CFTypeRef?
+        AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title)
+        out["title"] = title as? String
+    }
     var focused: CFTypeRef?
     guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
           let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() else { return jsonLine(out) }
@@ -239,11 +250,13 @@ func dictationContext(limit: Int = 500) -> String {
     var role: CFTypeRef?
     var subrole: CFTypeRef?
     AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
-    AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+    let subroleStatus = AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
     if (subrole as? String) == (kAXSecureTextFieldSubrole as String) || (role as? String) == "AXSecureTextField" {
         out["secure"] = true
         return jsonLine(out)
     }
+    if role != nil && subroleStatus == .success { out["secure"] = false }
+    if !includeText { return jsonLine(out) }
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &value) == .success,
           let text = value as? String, !text.isEmpty else { return jsonLine(out) }
@@ -312,12 +325,43 @@ private var typed = ""
 private var keywatchTap: CFMachPort?
 private var holdKeyCode: Int64 = -1
 private var captureHoldKey = false
+private var recordingEscape = false
+private var mayRecord = false
+private var escapeAccepted = false
+private var escapeSessionId = 0
+private var escapeDown = false
+private var dictate = false
+private var escapeLocked = false
+private var escapePressAt: Double? = nil
+private var escapeTapUpAt = -Double.infinity
+private var escapeSecond = false
 private var nativeKeyState = NativeKeyState()
 private func physicalKeyDown(_ code: Int64) -> Bool {
     CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
 }
 private func emitHoldEvents(_ events: [String]) {
-    for event in events { emit(["e": "hold-" + event]) }
+    for event in events {
+        if dictate {
+            let now = Foundation.ProcessInfo.processInfo.systemUptime * 1000
+            if event == "down" && mayRecord {
+                escapePressAt = now
+                escapeSecond = now - escapeTapUpAt <= 400
+                if !escapeLocked { escapeSessionId += 1; escapeAccepted = false; recordingEscape = false }
+            } else if event == "cancel" {
+                escapePressAt = nil; escapeTapUpAt = -Double.infinity
+                if !escapeLocked { recordingEscape = false }
+            } else if event == "up", let start = escapePressAt {
+                let tap = now - start < 300
+                escapePressAt = nil
+                if escapeLocked {
+                    if tap { escapeLocked = false; recordingEscape = false; escapeTapUpAt = -Double.infinity }
+                } else if tap && escapeSecond && escapeAccepted {
+                    escapeLocked = true; recordingEscape = true; escapeTapUpAt = -Double.infinity
+                } else { recordingEscape = false; escapeTapUpAt = tap ? now : -Double.infinity }
+            }
+        }
+        emit(["e": "hold-" + event, "sessionId": escapeSessionId])
+    }
 }
 // Device-specific flags distinguish each side even while the opposite side stays held.
 private let modifierBits: [Int64: UInt64] = [55: 0x8, 54: 0x10, 58: 0x20, 61: 0x40,
@@ -419,6 +463,13 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     let isModifier = modifierBits[code] != nil
     let isDown = type == .keyDown || (type == .flagsChanged && modifierIsDown(code, event.flags))
     let isUp = type == .keyUp || (type == .flagsChanged && !modifierIsDown(code, event.flags))
+    if code == 53 {
+        if isDown && (recordingEscape || escapeDown) {
+            if !escapeDown { escapeDown = true; recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity; emit(["e": "recording-escape", "sessionId": escapeSessionId]) }
+            return nil
+        }
+        if isUp && escapeDown { escapeDown = false; return nil }
+    }
     let capsToggle = type == .flagsChanged && code == 57
     let result = nativeKeyState.feed(code: code, down: isDown || capsToggle, up: isUp && !capsToggle,
                                     repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
@@ -481,13 +532,40 @@ private func readSnippetUpdates() {
             guard let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
+            if let allowed = obj["mayRecord"] as? Bool {
+                DispatchQueue.main.async {
+                    mayRecord = allowed
+                    if !allowed {
+                        recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity
+                    }
+                }
+            }
+            if let id = (obj["armEscape"] as? NSNumber)?.intValue {
+                DispatchQueue.main.async {
+                    if id == escapeSessionId && mayRecord && dictate && (escapePressAt != nil || escapeLocked) {
+                        escapeAccepted = true; recordingEscape = true
+                    }
+                }
+            }
+            if let id = (obj["disarmEscape"] as? NSNumber)?.intValue {
+                DispatchQueue.main.async {
+                    if id == escapeSessionId {
+                        recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = nil
+                    }
+                }
+            }
             if obj.keys.contains("hold") || obj.keys.contains("captureHoldKey") {
                 let key = obj["hold"] as? [String: Any]
                 let code = (key?["code"] as? NSNumber)?.int64Value ?? -1
                 let capture = obj["captureHoldKey"] as? Bool
+                let enabled = obj["dictate"] as? Bool
                 DispatchQueue.main.async {
                     if obj.keys.contains("hold") {
                         holdKeyCode = (modifierBits[code] != nil || functionKeyCodes.contains(code)) ? code : -1
+                    }
+                    if let enabled = enabled, enabled != dictate {
+                        dictate = enabled
+                        recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity
                     }
                     if let capture = capture { captureHoldKey = capture }
                     let physical = Set((0..<256).map { Int64($0) }.filter { physicalKeyDown($0) })

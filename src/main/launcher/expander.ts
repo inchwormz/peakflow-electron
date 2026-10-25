@@ -38,6 +38,47 @@ let holdListener: ((e: 'down' | 'up' | 'cancel') => void) | null = null
 const doubleListeners = new Set<() => void>()
 const taps = new KeyTaps()
 
+// Bind a watcher-owned recording identity to Electron's audio identity. Arming is
+// local to an eligible key event, then confirmed by Electron after accepting audio.
+let mayRecord = false
+let nativeEscapeId = 0
+let escapeBinding: { native: number; audio: number } | null = null
+let escapeListener: ((id: number) => void) | null = null
+export function onRecordingEscape(fn: (id: number) => void): void { escapeListener = fn }
+/** Availability defaults off, and is replayed when a watcher starts. */
+export function setMayRecord(value: boolean): void {
+  mayRecord = value
+  sendMayRecord()
+}
+function sendMayRecord(): void {
+  if (!child?.stdin?.writable) return
+  try {
+    if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ mayRecord }) + '\n')
+    else child.stdin.write(`MAY-RECORD ${mayRecord ? 1 : 0}\n`)
+  } catch { /* A missing watcher must never block audio. */ }
+}
+export function setRecordingEscape(recording: boolean, id = escapeBinding?.audio): void {
+  if (recording) {
+    escapeBinding = { native: nativeEscapeId, audio: id! }
+    // Never swallow Esc for a speculative press: stale availability or a delayed
+    // confirmation can only let Esc pass through, never cancel an unrelated app.
+    if (!child?.stdin?.writable) return
+    try {
+      if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ armEscape: nativeEscapeId }) + '\n')
+      else child.stdin.write(`ARM ${nativeEscapeId}\n`)
+    } catch { /* Best effort; no acknowledgement wait. */ }
+    return
+  }
+  if (escapeBinding) disarmEscape(escapeBinding.native)
+}
+function disarmEscape(id: number): void {
+  if (!child?.stdin?.writable) return
+  try {
+    if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ disarmEscape: id }) + '\n')
+    else child.stdin.write(`DISARM ${id}\n`)
+  } catch { /* Safety net only: a missing or crashed watcher never blocks audio. */ }
+}
+
 /** Record physical keys through the same native watcher, including fn and side-specific modifiers. */
 export function onHoldKeyRecorded(fn: (code: number) => void): () => void {
   recordedListeners.add(fn)
@@ -99,14 +140,18 @@ function refreshWanted(): void {
 function sendHold(): void {
   if (!child?.stdin?.writable) return
   const key = watchedKey()
-  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, captureHoldKey: capturingHoldKey }) + '\n')
+  sendMayRecord()
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, captureHoldKey: capturingHoldKey, dictate: dictating }) + '\n')
   else {
+    child.stdin.write(`DICTATE ${dictating ? 1 : 0}\n`)
     child.stdin.write(`HOLD ${key?.code ?? 0}\n`)
     child.stdin.write(`CAPTURE ${capturingHoldKey ? 1 : 0}\n`)
   }
 }
 
 function onKey(e: 'down' | 'up' | 'cancel'): void {
+  // Dictation owns double taps while enabled; SnapGrid keeps them while it is off.
+  if (dictating) { holdListener?.(e); return }
   for (const a of taps.feed(e, Date.now())) {
     if (a === 'double') doubleListeners.forEach((fn) => fn())
     else if (dictating) holdListener?.(a)
@@ -146,7 +191,7 @@ async function expandOnWindows(keyword: string): Promise<void> {
 
 function onLine(line: string): void {
   try {
-    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number }
+    const ev = JSON.parse(line) as { e?: string; trusted?: boolean; keyword?: string; code?: number; sessionId?: number }
     if (ev.e === 'ready') {
       active = ev.trusted !== false
       if (!active) logUntrustedOnce()
@@ -158,11 +203,18 @@ function onLine(line: string): void {
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
     } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
+    if (ev.e === 'recording-escape') {
+      if (escapeBinding && ev.sessionId === escapeBinding.native) escapeListener?.(escapeBinding.audio)
+    }
     if (ev.e === 'hold-key-recorded' && capturingHoldKey && Number.isInteger(ev.code)) {
       capturingHoldKey = false
       recordedListeners.forEach((fn) => fn(ev.code!))
       applyHoldKey()
-    } else if (ev.e === 'hold-down') onKey('down')
+    } else if (ev.e === 'hold-down') {
+      nativeEscapeId = ev.sessionId ?? 0
+      onKey('down')
+      if (escapeBinding?.native !== nativeEscapeId) disarmEscape(nativeEscapeId)
+    }
     else if (ev.e === 'hold-up') onKey('up')
     else if (ev.e === 'hold-cancel') onKey('cancel')
   } catch { /* not ours */ }
@@ -208,6 +260,14 @@ public static class PfKeyWatch {
   static volatile string[] keywords = new string[0];
   static volatile int holdVk = 0;
   static bool captureHoldKey = false;
+  static volatile bool recordingEscape = false;
+  static bool mayRecord = false, escapeAccepted = false;
+  static int escapeId = 0;
+  static bool escapeDown = false;
+  static bool dictate = false, escapeLocked = false;
+  static long escapePressAt = -1, escapeTapUpAt = -1000;
+  static bool escapeSecond = false;
+  static readonly Stopwatch escapeClock = Stopwatch.StartNew();
   static readonly object keyLock = new object();
   static NativeKeyState keyState = new NativeKeyState();
   static HashSet<uint> PhysicalKeys() {
@@ -219,13 +279,38 @@ public static class PfKeyWatch {
     }
     return keys;
   }
-  static void EmitEvents(List<string> events) { foreach (string e in events) Emit("hold-" + e); }
+  static void EmitEvents(List<string> events) {
+    foreach (string e in events) {
+      if (dictate) {
+        long now = escapeClock.ElapsedMilliseconds;
+        if (e == "down" && mayRecord) {
+          escapePressAt = now;
+          escapeSecond = now - escapeTapUpAt <= 400;
+          if (!escapeLocked) { escapeId++; escapeAccepted = false; recordingEscape = false; }
+        } else if (e == "cancel") {
+          escapePressAt = -1; escapeTapUpAt = -1000;
+          if (!escapeLocked) recordingEscape = false;
+        } else if (e == "up" && escapePressAt >= 0) {
+          bool tap = now - escapePressAt < 300;
+          escapePressAt = -1;
+          if (escapeLocked) {
+            if (tap) { escapeLocked = false; recordingEscape = false; escapeTapUpAt = -1000; }
+          } else if (tap && escapeSecond && escapeAccepted) {
+            escapeLocked = true; recordingEscape = true; escapeTapUpAt = -1000;
+          } else { recordingEscape = false; escapeTapUpAt = tap ? now : -1000; }
+        }
+      }
+      EmitSession("hold-" + e);
+    }
+  }
   static bool IsModifier(uint vk) { return (vk >= 0xA0 && vk <= 0xA5) || vk == 0x5B || vk == 0x5C; }
   static bool IsAllowedHold(int vk) { return IsModifier((uint)vk) || (vk >= 0x70 && vk <= 0x87); }
   const int WM_KEYUP = 0x0101;
   const int WM_SYSKEYUP = 0x0105;
 
   static void Emit(string e) { Console.Out.WriteLine("{\\"e\\":\\"" + e + "\\"}"); Console.Out.Flush(); }
+
+  static void EmitSession(string e) { Console.Out.WriteLine("{\\"e\\":\\"" + e + "\\",\\"sessionId\\":" + escapeId + "}"); Console.Out.Flush(); }
 
   static void Backspaces(int n) {
     INPUT[] inputs = new INPUT[n * 2];
@@ -251,6 +336,13 @@ public static class PfKeyWatch {
         bool isUp = (int)wParam == WM_KEYUP || (int)wParam == WM_SYSKEYUP;
         if ((k.flags & LLKHF_INJECTED) == 0) {
           lock (keyLock) {
+            if (k.vkCode == 27) {
+              if (isDown && (recordingEscape || escapeDown)) {
+                if (!escapeDown) { escapeDown = true; recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000; EmitSession("recording-escape"); }
+                return new IntPtr(1);
+              }
+              if (isUp && escapeDown) { escapeDown = false; return new IntPtr(1); }
+            }
             HashSet<uint> physical = PhysicalKeys();
             bool otherModifier = false;
             foreach (uint other in physical) {
@@ -322,6 +414,35 @@ public static class PfKeyWatch {
           lock (keyLock) {
             holdVk = IsAllowedHold(vk) ? vk : 0;
             EmitEvents(keyState.Configure(holdVk, captureHoldKey, PhysicalKeys()));
+          }
+        } else if (line.StartsWith("DICTATE ")) {
+          lock (keyLock) {
+            bool enabled = line.Substring(8).Trim() == "1";
+            if (dictate != enabled) {
+              dictate = enabled;
+              recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;
+            }
+          }
+        } else if (line.StartsWith("MAY-RECORD ")) {
+          lock (keyLock) {
+            mayRecord = line.Substring(11).Trim() == "1";
+            if (!mayRecord) {
+              recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1; escapeTapUpAt = -1000;
+            }
+          }
+        } else if (line.StartsWith("ARM ")) {
+          lock (keyLock) {
+            int id;
+            if (int.TryParse(line.Substring(4).Trim(), out id) && id == escapeId && mayRecord && dictate && (escapePressAt >= 0 || escapeLocked)) {
+              escapeAccepted = true; recordingEscape = true;
+            }
+          }
+        } else if (line.StartsWith("DISARM ")) {
+          lock (keyLock) {
+            int id;
+            if (int.TryParse(line.Substring(7).Trim(), out id) && id == escapeId) {
+              recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = -1;
+            }
           }
         } else if (line.StartsWith("CAPTURE ")) {
           lock (keyLock) {
@@ -397,9 +518,12 @@ function start(): void {
     const encoded = Buffer.from(WIN_HOOK, 'utf16le').toString('base64')
     child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', encoded], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
   } else return
+  escapeBinding = null
+  nativeEscapeId = 0
   const c = child
   let buf = ''
   c.stdout?.on('data', (d: Buffer) => {
+    if (child !== c) return
     buf += d.toString()
     let i: number
     while ((i = buf.indexOf('\n')) >= 0) {

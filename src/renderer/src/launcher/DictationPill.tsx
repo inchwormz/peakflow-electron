@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { openMicrophone } from '@shared/dictation-microphone'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
 import type { DictationState } from '@shared/launcher/types'
 import { invoke } from '../panel/hooks'
@@ -68,7 +69,7 @@ export function DictationPill(): React.JSX.Element {
       if (rec.current === r) rec.current = null
     }
 
-    const start = async (opts: { at?: number; processing?: boolean; sessionId?: number }): Promise<void> => {
+    const start = async (opts: { at?: number; processing?: boolean; sessionId?: number; microphone?: string }): Promise<void> => {
       const id = ++startId.current
       activeSessionId = opts.sessionId
       const processing = opts.processing !== false
@@ -76,9 +77,7 @@ export function DictationPill(): React.JSX.Element {
       try {
         // This is the first asynchronous action on START: no network or worklet
         // setup is allowed to postpone asking the device for audio.
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, sampleRate: { ideal: 24000 }, echoCancellation: processing, noiseSuppression: processing, autoGainControl: processing }
-        })
+        stream = await openMicrophone((constraints) => navigator.mediaDevices.getUserMedia(constraints), opts.microphone ?? '', processing, () => id === startId.current && !disposed)
       } catch (err) {
         if (id !== startId.current || disposed) return
         const name = (err as DOMException).name
@@ -156,7 +155,7 @@ export function DictationPill(): React.JSX.Element {
       release(r)
     }
 
-    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean; sessionId?: number }))
+    const offStart = window.peakflow.on(IPC_SEND.DICTATION_START, (raw) => void start((raw ?? {}) as { at?: number; processing?: boolean; sessionId?: number; microphone?: string }))
     const offStop = window.peakflow.on(IPC_SEND.DICTATION_STOP, (raw) => { const opts = raw as { send?: boolean; sessionId?: number } | undefined; stop(!!opts?.send, opts?.sessionId) })
     const offState = window.peakflow.on(IPC_SEND.DICTATION_STATE, (raw) => {
       const s = raw as DictationState
@@ -306,7 +305,9 @@ export function DictationPill(): React.JSX.Element {
         aria-live="polite"
         aria-label={st.phase === 'listening' ? 'Listening' : st.phase === 'transcribing' ? 'Typing' : st.phase === 'done' ? 'Done' : undefined}
       >
-        <canvas ref={canvas} style={{ width: CANVAS_W, height: CANVAS_H, display: error ? 'none' : 'block' }} aria-hidden />
+        <canvas ref={canvas} style={{ width: CANVAS_W, height: CANVAS_H, display: error || st.phase === 'cancelled' ? 'none' : 'block' }} aria-hidden />
+        {st.phase === 'cancelled' ? <span style={S.text}>Cancelled</span> : null}
+        {st.phase === 'listening' && st.message ? <span style={S.text}>{st.message}</span> : null}
         {error && (
           <>
             <span style={S.dot} aria-hidden />

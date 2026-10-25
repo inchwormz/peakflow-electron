@@ -95,3 +95,25 @@ test('[R4] the audio is dropped 30 minutes after recording even if PeakFlow sits
   assert.ok(keep.includes('if (keptTimer) clearTimeout(keptTimer)'))
   assert.ok(!main.includes('{ ...clip, at: Date.now() }'), 'a failed retry no longer restarts the clock')
 })
+
+test('stats or history write failure after paste never retains audio for retry', async () => {
+  const { transformSync } = await import('esbuild')
+  const main = src('src/main/dictation/index.ts')
+  const code = transformSync(main.slice(main.indexOf('async function runClip('), main.indexOf('/** A kept clip')), { loader: 'ts' }).code
+  for (const failedKey of ['weekly', 'history']) {
+    const boot = new Function(`
+      const isMac=true,setMayRecord=()=>{},settings=()=>({enabled:true})
+      let sessionId=1,busy=true,releasedAt=0,model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0,kept=0
+      const clipOwner=()=>'',ownerForSend=()=>'',transcribe=async()=>({ok:true,text:'hello'}),viaAddon=()=>false
+      const getCredential=()=>null,CRED_TOOL='',CRED_TYPE='',RELEASE_PAD_MS=150
+      const store={get:()=>false,set:k=>{if(k===${JSON.stringify(failedKey)})throw new Error('disk full')}}
+      const rememberTyped=()=>store.set(${JSON.stringify(failedKey)},[])
+      const parseMyWords=()=>({replacements:[]}),transcriptionPrompt=()=>'',transcribeTimeoutMs=()=>1000
+      const typeText=async()=>{typed++;return true},applyReplacements=t=>t,keepClip=c=>{if(c)kept++},state=()=>{},hidePill=()=>{},fail=()=>{}
+      ${code}
+      return {run:()=>runClip({buf:new ArrayBuffer(2000),mime:'audio/webm',durationMs:1000,ctx:{}}),result:()=>({typed,kept,busy})}
+    `)()
+    await boot.run()
+    assert.deepEqual(boot.result(), { typed: 1, kept: 0, busy: false }, failedKey)
+  }
+})

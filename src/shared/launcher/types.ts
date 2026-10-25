@@ -183,9 +183,13 @@ export interface DictationSettings {
   ownKey?: boolean
   /** A clip that couldn't be turned into text is kept to try again: its length in seconds */
   kept?: number
+  weekly?: import('../dictation-stats').WeeklyStats
+  microphone?: string
+  keepHistory?: boolean
+  history?: Array<{ text: string; at: number; app?: string }>
 }
 
 export interface DictationState {
-  phase: 'listening' | 'transcribing' | 'done' | 'error' | 'idle'
+  phase: 'cancelled' | 'listening' | 'transcribing' | 'done' | 'error' | 'idle'
   message?: string
 }
