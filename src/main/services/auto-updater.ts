@@ -28,7 +28,7 @@ import Store from 'electron-store'
 import { createWriteStream } from 'fs'
 import { dirname, join } from 'path'
 import { readMacSignature } from './mac-signature'
-import { isNewer, shouldOffer, percentOf, type UpdateProgress } from '@shared/update-offer'
+import { isNewer, shouldOffer, percentOf, macDmgArch, type UpdateProgress } from '@shared/update-offer'
 import { IPC_SEND } from '@shared/ipc-types'
 import { AFTER_UPDATE_TITLE, FORGOT_ACCESSIBILITY, PERMISSION_GUIDE_URL } from '@shared/mac-permissions'
 import { showPanel } from '../panel'
@@ -42,11 +42,11 @@ const RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO
 const isMac = process.platform === 'darwin'
 
 /** Unsigned Mac builds download from the website, which redirects to the current .dmg. */
+const MAC_DMG_ARCH = macDmgArch(process.arch, isMac && app.runningUnderARM64Translation)
 const MAC_DOWNLOAD_URL =
-  process.arch === 'arm64'
+  MAC_DMG_ARCH === 'arm64'
     ? 'https://getpeakflow.pro/download/PeakFlow-Mac.dmg'
     : 'https://getpeakflow.pro/download/PeakFlow-Mac-Intel.dmg'
-const MAC_DMG_ARCH = process.arch === 'arm64' ? 'arm64' : 'x64'
 const MAC_HELP_URL = 'https://getpeakflow.pro/download#open-on-mac'
 
 /** How often a running PeakFlow re-checks (it is a tray/menu bar app that runs for days). */
@@ -354,7 +354,8 @@ async function fetchLatestMacVersion(): Promise<string | null> {
 async function downloadMacDmg(version: string): Promise<string> {
   const res = await net.fetch(MAC_DOWNLOAD_URL, { headers: { 'User-Agent': `PeakFlow/${app.getVersion()}` } })
   if (!res.ok || !res.body) throw new Error(`Download failed: HTTP ${res.status}`)
-  const dest = join(app.getPath('downloads'), `PeakFlow-${version}.dmg`)
+  const chip = MAC_DMG_ARCH === 'arm64' ? 'Apple-Silicon' : 'Intel'
+  const dest = join(app.getPath('downloads'), `PeakFlow-${version}-${chip}.dmg`)
   const file = createWriteStream(dest)
   const reader = res.body.getReader()
   const total = Number(res.headers.get('content-length') ?? 0)
@@ -519,6 +520,9 @@ export async function checkForUpdates(silent = false): Promise<void> {
  * and every 4 hours while PeakFlow runs.
  */
 export function initAutoUpdater(): void {
+  if (isMac && MAC_DMG_ARCH === 'arm64' && process.arch === 'x64') {
+    console.log('[AutoUpdater] An Intel build is running on Apple silicon; the Apple silicon download will be offered.')
+  }
   setTimeout(() => {
     checkForUpdates(true)
   }, 5000)

@@ -8,7 +8,7 @@
 import { ipcMain, BrowserWindow, shell, app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
-import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery } from '@shared/ipc-types'
+import type { AccessStatus, LicenseActivationResult, WindowInfo, AppIconQuery, AppInfo } from '@shared/ipc-types'
 import type { ConfigGetPayload, ConfigSetPayload } from '@shared/ipc-types'
 import type { ToolConfig, LiquidFocusConfig } from '@shared/config-schemas'
 import { ToolId, SystemWindowId, TODOIST_ENABLED } from '@shared/tool-ids'
@@ -1165,10 +1165,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_INVOKE.APP_QUIT, (): void => app.quit())
   ipcMain.handle(
     IPC_INVOKE.APP_GET_INFO,
-    (): { version: string; platform: string; arch: string; isDev: boolean } => ({
+    (): AppInfo => ({
       version: app.getVersion(),
       platform: process.platform,
       arch: process.arch,
+      translated: app.runningUnderARM64Translation,
       isDev: is.dev
     })
   )

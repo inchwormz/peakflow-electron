@@ -47,3 +47,8 @@ For every Mac build (`npm run build:mac`).
    The Dictation page also shows a warning row with an Open settings button when this
    happens. Fix: remove PeakFlow from Accessibility (select it, click −), then add it again
    with + from Applications. Hold-to-talk and snippets start working without a restart.
+5. **Remove local build copies after verifying a Mac build** (agent-added, approved via coordinator 2026-10-25).
+   Unregister `release/mac/PeakFlow.app` and `release/mac-arm64/PeakFlow.app` with
+   `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u <app-path>`,
+   then delete those local app copies. A leftover x64 copy with the real bundle id can
+   be opened by macOS instead of `/Applications/PeakFlow.app`; this caused the 2026-10-25 Intel install.
