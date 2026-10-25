@@ -9,6 +9,7 @@
  * compromised page can't open arbitrary files or run commands.
  */
 
+import { fillPlaceholders } from './snippet-text'
 import { app, clipboard, globalShortcut, ipcMain, Notification, shell } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { chmodSync, existsSync, writeFileSync } from 'fs'
@@ -135,13 +136,6 @@ function safeWebUrl(raw: string): string | null {
   }
 }
 
-function fillPlaceholders(text: string): string {
-  const now = new Date()
-  return text
-    .replace(/\{date\}/g, now.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }))
-    .replace(/\{time\}/g, now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))
-    .replace(/\{clipboard\}/g, clipboard.readText())
-}
 
 async function openPath(p: string, reveal: boolean): Promise<LauncherRunResult> {
   if (reveal) {
@@ -225,7 +219,7 @@ async function runItem(id: string, opts: LauncherRunOptions = {}): Promise<Launc
   if (id.startsWith('snip:')) {
     const s = launcherStore.snippets().find((x) => `snip:${x.id}` === id)
     if (!s) return { ok: false }
-    const text = fillPlaceholders(s.text)
+    const text = fillPlaceholders(s.text, () => clipboard.readText())
     if (opts.alt) {
       clipboard.writeText(text)
       hideLauncher({ restoreFocus: true })

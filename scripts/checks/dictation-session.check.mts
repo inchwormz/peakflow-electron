@@ -25,7 +25,7 @@ test('cancel while context is pending never dispatches stale clip', async()=>{
   const js=code('function cancel()', '/** Speech to text, clean-up')
   const boot=new Function(`
     const settings=()=>({enabled:true}),isMac=true
-    let uploadStarted=false; let sessionId=4,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
+    let connectionWarmup='unknown'; let uploadStarted=false; let sessionId=4,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
     let finish,runs=0
     const context=new Promise(r=>finish=r),RELEASE_PAD_MS=150,IPC_SEND={},setMayRecord=()=>{},setRecordingEscape=()=>{},recordingStart={cancel:()=>{}}
     const runClip=async()=>runs++
@@ -43,10 +43,10 @@ test('cancel while context is pending never dispatches stale clip', async()=>{
 })
 
 test('a canceled upload completion cannot paste or change a newer recording',async()=>{
-  const js=code('async function runClipSteps(', '/** A kept clip')
+  const js='const clipTiming=()=>({attempts:[]}),logTiming=()=>{},voiceSnippets=()=>[],exactSnippet=()=>undefined,snippetSpans=()=>[],expandSnippets=(text,spans,ordinary)=>ordinary(text);\n'+code('async function runClipSteps(', '/** A kept clip')
   const boot=new Function(`
     const settings=()=>({enabled:true}),isMac=true
-    let uploadStarted=false; let sessionId=1,busy=true,releasedAt=0,model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0
+    let connectionWarmup='unknown'; let uploadStarted=false; let sessionId=1,busy=true,releasedAt=0,model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0
     let resolveUpload
     const transcribe=()=>new Promise(r=>resolveUpload=r),viaAddon=()=>false,addonAuth=()=>null
     const getCredential=()=>null,CRED_TOOL='',CRED_TYPE='',store={get:()=>false}
@@ -67,7 +67,7 @@ for (const watcher of ['missing acknowledgement', 'absent watcher', 'crashed wat
     const js=code('async function onAudio(', '/** Speech to text, clean-up')
     let runs=0
     const audio=new Function('runClip', `
-      const sessionId=17,context=Promise.resolve({}),releasedAt=1000,downAt=0,RELEASE_PAD_MS=150
+      const connectionWarmup='unknown',sessionId=17,context=Promise.resolve({}),releasedAt=1000,downAt=0,RELEASE_PAD_MS=150
       ${js};return onAudio
     `)(async()=>{runs++})
     await audio(new ArrayBuffer(2000),'audio/webm')

@@ -13,6 +13,7 @@
  * (setHoldKey / onHoldKey), since Electron's shortcuts only see key presses.
  */
 
+import { fillPlaceholders } from './snippet-text'
 import { spawn, type ChildProcess } from 'child_process'
 import { clipboard } from 'electron'
 import { existsSync } from 'fs'
@@ -162,13 +163,6 @@ export function isExpansionActive(): boolean {
   return active
 }
 
-function fillPlaceholders(text: string): string {
-  const now = new Date()
-  return text
-    .replace(/\{date\}/g, now.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }))
-    .replace(/\{time\}/g, now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))
-    .replace(/\{clipboard\}/g, clipboard.readText())
-}
 
 function sendSnippets(): void {
   if (!child?.stdin?.writable) return
@@ -186,7 +180,7 @@ async function expandOnWindows(keyword: string): Promise<void> {
   const s = current.find((x) => x.keyword === keyword)
   if (!s) return
   // Pastes, then puts the clipboard back with every format (selection.ts)
-  await pasteAndRestore(fillPlaceholders(s.text))
+  await pasteAndRestore(fillPlaceholders(s.text, () => clipboard.readText()))
 }
 
 function onLine(line: string): void {

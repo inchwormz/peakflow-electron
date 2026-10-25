@@ -156,6 +156,19 @@ export function needsTidy(raw: string, words: MyWords): boolean {
   })
 }
 
+/** Only a leading um/uh on an otherwise finished, clean sentence can be tidied locally. */
+export function localTidy(raw: string, words: MyWords): string | null {
+  if (raw.length > 160 || /["“”«»`\r\n]|(?<![\p{L}\p{N}])['‘]|['’](?![\p{L}\p{N}])/u.test(raw)) return null
+  const match = raw.match(/^(?:um|uh)(?:,\s*|\s+)(.+)$/i)
+  if (!match) return null
+  const text = match[1]
+  const count = wordCount(text)
+  if (count < 3 || count > 20 || !/^\p{Lu}/u.test(text) || !/[.!?]$/.test(text)) return null
+  // A hinted name that includes the filler must never be shortened.
+  if (needsTidy(text, words) || words.hints.some((h) => /\b(?:um|uh)\b/i.test(h))) return null
+  return intentGuard(raw, text, words) === null ? text : null
+}
+
 /** Clean-up model. gpt-4.1-nano was retired by OpenAI (404 "deprecated"); the server path uses the same model. */
 export const CLEANUP_MODEL = 'gpt-6-luna'
 /** Output cap for reasoning models, same as the PeakFlow server's MAX_TIDY_OUTPUT_TOKENS */
