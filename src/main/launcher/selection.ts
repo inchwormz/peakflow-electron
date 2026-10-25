@@ -15,6 +15,7 @@ import { runMacHelper } from '../native/mac-helper'
 import { simulateCtrlV } from '../native/keyboard'
 import { clipboardSequence, restoreWinClipboard, saveAndWriteOwnText } from '../native/clipboard-win32'
 import { withCapturePaused } from '../services/clipboard-own-writes'
+import { fillPlaceholders } from './snippet-text'
 import { notifyAccessibilityNeeded } from '../services/permissions-darwin'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -78,11 +79,19 @@ function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
  * in every other failure the clipboard is left alone, never replaced with
  * unmarked text.
  */
-export function pasteAndRestore(text: string, privacy?: { capture: (target: HistoryContext) => void }, current = (): boolean => true): Promise<boolean> {
+export type PasteContent = string | { parts: { text: string; snippet?: boolean }[]; resolved: (text: string) => void }
+
+export function pasteAndRestore(content: PasteContent, privacy?: { capture: (target: HistoryContext) => void }, current = (): boolean => true): Promise<boolean> {
   return oneAtATime(async () => {
     if (!current()) return false
     if (process.platform === 'darwin') {
-      const r = await runMacHelper(privacy ? ['paste-text', 'dictation'] : ['paste-text'], 4000, text)
+      // The helper resolves clipboard tokens after taking its cross-process lock.
+      const command = typeof content === 'string' ? 'paste-text' : 'paste-parts'
+      const input = typeof content === 'string' ? content : JSON.stringify(content.parts.map((part) => ({
+        text: part.snippet ? fillPlaceholders(part.text, () => '{clipboard}') : part.text, snippet: part.snippet
+      })))
+      const r = await runMacHelper(privacy ? [command, 'dictation'] : [command], 4000, input)
+      if (typeof content !== 'string' && typeof r?.text === 'string') content.resolved(r.text)
       if (r?.trusted === false) {
         notifyAccessibilityNeeded('paste')
         return false
@@ -94,6 +103,9 @@ export function pasteAndRestore(text: string, privacy?: { capture: (target: Hist
       return r?.ok === true
     }
     if (process.platform === 'win32') {
+      const text = typeof content === 'string' ? content : content.parts.map((part) =>
+        part.snippet ? fillPlaceholders(part.text, () => clipboard.readText()) : part.text).join('')
+      if (typeof content !== 'string') content.resolved(text)
       const hwnd = ownerHwnd()
       const t = await saveAndWriteOwnText(hwnd, text).catch(() => null)
       if (!t) return false // couldn't save every format: leave the clipboard alone

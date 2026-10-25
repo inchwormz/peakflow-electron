@@ -12,7 +12,6 @@
 import { addWeekly, weeklyNow, type WeeklyStats } from '@shared/dictation-stats'
 import { clipTiming, logTiming, type ConnectionWarmup, type ClipTiming } from './timing'
 import { launcherStore } from '../launcher/store'
-import { fillPlaceholders } from '../launcher/snippet-text'
 import { voiceSnippets, exactSnippet, snippetSpans, expandSnippets } from './snippets'
 import { addHistory, mayKeepHistory, type HistoryEntry, type HistoryContext } from './history'
 import { DictationGesture } from './gesture'
@@ -23,7 +22,7 @@ import { normalizeHoldKey, holdKeyFromCode, type NativeHoldKey } from '@shared/d
 import { createDictationAccountClient } from './account'
 import { execFile } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
-import { app, BrowserWindow, clipboard, ipcMain, screen, systemPreferences } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, systemPreferences } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import Store from 'electron-store'
@@ -36,7 +35,7 @@ import { ensureMediaAccess, permissionStatus, openPermissionPane, watchForFix } 
 import { getPanel, hidePanel, showPanel } from '../panel'
 import { holdKeyName, missingPermission, type DictationPermissions, type MediaStatus } from '@shared/dictation-view'
 import { onRecordingEscape, setRecordingEscape, setMayRecord, onHoldKey, setHoldKey, setHoldKeyCapture, onHoldKeyRecorded, isExpansionActive, retryExpansion } from '../launcher/expander'
-import { pasteAndRestore } from '../launcher/selection'
+import { pasteAndRestore, type PasteContent } from '../launcher/selection'
 import { transcribe, checkKey, warmConnection, type DictationModel, type TranscribeError } from './transcribe'
 import { KEEP_CLIP_MS, NOT_TYPED_MESSAGE, keepsClip, mayRetry, ownerForSend, sayTryAgain, transcribeTimeoutMs } from './retry'
 import { parseMyWords, transcriptionPrompt, cleanUp, needsTidy, localTidy, applyReplacements, CLEANUP_MODEL, CLEANUP_MAX_BYTES, type DictationContext } from './smart'
@@ -604,13 +603,17 @@ async function runClipSteps(clip: Clip, generation: number): Promise<void> {
   timing.tidy = tidyNote
   timing.tidyMs = Date.now() - tidyAt
   if (generation !== sessionId) return
-  text = exact
-    ? fillPlaceholders(exact.text, () => clipboard.readText())
-    : expandSnippets(text, snippetSpans(text, snippets.filter((s) => spoken.has(s.id))),
-      (part) => applyReplacements(part, words.replacements), (body) => fillPlaceholders(body, () => clipboard.readText()))
-  last = { raw: applyReplacements(r.text, words.replacements), typed: text, at: Date.now() }
+  const parts: { text: string; snippet?: boolean }[] = []
+  if (exact) parts.push({ text: exact.text, snippet: true })
+  else expandSnippets(text, snippetSpans(text, snippets.filter((s) => spoken.has(s.id))),
+    (part) => { parts.push({ text: applyReplacements(part, words.replacements) }); return '' },
+    (body) => { parts.push({ text: body, snippet: true }); return '' })
+  const raw = applyReplacements(r.text, words.replacements)
   let target: HistoryContext = {}
-  const ok = await typeText(text, isMac && store.get('keepHistory') ? (actual) => { target = actual } : undefined, timing, () => generation === sessionId)
+  const ok = await typeText({ parts, resolved: (final) => {
+    text = final
+    last = { raw, typed: text, at: Date.now() }
+  } }, isMac && store.get('keepHistory') ? (actual) => { target = actual } : undefined, timing, () => generation === sessionId)
   if (generation !== sessionId) return
   if (ok) {
     try { rememberTyped(text, ctx, target, Math.max(0, durationMs - RELEASE_PAD_MS)) }
@@ -665,7 +668,7 @@ export function pasteDictation(text: string): Promise<boolean> {
 }
 
 /** Paste into the app in front, then put the clipboard back as it was. */
-async function typeText(text: string, capture?: (target: HistoryContext) => void, timing?: ClipTiming, current = (): boolean => true): Promise<boolean> {
+async function typeText(text: PasteContent, capture?: (target: HistoryContext) => void, timing?: ClipTiming, current = (): boolean => true): Promise<boolean> {
   if (!current()) return false
   if (timing) timing.pasteStartMs = Date.now() - timing.releaseAt
   let ok = false

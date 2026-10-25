@@ -144,21 +144,32 @@ private func unlockPasteboard(_ fd: Int32?) {
 /// and images included. If someone copies something in the meantime, that
 /// copy is kept. Without Accessibility nothing is pasted and the text stays
 /// on the pasteboard so the person can paste it by hand.
-func pasteTextRestoring(dictation: Bool = false) -> String {
+func pasteTextRestoring(dictation: Bool = false, parts: Bool = false) -> String {
     let input = FileHandle.standardInput.readDataToEndOfFile()
-    guard let text = String(data: input, encoding: .utf8), !text.isEmpty else {
+    guard var text = String(data: input, encoding: .utf8), !text.isEmpty else {
         return jsonLine(["ok": false, "trusted": true, "error": "no text"])
     }
     // Another round trip is still running: don't touch the pasteboard
     guard let lock = lockPasteboard() else { return jsonLine(["ok": false, "trusted": true, "error": "busy"]) }
     defer { unlockPasteboard(lock) }
     let pb = NSPasteboard.general
+    if parts {
+        guard let entries = try? JSONSerialization.jsonObject(with: input) as? [[String: Any]],
+              entries.allSatisfy({ $0["text"] is String }) else { return jsonLine(["ok": false, "trusted": true, "error": "invalid parts"]) }
+        let copied = pb.string(forType: .string) ?? ""
+        text = entries.map { part in
+            let body = part["text"] as? String ?? ""
+            return part["snippet"] as? Bool == true ? body.components(separatedBy: "{clipboard}").joined(separator: copied) : body
+        }.joined()
+    }
+    guard !text.isEmpty else { return jsonLine(["ok": false, "trusted": true, "error": "no text"]) }
     guard let saved = savePasteboard() else { return jsonLine(["ok": false, "trusted": true, "error": "unreadable"]) }
     writeOwnText(text)
     let ours = pb.changeCount
     // Dictation privacy is sampled after the clipboard lock, at the actual paste destination.
     let privacy = dictation ? dictationContext(includeText: false) : nil
     var result = sendPaste()
+    if parts { result["text"] = text }
     if let privacy = privacy, let data = privacy.data(using: .utf8),
        let parsed = try? JSONSerialization.jsonObject(with: data) { result["dictationPrivacy"] = parsed }
     guard result["ok"] as? Bool == true else { return jsonLine(result) }

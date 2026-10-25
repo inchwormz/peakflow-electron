@@ -36,6 +36,8 @@ function boot(opts: Record<string, any> = {}) {
     const pasteAndRestore=async(text,privacy,current)=>{
       if(!current())return false
       now+=25
+      if(opts.pasteImpl)return opts.pasteImpl(text,privacy,current)
+      if(typeof text!=='string'){const content=text;text=content.parts.map(p=>p.snippet?fillPlaceholders(p.text,clipboard.readText):p.text).join('');content.resolved(text)}
       if(opts.throwPaste)throw Error('paste failed')
       if(opts.failPaste)return false
       privacy?.capture(opts.target??{secure:false,app:'Mail'})
@@ -171,4 +173,73 @@ test('a clip cancelled while queued for the clipboard lock never pastes', async 
   current = false
   assert.equal(await queued!(), false)
   assert.equal(pasted, false)
+})
+
+
+test('queued voice snippets resolve the restored clipboard and record exactly what was pasted', async () => {
+  const selection = readFileSync(new URL('../../src/main/launcher/selection.ts', import.meta.url), 'utf8')
+  const code = extract(selection, 'let roundTrip:', 'async function winSelection(').replace(/export /g, '')
+  for (const mode of ['win32', 'darwin', 'darwin-external']) {
+    const platform = mode === 'win32' ? 'win32' : 'darwin'
+    for (const raw of ['SIG.', 'hello sig']) {
+      let copied = 'original $1 {date}'
+      let release!: () => void
+      let started!: () => void
+      const active = new Promise<void>(r => { started = r })
+      const gate = new Promise<void>(r => { release = r })
+      const pasted: string[] = []
+      let first = true
+      const roundTrip = async (text: string) => {
+        const saved = copied
+        copied = text
+        pasted.push(text)
+        if (first) { first = false; started(); await gate }
+        copied = saved
+        return { ok: true, text, dictationPrivacy: { secure: false, app: 'Mail' } }
+      }
+      let nativeQueue: Promise<unknown> = Promise.resolve()
+      const nativePaste = (args: string[], _timeout: number, input: string) => {
+        const run = nativeQueue.then(() => {
+          const text = args[0] === 'paste-parts'
+            ? JSON.parse(input).map((p: any) => p.snippet ? p.text.split('{clipboard}').join(copied) : p.text).join('') : input
+          return roundTrip(text)
+        })
+        nativeQueue = run
+        return run
+      }
+      const paste = new Function('process', 'withCapturePaused', 'fillPlaceholders', 'clipboard', 'ownerHwnd',
+        'saveAndWriteOwnText', 'simulateCtrlV', 'sleep', 'restoreWinClipboard', 'runMacHelper', code + ';return pasteAndRestore')(
+        { platform }, (fn: () => unknown) => fn(), fillPlaceholders, { readText: () => copied }, () => 0,
+        async (_hwnd: unknown, text: string) => {
+          const saved = copied; copied = text; pasted.push(text)
+          if (first) { first = false; started(); await gate }
+          return { saved, stamp: {} }
+        }, async () => true, async () => {}, async (_hwnd: unknown, saved: string) => { copied = saved },
+        nativePaste
+      )
+      const previous = mode === 'darwin-external'
+        ? nativePaste(['paste-text'], 4000, 'temporary output') : paste('temporary output')
+      await active
+      const app = boot({ raw, mac: platform === 'darwin', data: { tidy: false }, pasteImpl: paste })
+      const pending = app.run()
+      await new Promise(r => setImmediate(r))
+      assert.deepEqual(pasted, ['temporary output'])
+      release(); await previous; await pending
+      const expected = (raw === 'SIG.' ? '' : 'Hello ') + 'secret\n$& original $1 {date}'
+      assert.equal(pasted[1], expected)
+      assert.equal(app.last().typed, expected)
+      if (platform === 'darwin') assert.equal(app.data.history[0].text, expected)
+      else assert.deepEqual(app.data.history, [])
+      assert.equal(app.data.weekly.words, addWeekly(undefined, expected, 1000).words)
+      assert.equal(copied, 'original $1 {date}')
+    }
+  }
+})
+
+test('native snippet clipboard reads happen under the cross-process lock before the payload write', () => {
+  const swift = readFileSync(new URL('../../sidecar/darwin/PeakFlowHelper/Sources/Launcher.swift', import.meta.url), 'utf8')
+  const body = swift.slice(swift.indexOf('func pasteTextRestoring'), swift.indexOf('/// Our own synthetic'))
+  assert.ok(body.indexOf('guard let lock = lockPasteboard()') < body.indexOf('let copied = pb.string(forType: .string)'))
+  assert.ok(body.indexOf('let copied = pb.string(forType: .string)') < body.indexOf('writeOwnText(text)'))
+  assert.match(body, /if parts \{ result\["text"\] = text \}/)
 })
