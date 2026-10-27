@@ -143,3 +143,8 @@ export function getOAuthToken(tool: string): string | null {
 export function deleteOAuthToken(tool: string): boolean {
   return deleteCredential(tool, 'oauth_token')
 }
+
+/** Active commands must not outlive the account/key that authorized their requests. */
+export function onCredentialsChanged(fn: () => void): () => void {
+  return credentialStore.onDidAnyChange(() => fn())
+}

@@ -12,6 +12,7 @@ const code = (start: string, end: string) => transformSync(
 function boot(held = true) {
   let now = 1000
   const app = new Function('DictationGesture', 'held', 'Date', `
+    let commandSession=null;
     const clipTiming=()=>({attempts:[]}),logTiming=()=>{},voiceSnippets=()=>[],exactSnippet=()=>undefined,snippetSpans=()=>[],expandSnippets=(text,spans,ordinary)=>ordinary(text);
     const gesture = new DictationGesture(); if(held)gesture.feed('down', Date.now()-1000)
     let connectionWarmup='unknown'; let uploadStarted=false; let sessionId=1,recording=held,busy=false,downAt=Date.now()-1000,releasedAt=0

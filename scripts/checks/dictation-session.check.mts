@@ -9,6 +9,7 @@ const tick=()=>new Promise<void>(r=>setImmediate(r))
 test('release sends current identity even before getUserMedia resolves', () => {
   const js=code('function onUp(', '/** The front app')
   const boot=new Function(`
+    let commandSession=null;
     const settings=()=>({enabled:true}),isMac=true
     let recording=true, maxTimer=null, stopTimer=null,busy=false,releasedAt=0,downAt=Date.now()-400, sessionId=17
     const setMayRecord=()=>{},setRecordingEscape=()=>{};const recordingStart={isReady:true},MIN_HOLD_MS=300,RELEASE_PAD_MS=150,IPC_SEND={DICTATION_STOP:'stop'},sent=[]
@@ -24,6 +25,7 @@ test('release sends current identity even before getUserMedia resolves', () => {
 test('cancel while context is pending never dispatches stale clip', async()=>{
   const js=code('function cancel()', '/** Speech to text, clean-up')
   const boot=new Function(`
+    let commandSession=null;
     const settings=()=>({enabled:true}),isMac=true
     let connectionWarmup='unknown'; let uploadStarted=false; let sessionId=4,recording=false,busy=true,stopTimer=null,maxTimer=null,downAt=0,releasedAt=1000
     let finish,runs=0
@@ -45,6 +47,7 @@ test('cancel while context is pending never dispatches stale clip', async()=>{
 test('a canceled upload completion cannot paste or change a newer recording',async()=>{
   const js='const clipTiming=()=>({attempts:[]}),logTiming=()=>{},voiceSnippets=()=>[],exactSnippet=()=>undefined,snippetSpans=()=>[],expandSnippets=(text,spans,ordinary)=>ordinary(text);\n'+code('async function runClipSteps(', '/** A kept clip')
   const boot=new Function(`
+    let commandSession=null;
     const settings=()=>({enabled:true}),isMac=true
     let connectionWarmup='unknown'; let uploadStarted=false; let sessionId=1,busy=true,releasedAt=0,model='gpt-transcribe',keptClip=null,pastedAt=0,last=null,typed=0
     let resolveUpload
@@ -67,6 +70,7 @@ for (const watcher of ['missing acknowledgement', 'absent watcher', 'crashed wat
     const js=code('async function onAudio(', '/** Speech to text, clean-up')
     let runs=0
     const audio=new Function('runClip', `
+      const isMac=true;let commandSession=null;
       const connectionWarmup='unknown',sessionId=17,context=Promise.resolve({}),releasedAt=1000,downAt=0,RELEASE_PAD_MS=150
       ${js};return onAudio
     `)(async()=>{runs++})

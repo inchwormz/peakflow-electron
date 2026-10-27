@@ -303,10 +303,11 @@ export function DictationPill(): React.JSX.Element {
         style={{ ...S.pill, ...(error ? S.err : null), opacity: visible ? 1 : 0, transform: visible ? 'none' : 'translateY(4px) scale(0.96)' }}
         role="status"
         aria-live="polite"
-        aria-label={st.phase === 'listening' ? 'Listening' : st.phase === 'transcribing' ? 'Typing' : st.phase === 'done' ? 'Done' : undefined}
+        aria-label={st.message ?? (st.phase === 'listening' ? 'Listening' : st.phase === 'transcribing' ? 'Typing' : st.phase === 'done' ? 'Done' : undefined)}
       >
-        <canvas ref={canvas} style={{ width: CANVAS_W, height: CANVAS_H, display: error || st.phase === 'cancelled' ? 'none' : 'block' }} aria-hidden />
-        {st.phase === 'cancelled' ? <span style={S.text}>Cancelled</span> : null}
+        <canvas ref={canvas} style={{ width: CANVAS_W, height: CANVAS_H, display: error || st.phase === 'cancelled' || ['checking-selection', 'rewriting', 'replacing'].includes(st.phase) ? 'none' : 'block' }} aria-hidden />
+        {st.phase === 'cancelled' ? <span style={S.text}>{st.message ?? 'Cancelled'}</span> : null}
+        {['checking-selection', 'rewriting', 'replacing'].includes(st.phase) || (st.phase === 'transcribing' && st.message) ? <span style={S.text}>{st.message}</span> : null}
         {st.phase === 'listening' && st.message ? <span style={S.text}>{st.message}</span> : null}
         {error && (
           <>

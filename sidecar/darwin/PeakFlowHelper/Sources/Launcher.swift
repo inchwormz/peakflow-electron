@@ -347,6 +347,26 @@ private var escapePressAt: Double? = nil
 private var escapeTapUpAt = -Double.infinity
 private var escapeSecond = false
 private var nativeKeyState = NativeKeyState()
+private var commandKeyState = NativeKeyState()
+private var commandKeyCode: Int64 = -1
+private var commandSessionId = 0
+private var commandPending = false
+private var commandAccepted = false
+private func cancelCommandKey() {
+    if commandPending { emit(["e": "command-cancel", "sessionId": commandSessionId]) }
+    commandPending = false; commandAccepted = false
+}
+private func emitCommandEvents(_ events: [String]) {
+    for event in events {
+        if event == "down" {
+            if !mayRecord || recordingEscape || escapeLocked || commandPending { continue }
+            commandSessionId += 1; commandPending = true; commandAccepted = false
+        }
+        if commandPending { emit(["e": "command-" + event, "sessionId": commandSessionId]) }
+        if event == "cancel" { commandPending = false; commandAccepted = false }
+    }
+}
+
 private func physicalKeyDown(_ code: Int64) -> Bool {
     CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
 }
@@ -457,6 +477,8 @@ private func expand(keyword: String, text: String) {
 private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         emitHoldEvents(nativeKeyState.interrupt())
+        emitCommandEvents(commandKeyState.interrupt())
+        cancelCommandKey()
         typed = ""
         if let tap = keywatchTap { CGEvent.tapEnable(tap: tap, enable: true) }
         return Unmanaged.passUnretained(event)
@@ -474,6 +496,14 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
     let isModifier = modifierBits[code] != nil
     let isDown = type == .keyDown || (type == .flagsChanged && modifierIsDown(code, event.flags))
     let isUp = type == .keyUp || (type == .flagsChanged && !modifierIsDown(code, event.flags))
+    // Use the hardware state table, rather than guessing which PID generated the event.
+    // https://developer.apple.com/documentation/coregraphics/cgeventsourcestateid
+    let commandPhysical = event.getIntegerValueField(.eventSourceStateID) == Int64(CGEventSourceStateID.hidSystemState.rawValue)
+    if commandPhysical && commandPending && isDown && code != commandKeyCode {
+        let swallow = code == 53 && commandAccepted
+        cancelCommandKey()
+        if swallow { escapeDown = true; return nil }
+    }
     if code == 53 {
         if isDown && (recordingEscape || escapeDown) {
             if !escapeDown { escapeDown = true; recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity; emit(["e": "recording-escape", "sessionId": escapeSessionId]) }
@@ -487,6 +517,12 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
                                     modifier: isModifier, suppress: !isModifier || code == 63,
                                     otherModifier: modifierBits.keys.contains { $0 != code && modifierIsDown($0, event.flags) },
                                     physical: physicalKeyDown)
+    let commandResult = commandPhysical ? commandKeyState.feed(code: code, down: isDown || capsToggle, up: isUp && !capsToggle,
+                                    repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+                                    modifier: isModifier, suppress: !isModifier || code == 63,
+                                    otherModifier: modifierBits.keys.contains { $0 != code && modifierIsDown($0, event.flags) },
+                                    physical: physicalKeyDown) : NativeKeyResult()
+    emitCommandEvents(commandResult.events)
     emitHoldEvents(result.events)
     if let recorded = result.recorded {
         captureHoldKey = false
@@ -497,7 +533,7 @@ private let keywatchCallback: CGEventTapCallBack = { _, type, event, _ in
         _ = nativeKeyState.feed(code: code, down: false, up: true, repeated: false,
                                 modifier: false, suppress: false, otherModifier: false, physical: physicalKeyDown)
     }
-    if result.swallow { return nil }
+    if result.swallow || commandResult.swallow { return nil }
     if type == .flagsChanged || type == .keyUp { return Unmanaged.passUnretained(event) }
     guard type == .keyDown else { return Unmanaged.passUnretained(event) }
     inputGeneration &+= 1
@@ -543,6 +579,23 @@ private func readSnippetUpdates() {
             guard let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             if obj["exit"] != nil { exit(0) }
+            if let id = (obj["acceptCommand"] as? NSNumber)?.intValue {
+                DispatchQueue.main.async { if id == commandSessionId && commandPending { commandAccepted = true } }
+            }
+            if let id = (obj["endCommand"] as? NSNumber)?.intValue {
+                DispatchQueue.main.async { if id == commandSessionId { commandPending = false; commandAccepted = false } }
+            }
+            if obj.keys.contains("command") {
+                let key = obj["command"] as? [String: Any]
+                let code = (key?["code"] as? NSNumber)?.int64Value ?? -1
+                DispatchQueue.main.async {
+                    let next = (modifierBits[code] != nil || functionKeyCodes.contains(code)) && code != holdKeyCode ? code : -1
+                    if next != commandKeyCode { cancelCommandKey() }
+                    commandKeyCode = next
+                    let physical = Set((0..<256).map { Int64($0) }.filter { physicalKeyDown($0) })
+                    emitCommandEvents(commandKeyState.configure(key: commandKeyCode, capture: false, physical: physical))
+                }
+            }
             if let allowed = obj["mayRecord"] as? Bool {
                 DispatchQueue.main.async {
                     mayRecord = allowed
@@ -578,7 +631,11 @@ private func readSnippetUpdates() {
                         dictate = enabled
                         recordingEscape = false; escapeAccepted = false; escapeLocked = false; escapePressAt = nil; escapeTapUpAt = -Double.infinity
                     }
-                    if let capture = capture { captureHoldKey = capture }
+                    if let capture = capture {
+                        captureHoldKey = capture
+                        if capture { cancelCommandKey() }
+                    }
+                    if captureHoldKey { emitCommandEvents(commandKeyState.configure(key: -1, capture: false, physical: [])) }
                     let physical = Set((0..<256).map { Int64($0) }.filter { physicalKeyDown($0) })
                     emitHoldEvents(nativeKeyState.configure(key: holdKeyCode, capture: captureHoldKey, physical: physical))
                 }
@@ -614,6 +671,184 @@ func runKeyWatch() -> Never {
     CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
     CGEvent.tapEnable(tap: tap, enable: true)
     emit(["e": "ready", "trusted": true])
+    RunLoop.main.run()
+    exit(0)
+}
+
+// MARK: - Command Mode (one process retains the actual AX identities)
+
+private struct CommandSnapshot {
+    let pid: pid_t
+    let window: AXUIElement
+    let element: AXUIElement
+    let range: CFRange
+    let text: String
+}
+
+private func commandAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+}
+
+/// All security/editability checks precede selected-text reads. Unknown is a refusal.
+private func commandSnapshot(excluded: [String]) -> (CommandSnapshot?, String) {
+    guard AXIsProcessTrusted() else { return (nil, "Allow Accessibility") }
+    guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getppid(),
+          let bundle = app.bundleIdentifier else { return (nil, "Unsupported app") }
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetMessagingTimeout(ax, 0.25)
+    guard let w = commandAttribute(ax, kAXFocusedWindowAttribute), CFGetTypeID(w) == AXUIElementGetTypeID(),
+          let f = commandAttribute(ax, kAXFocusedUIElementAttribute), CFGetTypeID(f) == AXUIElementGetTypeID() else { return (nil, "Unsupported field") }
+    let window = w as! AXUIElement
+    let element = f as! AXUIElement
+    guard let title = commandAttribute(window, kAXTitleAttribute) as? String else { return (nil, "Unknown field safety") }
+    let metadata = [bundle, app.localizedName ?? "", title].joined(separator: " ")
+    for name in excluded {
+        let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: name) + "(?![\\p{L}\\p{N}])"
+        if metadata.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil { return (nil, "Private app") }
+    }
+    guard let role = commandAttribute(element, kAXRoleAttribute) as? String,
+          let subrole = commandAttribute(element, kAXSubroleAttribute) as? String else { return (nil, "Unknown field safety") }
+    if subrole == (kAXSecureTextFieldSubrole as String) || role == "AXSecureTextField" { return (nil, "Password field") }
+    guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(role) else { return (nil, "Unsupported field") }
+    var writable = DarwinBoolean(false)
+    guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &writable) == .success, writable.boolValue,
+          (commandAttribute(element, kAXEnabledAttribute) as? Bool) == true else { return (nil, "Read-only field") }
+    if let ranges = commandAttribute(element, "AXSelectedTextRanges") as? [Any], ranges.count != 1 { return (nil, "Select one text range") }
+    guard let r = commandAttribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(r) == AXValueGetTypeID() else { return (nil, "Unsupported selection") }
+    var range = CFRange(location: 0, length: 0)
+    guard AXValueGetValue(r as! AXValue, .cfRange, &range), range.location >= 0, range.length > 0 else { return (nil, "Select text first") }
+    guard let text = commandAttribute(element, kAXSelectedTextAttribute) as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (nil, "Select text first") }
+    guard text.utf8.count <= 2000 else { return (nil, "Select less text") }
+    guard (text as NSString).length == range.length else { return (nil, "Unsupported selection") }
+    // A focus change while AX was answering also invalidates capture.
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
+          let focused = commandAttribute(ax, kAXFocusedUIElementAttribute), CFEqual(focused, element),
+          let focusedWindow = commandAttribute(ax, kAXFocusedWindowAttribute), CFEqual(focusedWindow, window) else { return (nil, "Selection changed") }
+    return (CommandSnapshot(pid: app.processIdentifier, window: window, element: element, range: range, text: text), "")
+}
+
+private func sameCommandSelection(_ a: CommandSnapshot, _ b: CommandSnapshot) -> Bool {
+    a.pid == b.pid && CFEqual(a.window, b.window) && CFEqual(a.element, b.element) &&
+    a.range.location == b.range.location && a.range.length == b.range.length && a.text == b.text
+}
+
+/// Validate the full snapshot, then re-read range, then focus, then the frontmost PID right before paste.
+/// Residual: a change landing during the last two AX round trips (each capped at 0.25 s, normally under 1 ms)
+/// can still slip through; a global Cmd+V cannot be made atomic with AX reads.
+private func validateCommandSelection(focus: () throws -> Bool, range: () throws -> Bool,
+                                      text: () throws -> Bool, frontmost: () throws -> Bool) -> Bool {
+    do { return try frontmost() && focus() && range() && text() && range() && focus() && frontmost() }
+    catch { return false }
+}
+
+private func commandSelectionUnchanged(_ snapshot: CommandSnapshot, pasteboard: NSPasteboard, changeCount: Int) -> Bool {
+    let ax = AXUIElementCreateApplication(snapshot.pid)
+    guard AXUIElementSetMessagingTimeout(ax, 0.25) == .success,
+          AXUIElementSetMessagingTimeout(snapshot.element, 0.25) == .success else { return false }
+    return validateCommandSelection(focus: {
+        guard let focused = commandAttribute(ax, kAXFocusedUIElementAttribute),
+              let window = commandAttribute(ax, kAXFocusedWindowAttribute) else { return false }
+        return CFEqual(focused, snapshot.element) && CFEqual(window, snapshot.window)
+    }, range: {
+        guard let value = commandAttribute(snapshot.element, kAXSelectedTextRangeAttribute),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return false }
+        var range = CFRange(location: 0, length: 0)
+        return AXValueGetValue(value as! AXValue, .cfRange, &range) &&
+            range.location == snapshot.range.location && range.length == snapshot.range.length
+    }, text: {
+        (commandAttribute(snapshot.element, kAXSelectedTextAttribute) as? String) == snapshot.text
+    }, frontmost: {
+        pasteboard.changeCount == changeCount && NSWorkspace.shared.frontmostApplication?.processIdentifier == snapshot.pid
+    })
+}
+
+/// Cancellation and the start of paste share one mutex. Once paste starts, always restore.
+private final class CommandPasteGate {
+    private let mutex = NSLock()
+    private var cancelled = false
+    private var pasting = false
+    private var authorized = false
+    private let approval = DispatchSemaphore(value: 0)
+    func authorize(_ allowed: Bool) {
+        mutex.lock(); authorized = allowed; mutex.unlock()
+        approval.signal()
+    }
+    func waitForApproval() -> Bool {
+        if approval.wait(timeout: .now() + 1) != .success { return false }
+        mutex.lock(); defer { mutex.unlock() }
+        return authorized && !cancelled
+    }
+    func cancel() {
+        mutex.lock(); defer { mutex.unlock() }
+        if !pasting { cancelled = true }
+    }
+    func begin(_ action: () -> Void) -> Bool {
+        mutex.lock(); defer { mutex.unlock() }
+        if cancelled { return false }
+        pasting = true
+        action()
+        return true
+    }
+}
+
+/// Dedicated stdin protocol: source text never goes on argv, disk or stderr.
+/// The reader stays live while replacement waits for the cross-process clipboard lock.
+func runCommandSelection() -> Never {
+    guard let line = readLine(), let data = line.data(using: .utf8),
+          let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let excluded = config["excluded"] as? [String] else { exit(1) }
+    let gate = CommandPasteGate()
+    let (captured, reason) = commandSnapshot(excluded: excluded)
+    guard let snapshot = captured else { emit(["stage": "capture", "error": reason]); exit(0) }
+    emit(["stage": "capture", "text": snapshot.text])
+    DispatchQueue.global(qos: .userInitiated).async {
+        while let line = readLine() {
+            guard let data = line.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            if obj["cancel"] as? Bool == true { gate.cancel(); DispatchQueue.main.async { exit(0) }; continue }
+            if let allowed = obj["authorize"] as? Bool { gate.authorize(allowed); continue }
+            guard let text = obj["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let code = obj["keyCode"] as? Int, code >= 0 && code < 256 else { continue }
+            DispatchQueue.main.async {
+                var ok = false
+                if let lock = lockPasteboard() {
+                    defer { unlockPasteboard(lock) }
+                    emit(["stage": "validate"])
+                    guard gate.waitForApproval() else { emit(["stage": "result", "ok": false]); exit(0) }
+                    let pb = NSPasteboard.general
+                    let before = pb.changeCount
+                    if let saved = savePasteboard(),
+                       let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
+                       let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) {
+                        let (current, _) = commandSnapshot(excluded: excluded)
+                        if let current = current, sameCommandSelection(snapshot, current), pb.changeCount == before,
+                           !physicalKeyDown(Int64(code)) {
+                            down.flags = .maskCommand; up.flags = .maskCommand
+                            down.setIntegerValueField(.eventSourceUserData, value: syntheticTag)
+                            up.setIntegerValueField(.eventSourceUserData, value: syntheticTag)
+                            var ours = before
+                            let began = gate.begin {
+                                writeOwnText(text)
+                                ours = pb.changeCount
+                                guard !physicalKeyDown(Int64(code)), commandSelectionUnchanged(snapshot, pasteboard: pb, changeCount: ours) else { return }
+                                // Global paste cannot close the sub-millisecond window between the last read and the synthetic keystroke.
+                                down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+                                emit(["stage": "pasting"])
+                                ok = true
+                            }
+                            if ok { usleep(400_000) }
+                            if began && pb.changeCount == ours { restorePasteboard(saved) }
+                        }
+                    }
+                }
+                emit(["stage": "result", "ok": ok]); exit(0)
+            }
+        }
+        gate.cancel()
+        DispatchQueue.main.async { exit(0) }
+    }
+    // Bound orphaned sessions even if the parent never sends another message.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 120) { gate.cancel(); exit(0) }
     RunLoop.main.run()
     exit(0)
 }

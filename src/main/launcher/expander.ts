@@ -32,6 +32,26 @@ let current: LauncherSnippet[] = []
 let restarts = 0
 let snippetsWanted = false
 let holdKey: NativeHoldKey | null = null
+let commandKey: NativeHoldKey | null = null
+let commandListener: ((e: 'down' | 'up' | 'cancel', id: number) => void) | null = null
+let commandNativeId: number | null = null
+export function onCommandKey(fn: NonNullable<typeof commandListener>): void { commandListener = fn }
+export function setCommandKey(key: NativeHoldKey | null): void {
+  if (process.platform !== 'darwin') return
+  if (JSON.stringify(commandKey) === JSON.stringify(key)) return
+  if (commandNativeId !== null) commandListener?.('cancel', commandNativeId)
+  commandKey = key
+  applyHoldKey()
+}
+export function acceptCommandKey(): void {
+  if (process.platform !== 'darwin' || commandNativeId === null) return
+  try { child?.stdin?.write(JSON.stringify({ acceptCommand: commandNativeId }) + '\n') } catch { /* Watcher exit cancels the session. */ }
+}
+export function endCommandKey(): void {
+  if (process.platform !== 'darwin') return
+  if (child?.stdin?.writable && commandNativeId !== null) child.stdin.write(JSON.stringify({ endCommand: commandNativeId }) + '\n')
+  commandNativeId = null
+}
 let capturingHoldKey = false
 const recordedListeners = new Set<(code: number) => void>()
 let dictating = false
@@ -135,14 +155,14 @@ function applyHoldKey(): void {
 }
 
 function refreshWanted(): void {
-  wanted = capturingHoldKey || snippetsWanted || !!watchedKey()
+  wanted = capturingHoldKey || snippetsWanted || !!watchedKey() || !!commandKey
 }
 
 function sendHold(): void {
   if (!child?.stdin?.writable) return
   const key = watchedKey()
   sendMayRecord()
-  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, captureHoldKey: capturingHoldKey, dictate: dictating }) + '\n')
+  if (process.platform === 'darwin') child.stdin.write(JSON.stringify({ hold: key, command: commandKey, captureHoldKey: capturingHoldKey, dictate: dictating }) + '\n')
   else {
     child.stdin.write(`DICTATE ${dictating ? 1 : 0}\n`)
     child.stdin.write(`HOLD ${key?.code ?? 0}\n`)
@@ -197,6 +217,10 @@ function onLine(line: string): void {
     } else if (ev.e === 'match' && ev.keyword) {
       void expandOnWindows(ev.keyword)
     } else if (ev.e?.startsWith('hold-') && process.env['PEAKFLOW_KEYWATCH_DEBUG'] === '1') console.log(`[Launcher] keywatch ${ev.e}`)
+    if (process.platform === 'darwin' && ev.e?.startsWith('command-') && typeof ev.sessionId === 'number') {
+      if (ev.e === 'command-down') commandNativeId = ev.sessionId
+      if (ev.sessionId === commandNativeId) commandListener?.(ev.e === 'command-down' ? 'down' : ev.e === 'command-up' ? 'up' : 'cancel', ev.sessionId)
+    }
     if (ev.e === 'recording-escape') {
       if (escapeBinding && ev.sessionId === escapeBinding.native) escapeListener?.(escapeBinding.audio)
     }
@@ -535,6 +559,7 @@ function start(): void {
   c.on('exit', (code) => {
     // Only the current child may change state. A child we stopped on purpose (or replaced) has already been cleared.
     if (child !== c) return
+    if (process.platform === 'darwin' && commandNativeId !== null) commandListener?.('cancel', commandNativeId)
     child = null
     active = false
     // Restart after a crash (not after we stopped it), a few times at most
@@ -576,6 +601,7 @@ export function retryExpansion(): void {
 }
 
 export function stopExpansion(keepWanted = false): void {
+  if (process.platform === 'darwin' && commandNativeId !== null) commandListener?.('cancel', commandNativeId)
   if (!keepWanted) wanted = false
   if (!wanted && trustRetry) { clearTimeout(trustRetry); trustRetry = null }
   if (crashRestart) { clearTimeout(crashRestart); crashRestart = null }

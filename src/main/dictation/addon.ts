@@ -110,7 +110,7 @@ const SERVER_ERRORS: Record<string, TranscribeResult['error']> = {
 export async function transcribeViaAddon(
   audio: Uint8Array,
   a: AddonAuth,
-  opts: { mime: string; prompt?: string; durationMs: number; timeoutMs?: number },
+  opts: { mime: string; prompt?: string; durationMs: number; timeoutMs?: number; signal?: AbortSignal },
   fetchImpl: Fetch = fetch
 ): Promise<TranscribeResult & { balanceMicros?: number }> {
   if (audio.byteLength < 1000) return { ok: false, error: 'no_speech' }
@@ -125,7 +125,7 @@ export async function transcribeViaAddon(
         ...(opts.prompt ? { 'X-Prompt': encodeURIComponent(opts.prompt.slice(0, 1500)) } : {})
       },
       body: audio,
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 45_000)
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? 45_000)]) : AbortSignal.timeout(opts.timeoutMs ?? 45_000)
     })
   } catch (err) {
     return { ok: false, error: 'network', detail: (err as Error).name }

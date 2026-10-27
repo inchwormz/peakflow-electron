@@ -47,6 +47,7 @@ test('setting defaults off, is published independently, and only accepts a trust
   const source = main.slice(start, main.indexOf('  serialised(IPC_INVOKE.DICTATION_SAVE_KEY', start))
   const js = transformSync(source, { loader: 'ts' }).code
   const boot = new Function(`
+    const isMac=false; let commandSession=null;
     let handler; const data={voiceSnippets:false}
     const serialised=(channel,fn)=>handler=fn,IPC_INVOKE={},fromUi=e=>e.trusted===true
     const store={get:k=>data[k],set:(k,v)=>data[k]=v},settings=()=>({enabled:false}),settingsWithHint=()=>data

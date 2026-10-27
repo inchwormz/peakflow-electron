@@ -359,12 +359,44 @@ function Settings(): React.JSX.Element {
           sub="Say a snippet's keyword to insert its text."
           right={<Toggle label="Voice snippets" checked={s.voiceSnippets} onChange={(v) => void takeS(setting('voiceSnippets', v))} />}
         />
+        {isMac() ? <>
+          <Row label="Command mode" sub="Select text, hold your command key and say how to change it."
+            right={<Toggle label="Command mode" checked={!!s.commandMode} onChange={(v) => void takeS(setting('commandMode', v))} />} />
+          {s.commandMode ? <CommandKey value={s.commandKey ?? null} takeS={takeS} /> : null}
+        </> : null}
         <Row label="My words" sub="Names and terms to spell your way" value={s.wordCount ? String(s.wordCount) : undefined} go="dictation/words" />
         <Row label="OpenAI key" value={s.ownKey ? 'Saved' : 'Not added'} go="dictation/key" />
       </Grp>
+      {isMac() && s.commandMode ? <Note style={{ marginTop: 10 }}>The selection and spoken instruction go to OpenAI. Other apps may use the same key.</Note> : null}
       <Note style={{ marginTop: 10 }}>The app’s name and the text before your cursor help dictation spell things right. Password fields are never read.</Note>
     </>
   )
+}
+
+/** Same physical-key recorder and allowlist as Hold to talk. */
+function CommandKey({ value, takeS }: { value: NativeHoldKey | null; takeS: ReturnType<typeof useDictation>['takeS'] }): React.JSX.Element {
+  const [capturing, setCapturing] = useState(false)
+  const [error, setError] = useState('')
+  const stamp = useRef(createLatest()).current
+  useEffect(() => () => { stamp.cancel(); void invoke(IPC_INVOKE.DICTATION_RECORD_KEY, false) }, [stamp])
+  const change = async (): Promise<void> => {
+    const current = stamp.next()
+    setCapturing(true); setError('')
+    try {
+      const key = await invoke<NativeHoldKey | 'rejected' | null>(IPC_INVOKE.DICTATION_RECORD_KEY, true)
+      if (!current()) return
+      if (key === 'rejected') setError(HOLD_KEY_COPY.rejection(true))
+      else if (key) {
+        const saved = await takeS(setting('commandKey', key))
+        if (current() && saved.commandKey?.code !== key.code) setError('Pick a key that PeakFlow isn’t already using.')
+      }
+    } finally { if (current()) setCapturing(false) }
+  }
+  return <>
+    <Row label="Command key" value={capturing ? undefined : value?.label ?? 'Not set'} sub={capturing ? HOLD_KEY_COPY.recording : error || undefined}
+      right={capturing ? <Btn sm onClick={() => void invoke(IPC_INVOKE.DICTATION_RECORD_KEY, false)}>{HOLD_KEY_COPY.cancel}</Btn>
+        : <Btn sm onClick={() => void change()}>{HOLD_KEY_COPY.change}</Btn>} />
+  </>
 }
 
 const KEY_ERRORS: Record<string, string> = {
