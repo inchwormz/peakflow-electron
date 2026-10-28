@@ -78,6 +78,13 @@ assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once loading 
 win().emit('did-finish-load')
 assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once only')
 
+panel.showPanel('guarana')
+assert.equal(panel.visiblePanelTool(), 'guarana')
+panel.setPanelRoute('guarana/settings')
+assert.equal(panel.visiblePanelTool(), 'guarana')
+panel.hidePanel(true)
+assert.equal(panel.visiblePanelTool(), null)
+
 console.log('panel-route: ok')
 
 // The Mac helper client imported through panel.ts keeps a timer alive
