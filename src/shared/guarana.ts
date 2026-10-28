@@ -1,15 +1,15 @@
 /**
- * Caffeine: keep the computer awake (like caffeinate or Amphetamine).
+ * Guarana: keep the computer awake (like caffeinate or Amphetamine).
  * Free for everyone: no trial or licence gate. John, 28 Oct 2026.
  *
- * Shared between the main process (services/caffeine.ts) and the panel page.
+ * Shared between the main process (services/guarana.ts) and the panel page.
  */
 
 /** The panel page id. Not a ToolId: it has no trial or licence of its own. */
-export const CAFFEINE_PAGE = 'caffeine'
+export const GUARANA_PAGE = 'guarana'
 
 /** Durations offered in the panel and the menu-bar menu. null = until turned off. */
-export const CAFFEINE_DURATIONS: ReadonlyArray<{ minutes: number | null; label: string }> = [
+export const GUARANA_DURATIONS: ReadonlyArray<{ minutes: number | null; label: string }> = [
   { minutes: 15, label: '15 minutes' },
   { minutes: 30, label: '30 minutes' },
   { minutes: 60, label: '1 hour' },
@@ -19,9 +19,9 @@ export const CAFFEINE_DURATIONS: ReadonlyArray<{ minutes: number | null; label: 
 ]
 
 /** Longest timed session accepted over IPC (24 hours). */
-export const CAFFEINE_MAX_MINUTES = 24 * 60
+export const GUARANA_MAX_MINUTES = 24 * 60
 
-export interface CaffeineState {
+export interface GuaranaState {
   /** Sleep is being blocked right now. */
   active: boolean
   /** When the current session ends (epoch ms), or null when it runs until turned off (or is off). */
@@ -35,13 +35,13 @@ export interface CaffeineState {
 }
 
 /** Remaining whole minutes (rounded up) for display, or null for no timer. */
-export function caffeineMinutesLeft(state: Pick<CaffeineState, 'active' | 'endsAt'>, now: number): number | null {
+export function guaranaMinutesLeft(state: Pick<GuaranaState, 'active' | 'endsAt'>, now: number): number | null {
   if (!state.active || state.endsAt == null) return null
   return Math.max(0, Math.ceil((state.endsAt - now) / 60_000))
 }
 
 /** '42 min', '1 h 5 min', '2 h'. */
-export function formatCaffeineLeft(mins: number): string {
+export function formatGuaranaLeft(mins: number): string {
   if (mins < 60) return `${mins} min`
   const h = Math.floor(mins / 60)
   const m = mins % 60

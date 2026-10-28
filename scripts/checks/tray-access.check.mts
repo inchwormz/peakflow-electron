@@ -18,9 +18,9 @@ installTsHooks({
   './windows': fake(`export const openToolWithAccessCheck = (id) => ${S}.calls.push('open:' + id)`),
   './panel': fake(`export const setPanelAnchor = () => {}; export const togglePanel = () => {};
     export const showPanel = (r) => ${S}.calls.push('panel:' + r)`),
-  './services/caffeine': fake(`export const getCaffeineState = () => ({ active: false, endsAt: null, keepScreenOn: true, defaultMinutes: null });
-    export const startCaffeine = () => {}; export const stopCaffeine = () => {};
-    export const setCaffeinePrefs = () => {}; export const onCaffeineChanged = () => () => {}`),
+  './services/guarana': fake(`export const getGuaranaState = () => ({ active: false, endsAt: null, keepScreenOn: true, defaultMinutes: null });
+    export const startGuarana = () => {}; export const stopGuarana = () => {};
+    export const setGuaranaPrefs = () => {}; export const onGuaranaChanged = () => () => {}`),
   './services/auto-updater': fake('export const checkForUpdates = () => {}'),
   './security/trial': fake('export const isToolInstalled = () => true'),
   './services/bug-report': fake('export const sendViaEmail = () => {}; export const revealLogFile = () => {}'),

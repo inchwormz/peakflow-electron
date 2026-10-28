@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { installTsHooks, fake, srcUrl } from './fixtures/ts-hooks.mjs'
 installTsHooks()
-const { CaffeineCore, validCaffeineMinutes } = await import(srcUrl('src/main/services/caffeine-core.ts'))
-const { CAFFEINE_MAX_MINUTES } = await import(srcUrl('src/shared/caffeine.ts'))
+const { GuaranaCore, validGuaranaMinutes } = await import(srcUrl('src/main/services/guarana-core.ts'))
+const { GUARANA_MAX_MINUTES } = await import(srcUrl('src/shared/guarana.ts'))
 
 let now = 1000
 let id = 0
@@ -14,7 +14,7 @@ let saves = 0
 let broadcasts = 0
 let failStart = false
 let failSave = false
-const core = new CaffeineCore({
+const core = new GuaranaCore({
   blocker: {
     start(type: string) { const next = ++id; if (!failStart) held.set(next, type); operations.push(`start:${next}`); return next },
     stop(n: number) { assert(held.has(n)); operations.push(`stop:${n}`); held.delete(n) },
@@ -27,14 +27,14 @@ const core = new CaffeineCore({
   changed() { broadcasts++ }
 })
 assert.deepEqual(core.getState(), { active: false, endsAt: null, minutes: null, keepScreenOn: true, defaultMinutes: null })
-for (const invalid of [undefined, 0, -1, 1.5, '15', true, {}, [], NaN, Infinity, CAFFEINE_MAX_MINUTES + 1]) {
-  assert.equal(validCaffeineMinutes(invalid), false)
+for (const invalid of [undefined, 0, -1, 1.5, '15', true, {}, [], NaN, Infinity, GUARANA_MAX_MINUTES + 1]) {
+  assert.equal(validGuaranaMinutes(invalid), false)
   core.start(invalid)
 }
 assert.equal(held.size, 0)
 assert.equal(broadcasts, 0)
-assert.equal(validCaffeineMinutes(null), true)
-assert.equal(validCaffeineMinutes(CAFFEINE_MAX_MINUTES), true)
+assert.equal(validGuaranaMinutes(null), true)
+assert.equal(validGuaranaMinutes(GUARANA_MAX_MINUTES), true)
 core.start(1)
 assert.equal(core.getState().endsAt, 61_000)
 assert.equal(held.size, 1)
@@ -91,7 +91,7 @@ assert.equal(core.getState().endsAt, null)
 const beforeStop = broadcasts
 core.stop(); core.stop()
 assert.equal(broadcasts, beforeStop, 'idempotent stop')
-core.start(CAFFEINE_MAX_MINUTES)
+core.start(GUARANA_MAX_MINUTES)
 assert.equal([...timers.values()][0].ms, 86_400_000)
 core.start(null)
 assert.equal(timers.size, 0)
@@ -101,15 +101,15 @@ assert.equal(core.getState().active, true)
 core.stop()
 assert.equal(held.size, 0)
 // Relaunch restores preferences but never an active session.
-const fresh = new CaffeineCore({ blocker: {}, now: () => now }, { keepScreenOn: false, defaultMinutes: 30 })
+const fresh = new GuaranaCore({ blocker: {}, now: () => now }, { keepScreenOn: false, defaultMinutes: 30 })
 assert.deepEqual(fresh.getState(), { active: false, endsAt: null, minutes: null, keepScreenOn: false, defaultMinutes: 30 })
-console.info('caffeine: validation, timers, resume expiry, blocker swap, failures and relaunch passed')
+console.info('guarana: validation, timers, resume expiry, blocker swap, failures and relaunch passed')
 
 // Real service wiring and the legacy launcher command share a single assertion.
 const runtime = { handlers: new Map(), app: new Map(), power: new Map(), held: new Set(), next: 0,
   prefs: { keepScreenOn: false, defaultMinutes: 15 }, updates: [] }
-;(globalThis as any).__caffeineCheck = runtime
-const R = 'globalThis.__caffeineCheck'
+;(globalThis as any).__guaranaCheck = runtime
+const R = 'globalThis.__guaranaCheck'
 installTsHooks({
   electron: fake(`
     export const app = { on: (event, cb) => { const list = ${R}.app.get(event) ?? []; list.push(cb); ${R}.app.set(event, list) } };
@@ -127,22 +127,22 @@ installTsHooks({
   '../panel': fake(`export const sendToPanel = (...args) => ${R}.updates.push(args)`),
   '../native/mac-helper': fake('export const runMacHelper = async () => null')
 })
-const service = await import(srcUrl('src/main/services/caffeine.ts'))
+const service = await import(srcUrl('src/main/services/guarana.ts'))
 const launcher = await import(srcUrl('src/main/launcher/system.ts'))
-service.initCaffeine()
-service.initCaffeine()
+service.initGuarana()
+service.initGuarana()
 assert.equal(runtime.handlers.size, 4)
 assert.equal(runtime.power.size, 2)
-assert.equal(service.getCaffeineState().active, false)
-assert.equal(service.getCaffeineState().keepScreenOn, false)
-const invoke = (channel: string, value?: unknown) => runtime.handlers.get('caffeine:' + channel)({}, value)
+assert.equal(service.getGuaranaState().active, false)
+assert.equal(service.getGuaranaState().keepScreenOn, false)
+const invoke = (channel: string, value?: unknown) => runtime.handlers.get('guarana:' + channel)({}, value)
 invoke('start', '15')
 assert.equal(runtime.held.size, 0)
 invoke('set-prefs', { keepScreenOn: 'true' })
-assert.equal(service.getCaffeineState().keepScreenOn, false)
+assert.equal(service.getGuaranaState().keepScreenOn, false)
 launcher.setKeepAwake(true)
-assert.equal(service.getCaffeineState().active, true)
-assert.equal(service.getCaffeineState().minutes, 15)
+assert.equal(service.getGuaranaState().active, true)
+assert.equal(service.getGuaranaState().minutes, 15)
 assert.equal(runtime.held.size, 1)
 invoke('stop')
 assert.equal(launcher.isKeepAwake(), false)
@@ -150,11 +150,11 @@ assert.equal(runtime.held.size, 0)
 invoke('start', null)
 assert.equal(launcher.isKeepAwake(), true)
 launcher.setKeepAwake(false)
-assert.equal(service.getCaffeineState().active, false)
+assert.equal(service.getGuaranaState().active, false)
 assert.equal(runtime.held.size, 0)
 invoke('start', null)
 for (const cb of runtime.app.get('before-quit')) cb()
 for (const cb of runtime.app.get('will-quit')) cb()
 assert.equal(runtime.held.size, 0)
-assert(runtime.updates.every(([channel]) => channel === 'caffeine:state-changed'))
-console.info('caffeine: IPC, saved prefs, launcher sharing and quit cleanup passed')
+assert(runtime.updates.every(([channel]) => channel === 'guarana:state-changed'))
+console.info('guarana: IPC, saved prefs, launcher sharing and quit cleanup passed')

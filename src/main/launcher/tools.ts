@@ -5,7 +5,7 @@
  * screen when the trial has ended).
  */
 
-import { CAFFEINE_PAGE } from '@shared/caffeine'
+import { GUARANA_PAGE } from '@shared/guarana'
 import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS, DICTATION_PAGE } from '@shared/tool-ids'
 import type { LauncherItem, LauncherRunResult } from '@shared/launcher/types'
 import { openToolWithAccessCheck } from '../windows'
@@ -104,14 +104,14 @@ const COMMANDS: ToolCommand[] = [
     }
   },
   {
-    id: 'tool:caffeine',
+    id: 'tool:guarana',
     tool: null,
-    title: 'Caffeine',
+    title: 'Guarana',
     subtitle: process.platform === 'darwin' ? 'Keep your Mac awake' : 'Keep your computer awake',
-    keywords: ['keep awake', 'caffeine', 'caffeinate', 'amphetamine', 'sleep', 'no sleep', 'awake'],
+    keywords: ['keep awake', 'guarana', 'caffeine', 'caffeinate', 'amphetamine', 'sleep', 'no sleep', 'awake'],
     glyph: 'coffee',
     run: () => {
-      showPanel(CAFFEINE_PAGE)
+      showPanel(GUARANA_PAGE)
       return Promise.resolve({ ok: true })
     }
   },

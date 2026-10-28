@@ -13,7 +13,7 @@ const P = {
     quickboard: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9.5 10h5M9.5 13.5h5M9.5 17h3"/>',
     mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v2.5"/>',
     snapgrid: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15M12 12h8.5"/>',
-    coffee: '<path d="M4.5 9.5h12v5a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5v-5z"/><path d="M16.5 11h1.5a2.5 2.5 0 0 1 0 5h-1.8"/><path d="M8.5 3.5c-.8 1 .8 2 0 3M12 3.5c-.8 1 .8 2 0 3"/>',
+    guarana: '<circle cx="12" cy="14" r="6.5"/><circle cx="12" cy="14" r="2.4" fill="currentColor"/><path d="M12 7.5V5c0-1.5 1.5-2.5 3.5-2.5 0 1.8-1.3 3-3.5 3"/>',
     chev: '<path d="m7 10 5 5 5-5"/>',
     chevR: '<path d="m10 7 5 5-5 5"/>',
     chevL: '<path d="m14 7-5 5 5 5"/>',

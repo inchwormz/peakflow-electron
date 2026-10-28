@@ -109,15 +109,15 @@ export const IPC_INVOKE = {
   SNAPGRID_SET_DRAG: 'snapgrid:set-drag',
   SNAPGRID_OPEN_OS_SETTINGS: 'snapgrid:open-os-settings',
 
-  // Caffeine (keep awake; free, src/shared/caffeine.ts)
-  /** () => CaffeineState */
-  CAFFEINE_GET_STATE: 'caffeine:get-state',
-  /** (minutes: number | null) => CaffeineState. null = until turned off. */
-  CAFFEINE_START: 'caffeine:start',
-  /** () => CaffeineState */
-  CAFFEINE_STOP: 'caffeine:stop',
-  /** (patch: { keepScreenOn?: boolean; defaultMinutes?: number | null }) => CaffeineState */
-  CAFFEINE_SET_PREFS: 'caffeine:set-prefs',
+  // Guarana (keep awake; free, src/shared/guarana.ts)
+  /** () => GuaranaState */
+  GUARANA_GET_STATE: 'guarana:get-state',
+  /** (minutes: number | null) => GuaranaState. null = until turned off. */
+  GUARANA_START: 'guarana:start',
+  /** () => GuaranaState */
+  GUARANA_STOP: 'guarana:stop',
+  /** (patch: { keepScreenOn?: boolean; defaultMinutes?: number | null }) => GuaranaState */
+  GUARANA_SET_PREFS: 'guarana:set-prefs',
 
   // App-level
   APP_GET_AUTO_START: 'app:get-auto-start',
@@ -281,8 +281,8 @@ export const IPC_SEND = {
   FOCUSDIM_STATE_CHANGED: 'focusdim:state-changed',
   FOCUSDIM_OVERLAY_UPDATE: 'focusdim:overlay-update',
   SNAPGRID_STATE_CHANGED: 'snapgrid:state-changed',
-  /** (state: CaffeineState) whenever Caffeine starts, stops, ends or its preferences change */
-  CAFFEINE_STATE_CHANGED: 'caffeine:state-changed',
+  /** (state: GuaranaState) whenever Guarana starts, stops, ends or its preferences change */
+  GUARANA_STATE_CHANGED: 'guarana:state-changed',
   SOUNDSPLIT_SESSIONS_UPDATED: 'soundsplit:sessions-updated',
   CALENDAR_EVENTS_UPDATED: 'calendar:events-updated',
   CALENDAR_STATUS_CHANGED: 'calendar:status-changed',

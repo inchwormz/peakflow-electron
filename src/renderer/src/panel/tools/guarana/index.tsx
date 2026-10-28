@@ -1,13 +1,13 @@
 /**
- * Caffeine in the v2 panel: keep the computer awake for a while or until
+ * Guarana in the v2 panel: keep the computer awake for a while or until
  * turned off. Free (no trial or licence screen). The logic lives in
- * services/caffeine.ts; this page only shows its state and calls caffeine:*.
+ * services/guarana.ts; this page only shows its state and calls guarana:*.
  * The menu-bar menu has the same toggle (right-click the PeakFlow icon).
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { IPC_INVOKE, IPC_SEND } from '@shared/ipc-types'
-import { CAFFEINE_DURATIONS, caffeineMinutesLeft, formatCaffeineLeft, type CaffeineState } from '@shared/caffeine'
+import { GUARANA_DURATIONS, guaranaMinutesLeft, formatGuaranaLeft, type GuaranaState } from '@shared/guarana'
 import type { PanelToolModule } from '../../types'
 import { invoke, isMac, useIpcEvent, useInvoke } from '../../hooks'
 import { Grp, Hero, Note, Picker, Row, TextTabs, Toggle } from '../../kit'
@@ -22,13 +22,13 @@ const device = (): string => (isMac() ? 'Mac' : 'computer')
 
 /* ─── shared state ───────────────────────────────────────────────────────── */
 
-function useCaffeine(): [CaffeineState | null, (s: CaffeineState) => void] {
-  const [state, setState] = useState<CaffeineState | null>(null)
-  const [initial] = useInvoke<CaffeineState>(IPC_INVOKE.CAFFEINE_GET_STATE)
+function useGuarana(): [GuaranaState | null, (s: GuaranaState) => void] {
+  const [state, setState] = useState<GuaranaState | null>(null)
+  const [initial] = useInvoke<GuaranaState>(IPC_INVOKE.GUARANA_GET_STATE)
   useEffect(() => {
     if (initial) setState(initial)
   }, [initial])
-  useIpcEvent(IPC_SEND.CAFFEINE_STATE_CHANGED, (s) => setState(s as CaffeineState))
+  useIpcEvent(IPC_SEND.GUARANA_STATE_CHANGED, (s) => setState(s as GuaranaState))
   return [state, setState]
 }
 
@@ -45,52 +45,52 @@ function useNow(running: boolean): number {
 }
 
 function useStatus(): string {
-  const [s] = useCaffeine()
+  const [s] = useGuarana()
   const now = useNow(!!s?.active && s.endsAt != null)
   if (!s) return ''
   if (!s.active) return 'Off'
-  const left = caffeineMinutesLeft(s, now)
-  return left == null ? 'On' : `${formatCaffeineLeft(left)} left`
+  const left = guaranaMinutesLeft(s, now)
+  return left == null ? 'On' : `${formatGuaranaLeft(left)} left`
 }
 
-function useActions(set: (s: CaffeineState) => void): {
+function useActions(set: (s: GuaranaState) => void): {
   start: (m: number | null) => void
   stop: () => void
   prefs: (p: { keepScreenOn?: boolean; defaultMinutes?: number | null }) => void
 } {
   const nav = useNav()
   const run = useCallback(
-    (p: Promise<CaffeineState>) => p.then((n) => n && set(n)).catch(() => nav.toast('Couldn’t change Caffeine')),
+    (p: Promise<GuaranaState>) => p.then((n) => n && set(n)).catch(() => nav.toast('Couldn’t change Guarana')),
     [set, nav]
   )
   return {
-    start: (m) => void run(invoke<CaffeineState>(IPC_INVOKE.CAFFEINE_START, m)),
-    stop: () => void run(invoke<CaffeineState>(IPC_INVOKE.CAFFEINE_STOP)),
-    prefs: (p) => void run(invoke<CaffeineState>(IPC_INVOKE.CAFFEINE_SET_PREFS, p))
+    start: (m) => void run(invoke<GuaranaState>(IPC_INVOKE.GUARANA_START, m)),
+    stop: () => void run(invoke<GuaranaState>(IPC_INVOKE.GUARANA_STOP)),
+    prefs: (p) => void run(invoke<GuaranaState>(IPC_INVOKE.GUARANA_SET_PREFS, p))
   }
 }
 
 /* ─── main screen ────────────────────────────────────────────────────────── */
 
 function Main(): React.JSX.Element {
-  const [s, set] = useCaffeine()
+  const [s, set] = useGuarana()
   const { start, stop, prefs } = useActions(set)
   const now = useNow(!!s?.active && s.endsAt != null)
   if (!s) return <div style={{ height: 200 }} />
 
-  const left = caffeineMinutesLeft(s, now)
+  const left = guaranaMinutesLeft(s, now)
   const title = s.active ? `Your ${device()} is staying awake` : `Your ${device()} can sleep as usual`
   const line = !s.active
-    ? 'Turn on Caffeine to stop it going to sleep while you’re away.'
+    ? 'Turn on Guarana to stop it going to sleep while you’re away.'
     : left == null
       ? 'Until you turn it off.'
-      : `For another ${formatCaffeineLeft(left)}${s.keepScreenOn ? '' : '. The screen can still turn off'}.`
+      : `For another ${formatGuaranaLeft(left)}${s.keepScreenOn ? '' : '. The screen can still turn off'}.`
   // The tab that's lit: the running session's length, or what Turn on will start
   const selected = keyOf(s.active ? s.minutes : s.defaultMinutes)
 
   return (
     <>
-      <Hero icon="coffee" title={title}>{line}</Hero>
+      <Hero icon="guarana" title={title}>{line}</Hero>
       <Grp style={{ marginTop: 14 }}>
         <Row
           label="Keep awake"
@@ -99,7 +99,7 @@ function Main(): React.JSX.Element {
       </Grp>
       <TextTabs
         value={selected}
-        options={CAFFEINE_DURATIONS.map((d) => [keyOf(d.minutes), TAB_LABELS[keyOf(d.minutes)]] as [string, string])}
+        options={GUARANA_DURATIONS.map((d) => [keyOf(d.minutes), TAB_LABELS[keyOf(d.minutes)]] as [string, string])}
         onChange={(k) => {
           const m = minutesOf(k)
           // Picking a length saves it for next time, and restarts a running session with it
@@ -116,7 +116,7 @@ function Main(): React.JSX.Element {
       </Grp>
       <Note style={{ marginTop: 10 }}>
         {isMac() ? 'Closing a MacBook’s lid still puts it to sleep. ' : ''}
-        Caffeine is free. It’s also in the menu-bar menu: right-click the PeakFlow icon.
+        Guarana is free. It’s also in the menu-bar menu: right-click the PeakFlow icon.
       </Note>
     </>
   )
@@ -125,7 +125,7 @@ function Main(): React.JSX.Element {
 /* ─── settings ───────────────────────────────────────────────────────────── */
 
 function Settings(): React.JSX.Element {
-  const [s, set] = useCaffeine()
+  const [s, set] = useGuarana()
   const { prefs } = useActions(set)
   if (!s) return <div style={{ height: 160 }} />
   return (
@@ -138,7 +138,7 @@ function Settings(): React.JSX.Element {
             <Picker
               label="Turn on for"
               value={keyOf(s.defaultMinutes)}
-              options={CAFFEINE_DURATIONS.map((d) => [keyOf(d.minutes), d.label] as [string, string])}
+              options={GUARANA_DURATIONS.map((d) => [keyOf(d.minutes), d.label] as [string, string])}
               onChange={(k) => prefs({ defaultMinutes: minutesOf(k) })}
             />
           }
@@ -150,21 +150,21 @@ function Settings(): React.JSX.Element {
         />
       </Grp>
       <Note style={{ marginTop: 10 }}>
-        Caffeine turns itself off when PeakFlow quits, and it starts off each time PeakFlow opens.
+        Guarana turns itself off when PeakFlow quits, and it starts off each time PeakFlow opens.
       </Note>
     </>
   )
 }
 
-export const caffeineTool: PanelToolModule = {
-  id: 'caffeine',
-  name: 'Caffeine',
+export const guaranaTool: PanelToolModule = {
+  id: 'guarana',
+  name: 'Guarana',
   desc: 'Keep your Mac awake',
-  icon: 'coffee',
+  icon: 'guarana',
   ungated: true,
   useStatus,
   routes: {
-    caffeine: { kind: 'tool', tool: 'caffeine', view: Main },
-    'caffeine/settings': { kind: 'sub', back: 'caffeine', title: 'Caffeine settings', view: Settings }
+    guarana: { kind: 'tool', tool: 'guarana', view: Main },
+    'guarana/settings': { kind: 'sub', back: 'guarana', title: 'Guarana settings', view: Settings }
   }
 }

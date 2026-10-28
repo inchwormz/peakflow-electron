@@ -6,8 +6,8 @@
  * this native menu.
  */
 
-import { CAFFEINE_DURATIONS, caffeineMinutesLeft, formatCaffeineLeft } from '@shared/caffeine'
-import { getCaffeineState, startCaffeine, stopCaffeine, setCaffeinePrefs, onCaffeineChanged } from './services/caffeine'
+import { GUARANA_DURATIONS, guaranaMinutesLeft, formatGuaranaLeft } from '@shared/guarana'
+import { getGuaranaState, startGuarana, stopGuarana, setGuaranaPrefs, onGuaranaChanged } from './services/guarana'
 import { Tray, Menu, app, nativeImage } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
@@ -25,7 +25,7 @@ import { builtInAccel, switchAccel } from '@shared/global-keys'
 import { openLauncher, openLauncherSettings, launcherHotkey } from './launcher'
 
 let tray: Tray | null = null
-let unsubscribeCaffeine: (() => void) | null = null
+let unsubscribeGuarana: (() => void) | null = null
 
 /**
  * Load the PeakFlow tray icon from resources.
@@ -155,26 +155,26 @@ export function buildContextMenu(): Electron.Menu {
     click: (): void => { showPanel(DICTATION_PAGE) }
   })
 
-  const caffeine = getCaffeineState()
-  const left = caffeineMinutesLeft(caffeine, Date.now())
+  const guarana = getGuaranaState()
+  const left = guaranaMinutesLeft(guarana, Date.now())
   toolItems.push({
-    label: 'Caffeine',
+    label: 'Guarana',
     submenu: [
-      { label: 'Keep Awake', type: 'checkbox', checked: caffeine.active, click: (): void => {
-        const current = getCaffeineState()
-        if (current.active) stopCaffeine()
-        else startCaffeine(current.defaultMinutes)
+      { label: 'Keep Awake', type: 'checkbox', checked: guarana.active, click: (): void => {
+        const current = getGuaranaState()
+        if (current.active) stopGuarana()
+        else startGuarana(current.defaultMinutes)
       } },
-      ...(caffeine.active ? [{ label: left === null ? 'On until you turn it off' : `On · ${formatCaffeineLeft(left)} left`, enabled: false }] : []),
+      ...(guarana.active ? [{ label: left === null ? 'On until you turn it off' : `On · ${formatGuaranaLeft(left)} left`, enabled: false }] : []),
       { type: 'separator' },
-      ...CAFFEINE_DURATIONS.map(({ minutes, label }) => ({
+      ...GUARANA_DURATIONS.map(({ minutes, label }) => ({
         label: minutes === null ? 'Until I Turn It Off' : `For ${label}`,
-        click: (): void => { startCaffeine(minutes) }
+        click: (): void => { startGuarana(minutes) }
       })),
       { type: 'separator' },
-      { label: 'Keep Screen On', type: 'checkbox', checked: caffeine.keepScreenOn,
-        click: (item): void => { setCaffeinePrefs({ keepScreenOn: item.checked }) } },
-      { label: 'Caffeine Settings…', click: (): void => { showPanel('caffeine/settings') } }
+      { label: 'Keep Screen On', type: 'checkbox', checked: guarana.keepScreenOn,
+        click: (item): void => { setGuaranaPrefs({ keepScreenOn: item.checked }) } },
+      { label: 'Guarana Settings…', click: (): void => { showPanel('guarana/settings') } }
     ]
   })
 
@@ -250,8 +250,8 @@ export function createTray(): void {
   const icon = getTrayIcon()
   tray = new Tray(icon)
 
-  updateCaffeineTooltip()
-  unsubscribeCaffeine = onCaffeineChanged(updateCaffeineTooltip)
+  updateGuaranaTooltip()
+  unsubscribeGuarana = onGuaranaChanged(updateGuaranaTooltip)
   tray.setIgnoreDoubleClickEvents(true)
   setPanelAnchor(() => (tray && !tray.isDestroyed() ? tray.getBounds() : null))
 
@@ -278,17 +278,17 @@ export function setTrayTitle(text: string): void {
   tray.setTitle(text, { fontType: 'monospacedDigit' })
 }
 
-function updateCaffeineTooltip(): void {
+function updateGuaranaTooltip(): void {
   if (!tray || tray.isDestroyed()) return
-  tray.setToolTip(getCaffeineState().active
+  tray.setToolTip(getGuaranaState().active
     ? `PeakFlow · Keeping your ${process.platform === 'darwin' ? 'Mac' : 'computer'} awake`
     : process.platform === 'darwin' ? 'PeakFlow' : 'PeakFlow — Mac-level productivity for Windows')
 }
 
 /** Destroy the tray icon and its state subscription during shutdown. */
 export function destroyTray(): void {
-  unsubscribeCaffeine?.()
-  unsubscribeCaffeine = null
+  unsubscribeGuarana?.()
+  unsubscribeGuarana = null
   if (tray) {
     tray.destroy()
     tray = null

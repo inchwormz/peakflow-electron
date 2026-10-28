@@ -78,10 +78,10 @@ assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once loading 
 win().emit('did-finish-load')
 assert.deepEqual(navs(), ['liquidfocus', 'quickboard'], 'delivered once only')
 
-panel.showPanel('caffeine')
-assert.equal(panel.visiblePanelTool(), 'caffeine')
-panel.setPanelRoute('caffeine/settings')
-assert.equal(panel.visiblePanelTool(), 'caffeine')
+panel.showPanel('guarana')
+assert.equal(panel.visiblePanelTool(), 'guarana')
+panel.setPanelRoute('guarana/settings')
+assert.equal(panel.visiblePanelTool(), 'guarana')
 panel.hidePanel(true)
 assert.equal(panel.visiblePanelTool(), null)
 

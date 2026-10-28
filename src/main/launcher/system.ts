@@ -1,10 +1,10 @@
 /**
  * System commands: sleep, lock, screen saver, empty the Bin, eject disks,
- * restart, shut down, log out, and the shared Caffeine Keep Awake toggle.
+ * restart, shut down, log out, and the shared Guarana Keep Awake toggle.
  */
 
 import { execFile } from 'child_process'
-import { getCaffeineState, startCaffeine, stopCaffeine } from '../services/caffeine'
+import { getGuaranaState, startGuarana, stopGuarana } from '../services/guarana'
 import { readdir, realpath } from 'fs/promises'
 import type { LauncherItem, LauncherRunResult } from '@shared/launcher/types'
 import { runMacHelper } from '../native/mac-helper'
@@ -13,13 +13,13 @@ const isMac = process.platform === 'darwin'
 const isWin = process.platform === 'win32'
 
 export function isKeepAwake(): boolean {
-  return getCaffeineState().active
+  return getGuaranaState().active
 }
 
 export function setKeepAwake(on: boolean): boolean {
-  const state = getCaffeineState()
-  if (on && !state.active) startCaffeine(state.defaultMinutes)
-  if (!on) stopCaffeine()
+  const state = getGuaranaState()
+  if (on && !state.active) startGuarana(state.defaultMinutes)
+  if (!on) stopGuarana()
   return isKeepAwake()
 }
 
@@ -199,7 +199,7 @@ export function systemItems(): LauncherItem[] {
     id: c.id,
     kind: 'command' as const,
     title: c.id === 'cmd:keep-awake' ? `Keep Awake: turn ${isKeepAwake() ? 'off' : 'on'}` : c.title,
-    subtitle: c.id === 'cmd:keep-awake' ? (isKeepAwake() ? 'On · Caffeine' : 'Start Caffeine with your saved settings') : 'System',
+    subtitle: c.id === 'cmd:keep-awake' ? (isKeepAwake() ? 'On · Guarana' : 'Start Guarana with your saved settings') : 'System',
     keywords: c.keywords,
     glyph: c.glyph,
     confirm: c.confirm

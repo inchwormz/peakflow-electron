@@ -1,51 +1,51 @@
-import { CAFFEINE_MAX_MINUTES, type CaffeineState } from '../../shared/caffeine'
+import { GUARANA_MAX_MINUTES, type GuaranaState } from '../../shared/guarana'
 
-export type CaffeinePrefs = Pick<CaffeineState, 'keepScreenOn' | 'defaultMinutes'>
+export type GuaranaPrefs = Pick<GuaranaState, 'keepScreenOn' | 'defaultMinutes'>
 type BlockerType = 'prevent-display-sleep' | 'prevent-app-suspension'
 
-export function validCaffeineMinutes(value: unknown): value is number | null {
-  return value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= CAFFEINE_MAX_MINUTES)
+export function validGuaranaMinutes(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= GUARANA_MAX_MINUTES)
 }
 
-export function validCaffeinePrefs(value: unknown): value is Partial<CaffeinePrefs> {
+export function validGuaranaPrefs(value: unknown): value is Partial<GuaranaPrefs> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const prefs = value as Record<string, unknown>
   return Object.keys(prefs).every(key => key === 'keepScreenOn' || key === 'defaultMinutes') &&
     (!('keepScreenOn' in prefs) || typeof prefs.keepScreenOn === 'boolean') &&
-    (!('defaultMinutes' in prefs) || validCaffeineMinutes(prefs.defaultMinutes))
+    (!('defaultMinutes' in prefs) || validGuaranaMinutes(prefs.defaultMinutes))
 }
 
-export interface CaffeineEffects<Timer> {
+export interface GuaranaEffects<Timer> {
   blocker: { start(type: BlockerType): number; stop(id: number): void; isStarted(id: number): boolean }
   now(): number
   setTimer(callback: () => void, ms: number): Timer
   clearTimer(timer: Timer): void
-  savePrefs(prefs: CaffeinePrefs): void
-  changed(state: CaffeineState): void
+  savePrefs(prefs: GuaranaPrefs): void
+  changed(state: GuaranaState): void
 }
 
-/** Owns only Caffeine's blocker and timer; never shares another tool's resources. */
-export class CaffeineCore<Timer> {
-  private state: CaffeineState
+/** Owns only Guarana's blocker and timer; never shares another tool's resources. */
+export class GuaranaCore<Timer> {
+  private state: GuaranaState
   private blockerId: number | null = null
   private timer: Timer | null = null
   private generation = 0
-  private effects: CaffeineEffects<Timer>
+  private effects: GuaranaEffects<Timer>
 
-  constructor(effects: CaffeineEffects<Timer>, prefs: Partial<CaffeinePrefs> = {}) {
+  constructor(effects: GuaranaEffects<Timer>, prefs: Partial<GuaranaPrefs> = {}) {
     this.effects = effects
     this.state = {
       active: false, endsAt: null, minutes: null,
       keepScreenOn: typeof prefs.keepScreenOn === 'boolean' ? prefs.keepScreenOn : true,
-      defaultMinutes: validCaffeineMinutes(prefs.defaultMinutes) ? prefs.defaultMinutes : null
+      defaultMinutes: validGuaranaMinutes(prefs.defaultMinutes) ? prefs.defaultMinutes : null
     }
   }
 
-  getState(): CaffeineState { return { ...this.state } }
+  getState(): GuaranaState { return { ...this.state } }
 
   private acquire(keepScreenOn: boolean): number {
     const id = this.effects.blocker.start(keepScreenOn ? 'prevent-display-sleep' : 'prevent-app-suspension')
-    if (!this.effects.blocker.isStarted(id)) throw new Error('[Caffeine] Sleep blocker did not start')
+    if (!this.effects.blocker.isStarted(id)) throw new Error('[Guarana] Sleep blocker did not start')
     return id
   }
 
@@ -66,8 +66,8 @@ export class CaffeineCore<Timer> {
     }, delay)
   }
 
-  start(minutes: unknown): CaffeineState {
-    if (!validCaffeineMinutes(minutes)) return this.getState()
+  start(minutes: unknown): GuaranaState {
+    if (!validGuaranaMinutes(minutes)) return this.getState()
     if (this.blockerId === null || !this.effects.blocker.isStarted(this.blockerId)) {
       this.blockerId = this.acquire(this.state.keepScreenOn)
     }
@@ -78,7 +78,7 @@ export class CaffeineCore<Timer> {
     return this.getState()
   }
 
-  stop(): CaffeineState {
+  stop(): GuaranaState {
     this.clearTimer()
     if (this.blockerId !== null && this.effects.blocker.isStarted(this.blockerId)) this.effects.blocker.stop(this.blockerId)
     this.blockerId = null
@@ -98,8 +98,8 @@ export class CaffeineCore<Timer> {
     return false
   }
 
-  setPrefs(value: unknown): CaffeineState {
-    if (!validCaffeinePrefs(value)) return this.getState()
+  setPrefs(value: unknown): GuaranaState {
+    if (!validGuaranaPrefs(value)) return this.getState()
     const prefs = { keepScreenOn: this.state.keepScreenOn, defaultMinutes: this.state.defaultMinutes, ...value }
     if (prefs.keepScreenOn === this.state.keepScreenOn && prefs.defaultMinutes === this.state.defaultMinutes) return this.getState()
     // Acquire first, so a screen-mode change never leaves a gap in protection.
