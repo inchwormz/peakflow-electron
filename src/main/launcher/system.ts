@@ -1,11 +1,10 @@
 /**
  * System commands: sleep, lock, screen saver, empty the Bin, eject disks,
- * restart, shut down, log out, and Keep Awake (Electron's power-save blocker,
- * the same on Mac and Windows; nothing else in PeakFlow does this yet).
+ * restart, shut down, log out, and the shared Caffeine Keep Awake toggle.
  */
 
 import { execFile } from 'child_process'
-import { powerSaveBlocker } from 'electron'
+import { getCaffeineState, startCaffeine, stopCaffeine } from '../services/caffeine'
 import { readdir, realpath } from 'fs/promises'
 import type { LauncherItem, LauncherRunResult } from '@shared/launcher/types'
 import { runMacHelper } from '../native/mac-helper'
@@ -13,18 +12,14 @@ import { runMacHelper } from '../native/mac-helper'
 const isMac = process.platform === 'darwin'
 const isWin = process.platform === 'win32'
 
-let keepAwakeId: number | null = null
-
 export function isKeepAwake(): boolean {
-  return keepAwakeId !== null && powerSaveBlocker.isStarted(keepAwakeId)
+  return getCaffeineState().active
 }
 
 export function setKeepAwake(on: boolean): boolean {
-  if (on && !isKeepAwake()) keepAwakeId = powerSaveBlocker.start('prevent-display-sleep')
-  if (!on && keepAwakeId !== null) {
-    powerSaveBlocker.stop(keepAwakeId)
-    keepAwakeId = null
-  }
+  const state = getCaffeineState()
+  if (on && !state.active) startCaffeine(state.defaultMinutes)
+  if (!on) stopCaffeine()
   return isKeepAwake()
 }
 
@@ -79,7 +74,7 @@ const COMMANDS: SysCommand[] = [
     glyph: 'coffee',
     run: () => {
       const on = setKeepAwake(!isKeepAwake())
-      return Promise.resolve({ ok: true, keepOpen: true, message: on ? 'Keep Awake is on: the screen won’t sleep' : 'Keep Awake is off' })
+      return Promise.resolve({ ok: true, keepOpen: true, message: on ? 'Keep Awake is on' : 'Keep Awake is off' })
     }
   },
   {
@@ -204,7 +199,7 @@ export function systemItems(): LauncherItem[] {
     id: c.id,
     kind: 'command' as const,
     title: c.id === 'cmd:keep-awake' ? `Keep Awake: turn ${isKeepAwake() ? 'off' : 'on'}` : c.title,
-    subtitle: c.id === 'cmd:keep-awake' ? (isKeepAwake() ? 'On: your screen won’t sleep' : 'Stop the screen sleeping until you turn it off') : 'System',
+    subtitle: c.id === 'cmd:keep-awake' ? (isKeepAwake() ? 'On · Caffeine' : 'Start Caffeine with your saved settings') : 'System',
     keywords: c.keywords,
     glyph: c.glyph,
     confirm: c.confirm

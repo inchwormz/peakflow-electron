@@ -5,6 +5,7 @@
  * screen when the trial has ended).
  */
 
+import { CAFFEINE_PAGE } from '@shared/caffeine'
 import { ToolId, TOOL_DISPLAY_NAMES, PANEL_TOOLS, DICTATION_PAGE } from '@shared/tool-ids'
 import type { LauncherItem, LauncherRunResult } from '@shared/launcher/types'
 import { openToolWithAccessCheck } from '../windows'
@@ -99,6 +100,18 @@ const COMMANDS: ToolCommand[] = [
     glyph: 'dictation',
     run: () => {
       showPanel(DICTATION_PAGE)
+      return Promise.resolve({ ok: true })
+    }
+  },
+  {
+    id: 'tool:caffeine',
+    tool: null,
+    title: 'Caffeine',
+    subtitle: process.platform === 'darwin' ? 'Keep your Mac awake' : 'Keep your computer awake',
+    keywords: ['keep awake', 'caffeine', 'caffeinate', 'amphetamine', 'sleep', 'no sleep', 'awake'],
+    glyph: 'coffee',
+    run: () => {
+      showPanel(CAFFEINE_PAGE)
       return Promise.resolve({ ok: true })
     }
   },

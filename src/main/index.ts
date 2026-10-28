@@ -32,6 +32,7 @@ import { migrateExistingInstalls, isToolInstalled, installTool, autoInstallTools
 import { syncLicensedToolInstalls, refreshProductMap } from './security/license'
 import { setAppQuitting } from './windows'
 import { initPanel, showPanel, setPanelQuitting } from './panel'
+import { initCaffeine } from './services/caffeine'
 import { runDevShots } from './dev-shots'
 import { initLauncher, destroyLauncher } from './launcher'
 import { setTrayTitle } from './tray'
@@ -243,6 +244,7 @@ if (!gotLock) {
     if (TODOIST_ENABLED) initTodoist()
     if (EXTENSION_ENABLED) initExtensionServer()
     initAutoUpdater()
+    try { initCaffeine() } catch (error) { console.error('[Caffeine] Initialisation failed:', error) }
 
     // v2: open the one-app panel on startup so new users aren't left hunting
     // the menu-bar icon (replaces the old Dashboard hub window)

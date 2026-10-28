@@ -12,6 +12,7 @@ import { BrowserWindow, screen, type Rectangle } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { SystemWindowId, isPanelTool, DICTATION_PAGE } from '@shared/tool-ids'
+import { CAFFEINE_PAGE } from '@shared/caffeine'
 import { IPC_SEND } from '@shared/ipc-types'
 import { restorePreviousApp, rememberFrontApp, getActiveWindow } from './native/active-window'
 
@@ -250,7 +251,7 @@ export function resizePanel(h: number): void {
 /** Record the panel's route (from showPanel or the renderer's own navigation). */
 export function setPanelRoute(route: string): void {
   const tool = route.split('/')[0]
-  currentTool = isPanelTool(tool) || tool === DICTATION_PAGE ? tool : null
+  currentTool = isPanelTool(tool) || tool === DICTATION_PAGE || tool === CAFFEINE_PAGE ? tool : null
 }
 
 /** The tool on screen in the panel, or null when it's hidden or on an app-wide page. */
@@ -271,4 +272,10 @@ function send(win: BrowserWindow, channel: string, ...args: unknown[]): void {
   } catch {
     /* frame disposed mid-reload; the page asks for its state when it loads */
   }
+}
+
+/** Send a state update without creating or showing the panel. */
+export function sendToPanel(channel: string, ...args: unknown[]): void {
+  const win = getPanel()
+  if (win) send(win, channel, ...args)
 }

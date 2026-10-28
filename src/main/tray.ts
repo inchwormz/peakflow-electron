@@ -6,6 +6,8 @@
  * this native menu.
  */
 
+import { CAFFEINE_DURATIONS, caffeineMinutesLeft, formatCaffeineLeft } from '@shared/caffeine'
+import { getCaffeineState, startCaffeine, stopCaffeine, setCaffeinePrefs, onCaffeineChanged } from './services/caffeine'
 import { Tray, Menu, app, nativeImage } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
@@ -23,6 +25,7 @@ import { builtInAccel, switchAccel } from '@shared/global-keys'
 import { openLauncher, openLauncherSettings, launcherHotkey } from './launcher'
 
 let tray: Tray | null = null
+let unsubscribeCaffeine: (() => void) | null = null
 
 /**
  * Load the PeakFlow tray icon from resources.
@@ -152,6 +155,29 @@ export function buildContextMenu(): Electron.Menu {
     click: (): void => { showPanel(DICTATION_PAGE) }
   })
 
+  const caffeine = getCaffeineState()
+  const left = caffeineMinutesLeft(caffeine, Date.now())
+  toolItems.push({
+    label: 'Caffeine',
+    submenu: [
+      { label: 'Keep Awake', type: 'checkbox', checked: caffeine.active, click: (): void => {
+        const current = getCaffeineState()
+        if (current.active) stopCaffeine()
+        else startCaffeine(current.defaultMinutes)
+      } },
+      ...(caffeine.active ? [{ label: left === null ? 'On until you turn it off' : `On · ${formatCaffeineLeft(left)} left`, enabled: false }] : []),
+      { type: 'separator' },
+      ...CAFFEINE_DURATIONS.map(({ minutes, label }) => ({
+        label: minutes === null ? 'Until I Turn It Off' : `For ${label}`,
+        click: (): void => { startCaffeine(minutes) }
+      })),
+      { type: 'separator' },
+      { label: 'Keep Screen On', type: 'checkbox', checked: caffeine.keepScreenOn,
+        click: (item): void => { setCaffeinePrefs({ keepScreenOn: item.checked }) } },
+      { label: 'Caffeine Settings…', click: (): void => { showPanel('caffeine/settings') } }
+    ]
+  })
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'PeakFlow', enabled: false },
     { type: 'separator' }
@@ -224,7 +250,8 @@ export function createTray(): void {
   const icon = getTrayIcon()
   tray = new Tray(icon)
 
-  tray.setToolTip(process.platform === 'darwin' ? 'PeakFlow' : 'PeakFlow \u2014 Mac-level productivity for Windows')
+  updateCaffeineTooltip()
+  unsubscribeCaffeine = onCaffeineChanged(updateCaffeineTooltip)
   tray.setIgnoreDoubleClickEvents(true)
   setPanelAnchor(() => (tray && !tray.isDestroyed() ? tray.getBounds() : null))
 
@@ -251,10 +278,17 @@ export function setTrayTitle(text: string): void {
   tray.setTitle(text, { fontType: 'monospacedDigit' })
 }
 
-/**
- * Destroy the tray icon. Called during app shutdown.
- */
+function updateCaffeineTooltip(): void {
+  if (!tray || tray.isDestroyed()) return
+  tray.setToolTip(getCaffeineState().active
+    ? `PeakFlow · Keeping your ${process.platform === 'darwin' ? 'Mac' : 'computer'} awake`
+    : process.platform === 'darwin' ? 'PeakFlow' : 'PeakFlow — Mac-level productivity for Windows')
+}
+
+/** Destroy the tray icon and its state subscription during shutdown. */
 export function destroyTray(): void {
+  unsubscribeCaffeine?.()
+  unsubscribeCaffeine = null
   if (tray) {
     tray.destroy()
     tray = null
