@@ -9,6 +9,7 @@ import { snapgridTool } from './snapgrid'
 import { dictationTool } from './dictation'
 import { caffeineTool } from './caffeine'
 
-export const TOOL_MODULES: PanelToolModule[] = [focusdimTool, liquidfocusTool, screenslapTool, quickboardTool, snapgridTool, dictationTool, caffeineTool]
+// The six with ⌥⌘1–6 (Dictation sixth), then Caffeine, which has no switch shortcut
+export const TOOL_MODULES: PanelToolModule[] = [...[focusdimTool, liquidfocusTool, screenslapTool, quickboardTool, snapgridTool, dictationTool], caffeineTool]
 
 export const TOOL_BY_ID = Object.fromEntries(TOOL_MODULES.map((m) => [m.id, m])) as Record<PanelToolId, PanelToolModule>
