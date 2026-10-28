@@ -83,8 +83,8 @@ function Main(): React.JSX.Element {
   const line = !s.active
     ? 'Turn on Guarana to stop it going to sleep while you’re away.'
     : left == null
-      ? 'Until you turn it off.'
-      : `For another ${formatGuaranaLeft(left)}${s.keepScreenOn ? '' : '. The screen can still turn off'}.`
+      ? `Until you turn it off${s.keepScreenOn ? '' : '. The screen can still turn off'}.`
+      : `Until ${new Date(s.endsAt ?? now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${s.keepScreenOn ? '' : '. The screen can still turn off'}.`
   // The tab that's lit: the running session's length, or what Turn on will start
   const selected = keyOf(s.active ? s.minutes : s.defaultMinutes)
 
