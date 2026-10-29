@@ -134,3 +134,9 @@
 - **Skip architecture explanations.** The user built this app. Say what you're changing and why, not how Electron IPC works.
 - **Parallel reads.** When a change touches main + renderer, read both files in a single parallel call.
 - **Build = verification.** `npm run build` catches type errors across the whole app. Use it instead of manual tracing.
+
+## Shared agent rules
+
+Read AGENTS.md too; it holds the copy rule for this repo.
+
+@AGENTS.md
