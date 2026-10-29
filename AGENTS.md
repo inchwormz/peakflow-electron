@@ -14,3 +14,15 @@ Source: John, 2026-10-29: "everything must rigidly go through style corpus write
   3. **`ACCEPTANCE.md`:** which copy changed and where (files, fields, locales), the profile used, the corpus passages read (file, section and the technique used), each Editorial Acceptance condition with "pass" or the fix made, the `shasum -a 256` of each `draft.md`, and any checker exceptions.
 - **Reviewers and mergers must reject** a PR that adds or changes visible copy when the folder is missing, `draft.md` does not match the shipped copy or its hash, a required verify run (item 2) is missing or fails without a valid exception, or any Editorial Acceptance condition is left unresolved. Where item 2 requires them, re-run the three verify commands yourself before approving; they take seconds. Copy-only PRs still need no code review (see Review effort), but whoever merges or builds the train makes this check first.
 - If the skill folder is not on your machine (for example a cloud agent), do not ship the copy: hand it to an agent on John's Mac.
+
+## Bug triage: blocker or issue
+
+Source: John, 2026-10-29: "can you put this agents.md for whether or not a bug is a blocker. Rate each bug from 1 to 10 on how often it would happen and how bad it would be. If the two scores multiplied are below 5, just file it as an issue and leave the code alone." Lines marked (agent-added) are clarifications from the coordinator brief of the same day, not John's words. The one source is `~/.codex/AGENTS.md`; repo AGENTS.md files carry a mirror, so change them together.
+
+- Score every bug, including each code-review and QA finding, from 1 to 10 on **how often** it would happen and 1 to 10 on **how bad** it would be. Multiply the two.
+- **Below 5: not a blocker.** File it as an issue and leave the code alone. Do not fix it in the current change, and do not hold a merge or release for it.
+- **5 or more:** it is a blocker, handled under the normal review and release rules.
+- (agent-added) Score how bad honestly. Security holes, lost money, lost data and locked-out users belong at the top of that scale; a rare bug of that kind is not waved through by its frequency alone.
+- (agent-added) Reviewers write both scores and the product beside each finding, for example `often 2 x bad 2 = 4, issue`. In a review ledger a below-5 finding is closed as WONTFIX/OUT-OF-SCOPE with its issue link.
+- (agent-added) Where to file: Linear (team SIT). Linear is at its free-plan issue limit, so when it refuses, open a GitHub issue on the repo (`gh issue create`) and name the issue in the PR or report.
+- (agent-added) This rule decides whether a bug blocks. "Review effort matches risk" still decides how much review a change gets.
