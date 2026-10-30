@@ -98,10 +98,9 @@ if cliArgs.count > 1 {
     exit(1)
 }
 
-// Main loop: read commands from stdin
-while let line = readLine(strippingNewline: true) {
+func handleLine(_ line: String) {
     var trimmed = line.trimmingCharacters(in: .whitespaces)
-    if trimmed.isEmpty { continue }
+    if trimmed.isEmpty { return }
 
     currentRequestId = nil
     if let first = trimmed.split(separator: " ", maxSplits: 1).first,
@@ -110,7 +109,7 @@ while let line = readLine(strippingNewline: true) {
         trimmed = String(trimmed.dropFirst(first.count)).trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             respondError("missing command")
-            continue
+            return
         }
     }
 
@@ -133,21 +132,21 @@ while let line = readLine(strippingNewline: true) {
     case "raise-app":
         guard let pidStr = arg, let pid = Int32(pidStr), pid > 0 else {
             respondError("raise-app requires a PID argument")
-            continue
+            return
         }
         respond(jsonString(["raised": raiseAppWindows(pid: pid)]))
 
     case "activate":
         guard let pidStr = arg, let pid = Int32(pidStr), pid > 0 else {
             respondError("activate requires a PID argument")
-            continue
+            return
         }
         respond(jsonString(["ok": activateApp(pid: pid)]))
 
     case "app-windows":
         guard let bundleId = arg else {
             respondError("app-windows requires a bundle ID argument")
-            continue
+            return
         }
         respond(jsonString(getWindowsForBundleId(bundleId).map { $0.jsonObject }))
 
@@ -157,7 +156,7 @@ while let line = readLine(strippingNewline: true) {
     case "process-name":
         guard let pidStr = arg, let pid = Int32(pidStr) else {
             respondError("process-name requires a PID argument")
-            continue
+            return
         }
         if let info = getProcessInfo(pid: pid) {
             respond(info.toJSON())
@@ -197,5 +196,13 @@ while let line = readLine(strippingNewline: true) {
 
     default:
         respondError("Unknown command: \(command)")
+    }
+}
+
+// Drain autoreleased Foundation/AppKit objects after every command. This stdin
+// loop has no application event loop to drain an autorelease pool for us.
+while let line = readLine(strippingNewline: true) {
+    autoreleasepool {
+        handleLine(line)
     }
 }

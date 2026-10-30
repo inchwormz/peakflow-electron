@@ -1,6 +1,6 @@
 {
   "name": "peakflow-electron",
-  "version": "2.1.9",
+  "version": "2.1.10",
   "description": "PeakFlow — Mac-level productivity tools for Windows",
   "main": "./out/main/index.js",
   "author": "PeakFlow",
